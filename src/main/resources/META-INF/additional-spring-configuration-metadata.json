@@ -1,0 +1,42 @@
+{
+  "groups": [
+    {
+      "name": "app",
+      "type": "java.lang.Object"
+    },
+    {
+      "name": "app.security",
+      "type": "java.lang.Object"
+    },
+    {
+      "name": "app.security.actuator",
+      "type": "java.lang.Object"
+    },
+    {
+      "name": "app.security.oidc",
+      "type": "java.lang.Object"
+    }
+  ],
+  "properties": [
+    {
+      "name": "app.security.actuator.api-key",
+      "type": "java.lang.String",
+      "description": "Actuator API key used by the management filter."
+    },
+    {
+      "name": "app.security.oidc.role-claim",
+      "type": "java.lang.String",
+      "description": "OIDC claim containing user roles."
+    },
+    {
+      "name": "app.security.oidc.admin-role",
+      "type": "java.lang.String",
+      "description": "Configured admin role name."
+    },
+    {
+      "name": "app.security.oidc.user-role",
+      "type": "java.lang.String",
+      "description": "Configured user role name."
+    }
+  ]
+}

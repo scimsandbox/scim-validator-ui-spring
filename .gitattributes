@@ -1,0 +1,10 @@
+* text=auto eol=lf
+*.java text diff=java
+*.xml text
+*.yml text
+*.yaml text
+*.md text
+*.sh text eol=lf
+*.sql text
+*.json text
+*.properties text

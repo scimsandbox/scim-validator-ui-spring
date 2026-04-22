@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SCIM Validator</title>
+    <link rel="icon" type="image/svg+xml" th:href="@{/favicon.svg}" href="/favicon.svg">
+    <style>
+        body { font-family: 'Space Grotesk', 'Segoe UI', sans-serif; margin: 0; background: linear-gradient(160deg, #0b1220 0%, #0f172a 45%, #111827 100%); color: #e2e8f0; min-height: 100vh; }
+        .container { max-width: 1100px; margin: 0 auto; padding: 24px; }
+        .site-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 0 14px; border-bottom: 1px solid #475569; margin-bottom: 20px; gap: 12px; }
+        .site-header-brand h1 { margin: 0; font-size: 1.2rem; color: #e2e8f0; }
+        .site-header-user { display: flex; align-items: center; gap: 10px; }
+        .user-name { font-size: 13px; color: #94a3b8; }
+        .logout-form { margin: 0; }
+        .logout-button { margin-top: 0; padding: 8px 14px; background: #374151; color: #fff; font-size: 13px; }
+        .card { background: #fff; border: 1px solid #d8dbe1; border-radius: 8px; padding: 16px; margin-bottom: 16px; color: #202124; }
+        h1, h2 { margin: 0 0 12px; }
+        .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+        .field { display: flex; flex-direction: column; gap: 6px; }
+        label { font-size: 13px; font-weight: 600; }
+        input { padding: 8px; border: 1px solid #bfc5d0; border-radius: 6px; font-size: 14px; }
+        button { margin-top: 8px; padding: 10px 14px; border: none; border-radius: 6px; background: #2563eb; color: #fff; cursor: pointer; }
+        .inline-form { margin: 0; }
+        .danger-button { margin-top: 0; padding: 6px 10px; background: #dc2626; }
+        .export-button { display: inline-block; margin-top: 0; padding: 6px 10px; background: #2563eb; color: #fff; text-decoration: none; border-radius: 6px; font-size: 14px; text-align: center; }
+        table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        th, td { border-bottom: 1px solid #e6e8ee; padding: 10px; text-align: left; vertical-align: top; }
+        .status-success { color: #166534; font-weight: 700; }
+        .status-failed, .status-error { color: #b91c1c; font-weight: 700; }
+        .error { color: #b91c1c; font-size: 12px; }
+        a { color: #1d4ed8; text-decoration: none; }
+        #run-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+        #run-overlay.active { display: flex; }
+        .run-dialog {
+            background: #fff;
+            border-radius: 10px;
+            padding: 36px 48px;
+            text-align: center;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.25);
+        }
+        .run-spinner {
+            width: 48px;
+            height: 48px;
+            border: 5px solid #e5e7eb;
+            border-top-color: #2563eb;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin: 0 auto 20px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .run-dialog p { font-size: 15px; font-weight: 600; color: #202124; margin: 0; }
+        .run-dialog small { font-size: 12px; color: #6b7280; }
+        .bmc-widget, .bmc-widget * { box-sizing: border-box; }
+        .bmc-widget { position: fixed; right: 1.5rem; bottom: 1.5rem; z-index: 90; }
+        .bmc-widget summary { list-style: none; min-height: 3.5rem; display: inline-flex; align-items: center; justify-content: center; gap: 0.55rem; padding: 0.75rem 0.95rem; border-radius: 999px; cursor: pointer; background: linear-gradient(180deg, #ffe066 0%, #ffd43b 100%); box-shadow: 0 20px 45px rgba(15, 23, 42, 0.45); border: 1px solid rgba(255, 255, 255, 0.35); }
+        .bmc-widget summary::-webkit-details-marker { display: none; }
+        .bmc-widget summary img { display: block; width: 1.9rem; height: 1.9rem; }
+        .bmc-widget-label { color: #172554; font-size: 0.84rem; font-weight: 800; line-height: 1; white-space: nowrap; }
+        .bmc-widget[open] summary { box-shadow: 0 24px 50px rgba(15, 23, 42, 0.5); }
+        .bmc-panel { position: absolute; right: 0; bottom: calc(100% + 12px); width: min(168px, calc(100vw - 32px)); display: block; background: #fff; border-radius: 24px; overflow: hidden; box-shadow: 0 18px 36px rgba(0,0,0,0.24); opacity: 0; transform: translateY(8px) scale(0.98); pointer-events: none; transition: opacity 0.18s ease, transform 0.18s ease; }
+        .bmc-widget[open] .bmc-panel { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+        .bmc-panel img { display: block; width: 100%; height: auto; }
+        .bmc-panel-copy { display: flex; align-items: center; justify-content: center; padding: 8px 10px 10px; background: #fff4b3; color: #7c2d12; text-align: center; }
+        .bmc-panel-hint { font-size: 12px; font-weight: 700; opacity: 0.85; }
+        @media (max-width: 720px) {
+            .bmc-widget { right: 1rem; bottom: 1rem; }
+            .bmc-widget summary { min-height: 3rem; gap: 0.4rem; padding: 0.65rem 0.8rem; }
+            .bmc-widget summary img { width: 1.6rem; height: 1.6rem; }
+            .bmc-widget-label { font-size: 0.72rem; }
+            .bmc-panel { width: min(120px, calc(100vw - 24px)); border-radius: 18px; }
+            .bmc-panel-copy { padding: 6px 8px 8px; }
+            .bmc-panel-hint { font-size: 9px; }
+        }
+        .site-footer { padding: 2rem 1rem 1.5rem; text-align: center; }
+        .site-footer-icons { display: flex; align-items: center; justify-content: center; gap: 1.25rem; }
+        .site-footer-icons a { display: inline-flex; align-items: center; justify-content: center; width: 2.25rem; height: 2.25rem; border-radius: 50%; border: 1px solid #475569; color: #94a3b8; transition: color 0.2s, border-color 0.2s, background 0.2s; text-decoration: none; }
+        .site-footer-icons a:hover { color: var(--text); border-color: var(--primary); background: rgba(59,130,246,0.08); }
+        .site-footer-icons svg { width: 1.4rem; height: 1.4rem; fill: currentColor; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <header class="site-header">
+        <div class="site-header-brand">
+            <h1>SCIM Validator</h1>
+        </div>
+        <div class="site-header-user">
+            <span class="user-name" th:text="${currentUser} + ' (' + ${currentUserRole} + ')'">User (Role)</span>
+            <form method="post" th:action="@{/logout}" class="logout-form">
+                <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                <button type="submit" class="logout-button">Logout</button>
+            </form>
+        </div>
+    </header>
+    <div class="card">
+        <form method="post" th:action="@{/runs}" th:object="${runForm}" th:data-runs-count="${#lists.size(runs)}" th:data-max-runs="${maxRuns}">
+            <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+            <div class="grid">
+                <div class="field">
+                    <label for="name">Run Name</label>
+                    <input id="name" type="text" th:field="*{name}" placeholder="e.g. Okta nightly validation">
+                    <div class="error" th:if="${#fields.hasErrors('name')}" th:errors="*{name}"></div>
+                </div>
+                <div class="field">
+                    <label for="baseUrl">SCIM Base URL</label>
+                    <input id="baseUrl" type="text" th:field="*{baseUrl}" placeholder="https://host/scim/v2">
+                    <div class="error" th:if="${#fields.hasErrors('baseUrl')}" th:errors="*{baseUrl}"></div>
+                </div>
+            </div>
+            <div class="field">
+                <label for="authToken">Bearer Token</label>
+                <input id="authToken" type="password" th:field="*{authToken}" placeholder="token">
+                <div class="error" th:if="${#fields.hasErrors('authToken')}" th:errors="*{authToken}"></div>
+            </div>
+            <button type="submit" id="run-btn">Run Validation Suite</button>
+        </form>
+    </div>
+
+    <div id="run-overlay">
+        <div class="run-dialog">
+            <div class="run-spinner"></div>
+            <p>Running tests&hellip;</p>
+            <small>This may take a minute. Please wait.</small>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2 style="display: flex; align-items: center; justify-content: space-between;">
+            <span>Validation Runs</span>
+        </h2>
+        <div th:if="${maxRuns != null}" style="margin-bottom: 16px; padding: 12px 16px; background: #eff6ff; border-left: 4px solid #3b82f6; border-radius: 4px; color: #1e3a8a; font-size: 14px; display: flex; align-items: center; gap: 8px;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+            <span style="flex: 1;"><strong>Storage Limit:</strong> We only keep your latest <strong th:text="${maxRuns}">10</strong> runs. If you start a new run when you already have this many, your oldest run will be automatically deleted.</span>
+        </div>
+        <table>
+            <thead>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Owner</th>
+                <th>URL</th>
+                <th>Date</th>
+                <th>Status</th>
+                <th>Result</th>
+                <th>Actions</th>
+            </tr>
+            </thead>
+            <tbody>
+            <tr th:if="${#lists.isEmpty(runs)}">
+                <td colspan="8">No runs yet.</td>
+            </tr>
+            <tr th:each="run : ${runs}">
+                <td><a th:href="@{/runs/{id}(id=${run.id})}" th:text="${run.id}">id</a></td>
+                <td th:text="${run.name}">name</td>
+                <td th:text="${run.createdByEmail}">owner</td>
+                <td th:text="${run.targetUrl}">url</td>
+                <td th:text="${#temporals.format(run.executedAt, 'yyyy-MM-dd HH:mm:ssXXX')}">date</td>
+                <td th:text="${run.status}" th:classappend="${'status-' + #strings.toLowerCase(run.status)}">status</td>
+                <td th:text="${run.passedTests + ' / ' + run.totalTests}">result</td>
+                <td style="display: flex; gap: 8px;">
+                    <a th:href="@{/runs/{id}/export(id=${run.id})}" class="export-button" title="Export as JSON">Export</a>
+                    <form class="inline-form" method="post" th:action="@{/runs/{id}/delete(id=${run.id})}" onsubmit="return confirm('Delete this run and all its recorded test results?');">
+                        <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                        <button type="submit" class="danger-button">Delete</button>
+                    </form>
+                </td>
+            </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+<script>
+    (function () {
+        var form = document.querySelector('.card form');
+        var overlay = document.getElementById('run-overlay');
+        if (form && overlay) {
+            form.addEventListener('submit', function (e) {
+                // Basic client-side validation: only show overlay if required fields are filled
+                var name = form.querySelector('#name');
+                var baseUrl = form.querySelector('#baseUrl');
+                var token = form.querySelector('#authToken');
+                if (name && name.value.trim() && baseUrl && baseUrl.value.trim() && token && token.value.trim()) {
+                    var runsCount = Number.parseInt(form.dataset.runsCount || '0', 10);
+                    var maxRuns = Number.parseInt(form.dataset.maxRuns || '10', 10);
+                    
+                    if (maxRuns > 0 && runsCount >= maxRuns) {
+                        var msg = 'You already have ' + runsCount + ' runs (limit is ' + maxRuns + '). Starting a new run will delete your oldest run. Do you want to proceed?';
+                        if (!confirm(msg)) {
+                            e.preventDefault();
+                            return;
+                        }
+                    }
+                    overlay.classList.add('active');
+                }
+            });
+        }
+    })();
+</script>
+<footer class="site-footer">
+    <div style="margin-bottom: 1rem;">
+        <a th:href="${playgroundUrl}" target="_blank" rel="noopener noreferrer" style="display: inline-flex; align-items: center; gap: 0.5rem; color: var(--text-muted); text-decoration: none; font-weight: 500; font-size: 0.95rem;">
+            <img th:src="|${playgroundUrl}/favicon.svg|" alt="Favicon" style="width: 1.25rem; height: 1.25rem; border-radius: 0.25rem;"> SCIM Playground
+        </a>
+    </div>
+    <nav class="site-footer-icons" aria-label="Legal and contact links">
+        <a href="https://scimsandbox.github.io/scim-app-policy/terms.html" target="_blank" rel="noopener noreferrer" aria-label="Terms of Service" title="Terms of Service"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M1 21h12v2H1zM5.245 8.07l2.83-2.827 14.14 14.142-2.828 2.828zM12.317 1l5.657 5.656-2.83 2.83-5.654-5.66zM3.825 9.485l5.657 5.657-2.828 2.828-5.657-5.657z"/></svg></a>
+        <a href="https://scimsandbox.github.io/scim-app-policy/privacy.html" target="_blank" rel="noopener noreferrer" aria-label="Privacy Policy" title="Privacy Policy"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 1 3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z"/></svg></a>
+        <a href="https://github.com/scimsandbox" target="_blank" rel="noopener noreferrer" aria-label="GitHub" title="GitHub"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.865 8.166 6.839 9.489.5.092.682-.217.682-.482 0-.237-.009-.866-.013-1.7-2.782.603-3.369-1.342-3.369-1.342-.454-1.155-1.11-1.462-1.11-1.462-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.831.092-.646.35-1.086.636-1.337-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0 1 12 6.836a9.59 9.59 0 0 1 2.504.337c1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.163 22 16.418 22 12c0-5.523-4.477-10-10-10z"/></svg></a>
+        <a href="https://github.com/scimsandbox/scim-project/issues" target="_blank" rel="noopener noreferrer" aria-label="Report Issue" title="Report Issue"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 8h-2.81c-.45-.78-1.07-1.45-1.82-1.96L17 4.41 15.59 3l-2.17 2.17C12.96 5.06 12.49 5 12 5c-.49 0-.96.06-1.41.17L8.41 3 7 4.41l1.62 1.63C7.88 6.55 7.26 7.22 6.81 8H4v2h2.09c-.05.33-.09.66-.09 1v1H4v2h2v1c0 .34.04.67.09 1H4v2h2.81c1.04 1.79 2.97 3 5.19 3s4.15-1.21 5.19-3H20v-2h-2.09c.05-.33.09-.66.09-1v-1h2v-2h-2v-1c0-.34-.04-.67-.09-1H20V8zm-6 8h-4v-2h4v2zm0-4h-4v-2h4v2z"/></svg></a>
+        <a href="mailto:support@scimsandbox.net" aria-label="Email Support" title="Email Support"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4-8 5-8-5V6l8 5 8-5v2z"/></svg></a>
+    </nav>
+</footer>
+<details class="bmc-widget">
+    <summary aria-label="Buy me a coffee">
+        <img th:src="@{/images/buy-me-a-coffee-icon.svg}" src="/images/buy-me-a-coffee-icon.svg" alt="Buy Me a Coffee icon">
+        <span class="bmc-widget-label">Buy me a coffee</span>
+    </summary>
+    <a class="bmc-panel" href="https://buymeacoffee.com/eduard.pal" target="_blank" rel="noopener noreferrer" aria-label="Open Buy Me a Coffee">
+        <img th:src="@{/images/buy-me-a-coffee.png}" src="/images/buy-me-a-coffee.png" alt="Buy Me a Coffee QR code">
+        <span class="bmc-panel-copy">
+            <span class="bmc-panel-hint">Scan or click</span>
+        </span>
+    </a>
+</details>
+</body>
+</html>

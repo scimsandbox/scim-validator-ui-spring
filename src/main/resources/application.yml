@@ -1,0 +1,86 @@
+spring:
+  threads:
+    virtual:
+      enabled: true
+  application:
+    name: scim-validator-ui
+
+  datasource:
+    hikari:
+      pool-name: ScimValidatorUiHikariPool
+      maximum-pool-size: 15
+      minimum-idle: 15
+      connection-timeout: 5000
+      max-lifetime: 1800000
+      keepalive-time: 30000
+      data-source-properties:
+        reWriteBatchedInserts: true
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        "[default_batch_fetch_size]": 100
+        "[jdbc.batch_size]": 100
+        "[order_inserts]": true
+        "[order_updates]": true
+  security:
+    oauth2:
+      client:
+        registration:
+          auth0:
+            client-id: ${AUTH0_CLIENT_ID}
+            client-secret: ${AUTH0_CLIENT_SECRET}
+            scope: openid,profile,email
+            authorization-grant-type: authorization_code
+            redirect-uri: ${AUTH0_REDIRECT_URI}
+        provider:
+          auth0:
+            issuer-uri: ${AUTH0_ISSUER_URI}
+
+server:
+  servlet:
+    session:
+      cookie:
+        name: SCIM_VALIDATOR_UI_SESSION
+
+management:
+  server:
+    port: 9090
+  endpoint:
+    health:
+      show-components: always
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  health:
+    ping:
+      enabled: false
+    ssl:
+      enabled: false
+    diskspace:
+      enabled: false
+
+logging:
+  level:
+    "[de.palsoftware.scim]": DEBUG
+    "[org.springframework.security]": WARN
+
+app:
+  security:
+    actuator:
+      api-key: ${ACTUATOR_API_KEY}
+    oidc:
+      role-claim: https://scimplayground.dev/roles
+      admin-role: admin
+      user-role: user
+
+  runs:
+    max-per-user: 10
+
+  playground:
+    url: http://localhost:8080
+

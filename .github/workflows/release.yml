@@ -1,0 +1,113 @@
+name: Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    name: Validate, tag, and publish release
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Verify main branch
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF_NAME}" != "main" ]]; then
+            echo "This release workflow can only be run manually from main."
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_TOKEN }}
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+          server-id: github
+          server-username: GITHUB_ACTOR
+          server-password: GITHUB_TOKEN
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Resolve release version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          project_version="$(mvn -B -ntp -q help:evaluate -Dexpression=project.version -DforceStdout)"
+
+          if [[ ! "$project_version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)-SNAPSHOT$ ]]; then
+            echo "Project version must end with -SNAPSHOT and use semantic versioning: ${project_version}" >&2
+            exit 1
+          fi
+
+          release_version="${project_version%-SNAPSHOT}"
+          tag_name="v${release_version}"
+
+          echo "release_version=${release_version}" >> "$GITHUB_OUTPUT"
+          echo "tag_name=${tag_name}" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure release tag does not exist
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if git ls-remote --exit-code --tags origin "refs/tags/${{ steps.version.outputs.tag_name }}" >/dev/null 2>&1; then
+            echo "Tag ${{ steps.version.outputs.tag_name }} already exists"
+            exit 1
+          fi
+
+      - name: Release with Maven Release Plugin
+        shell: bash
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          mvn -B -ntp release:clean release:prepare release:perform \
+            -Darguments="-DskipTests"
+
+      - name: Package release bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist
+          git archive --format=tar.gz --output "dist/scim-validator-ui-spring-${{ steps.version.outputs.release_version }}.tar.gz" "${{ steps.version.outputs.tag_name }}"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gh release create "${{ steps.version.outputs.tag_name }}" \
+            --verify-tag \
+            --generate-notes \
+            --title "${{ steps.version.outputs.tag_name }}" \
+            "dist/scim-validator-ui-spring-${{ steps.version.outputs.release_version }}.tar.gz#scim-validator-ui-spring-${{ steps.version.outputs.release_version }}.tar.gz" \
+            "target/checkout/target/scim-validator-ui-spring-${{ steps.version.outputs.release_version }}.jar#scim-validator-ui-spring-${{ steps.version.outputs.release_version }}.jar"

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title>SCIM Validator UI</title>
+  <defs>
+    <linearGradient id="validator-bg" x1="10" y1="8" x2="54" y2="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0f172a"/>
+      <stop offset="1" stop-color="#0f766e"/>
+    </linearGradient>
+  </defs>
+  <rect x="3" y="3" width="58" height="58" rx="15" fill="url(#validator-bg)"/>
+  <path d="M32 9l19 7v13c0 12.5-7.7 22.2-19 25.2C20.7 51.2 13 41.5 13 29V16l19-7z" fill="#dcfce7"/>
+  <path d="M23 31.5l6.5 6.5L42 24" fill="none" stroke="#0f766e" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="48" cy="18" r="4.8" fill="#38bdf8"/>
+</svg>
