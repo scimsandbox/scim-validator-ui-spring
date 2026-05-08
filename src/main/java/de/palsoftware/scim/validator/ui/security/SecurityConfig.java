@@ -19,6 +19,7 @@ import org.springframework.security.oauth2.core.oidc.user.DefaultOidcUser;
 import org.springframework.security.oauth2.core.oidc.user.OidcUser;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.logout.LogoutSuccessHandler;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 
 import java.lang.reflect.Array;
@@ -38,24 +39,30 @@ public class SecurityConfig {
     private final String userRole;
     private final String roleClaim;
     private final MgmtUserService mgmtUserService;
+    private final String actuatorApiKey;
 
     public SecurityConfig(@Value("${app.security.oidc.admin-role}") String adminRole,
                           @Value("${app.security.oidc.user-role}") String userRole,
                           @Value("${app.security.oidc.role-claim}") String roleClaim,
+                          @Value("${app.security.actuator.api-key}") String actuatorApiKey,
                           @Lazy MgmtUserService mgmtUserService) {
         this.adminRole = adminRole;
         this.userRole = userRole;
         this.roleClaim = roleClaim;
         this.mgmtUserService = mgmtUserService;
+        this.actuatorApiKey = actuatorApiKey;
     }
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http,
                                                    LogoutSuccessHandler oidcLogoutSuccessHandler) throws Exception {
+        ActuatorApiKeyFilter actuatorFilter = new ActuatorApiKeyFilter(actuatorApiKey);
+
         http.authorizeHttpRequests(authorize -> authorize
                 .requestMatchers("/actuator/**").permitAll()
                 .requestMatchers("/css/**", "/js/**", "/images/**", "/error").permitAll()
                 .anyRequest().authenticated())
+            .addFilterBefore(actuatorFilter, UsernamePasswordAuthenticationFilter.class)
             .oauth2Login(oauth2 -> oauth2
                 .userInfoEndpoint(userInfo -> userInfo.oidcUserService(oidcUserService())))
             .logout(logout -> logout
