@@ -40,6 +40,12 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+<<<<<<< HEAD
+import java.util.regex.Pattern;
+import java.util.regex.Matcher;
+=======
+import java.util.stream.Collectors;
+>>>>>>> fix-n-plus-1-query
 import java.util.UUID;
 
 import static org.junit.platform.engine.discovery.DiscoverySelectors.selectClass;
@@ -49,6 +55,8 @@ import static org.junit.platform.engine.discovery.DiscoverySelectors.selectClass
 public class ValidationRunService {
 
     private static final Logger log = LoggerFactory.getLogger(ValidationRunService.class);
+
+    private static final Pattern AUTH_HEADER_PATTERN = Pattern.compile("(?i)(Authorization:\\s*)(.+)");
 
     private static final List<String> SPEC_CLASS_NAMES = List.of(
             "de.palsoftware.scim.validator.specs.A1_ServiceDiscoverySpec",
@@ -176,11 +184,18 @@ public class ValidationRunService {
     public List<ValidationTestResultView> getTestResults(UUID runId, String actorEmail, boolean admin) {
         requireRunAccess(runId, actorEmail, admin);
         List<ValidationTestResult> testResults = testResultRepository.findByRunIdOrderByStartedAtAsc(runId);
+        if (testResults.isEmpty()) {
+            return List.of();
+        }
+        List<UUID> testResultIds = testResults.stream().map(ValidationTestResult::getId).toList();
+        Map<UUID, List<ValidationHttpExchange>> exchangesByTestId = exchangeRepository
+                .findByTestResultIdInOrderBySequenceNumberAsc(testResultIds)
+                .stream()
+                .collect(Collectors.groupingBy(e -> e.getTestResult().getId()));
         return testResults.stream()
                 .map(testResult -> {
-                    List<ValidationHttpExchangeView> exchanges = exchangeRepository
-                            .findByTestResultIdOrderBySequenceNumberAsc(testResult.getId())
-                            .stream()
+                    List<ValidationHttpExchangeView> exchanges = exchangesByTestId
+                            .getOrDefault(testResult.getId(), List.of()).stream()
                             .map(ValidationHttpExchangeView::from)
                             .toList();
                     return ValidationTestResultView.from(testResult, exchanges);
@@ -286,7 +301,7 @@ public class ValidationRunService {
                 exchange.setSequenceNumber(i + 1);
                 exchange.setMethod(captured.getMethod());
                 exchange.setUrl(captured.getUrl());
-                exchange.setRequestHeaders(captured.getRequestHeaders());
+                exchange.setRequestHeaders(redactHeaders(captured.getRequestHeaders()));
                 exchange.setRequestBody(captured.getRequestBody());
                 exchange.setResponseStatus(captured.getResponseStatus());
                 exchange.setResponseHeaders(captured.getResponseHeaders());
@@ -303,6 +318,13 @@ public class ValidationRunService {
                 failed++;
             }
             ScimRunContext.endTest();
+        }
+
+        private static String redactHeaders(String headers) {
+            if (headers == null) {
+                return null;
+            }
+            return AUTH_HEADER_PATTERN.matcher(headers).replaceAll("$1[REDACTED]");
         }
 
         private static String normalizeStatus(TestExecutionResult.Status status) {

@@ -9,4 +9,6 @@ import java.util.UUID;
 public interface ValidationHttpExchangeRepository extends JpaRepository<ValidationHttpExchange, UUID> {
 
     List<ValidationHttpExchange> findByTestResultIdOrderBySequenceNumberAsc(UUID testResultId);
+
+    List<ValidationHttpExchange> findByTestResultIdInOrderBySequenceNumberAsc(List<UUID> testResultIds);
 }
