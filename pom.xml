@@ -4,7 +4,7 @@
 
     <groupId>de.pal-software.scim</groupId>
     <artifactId>scim-validator-ui-spring</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
+    <version>0.0.1</version>
     <packaging>jar</packaging>
 
     <name>SCIM Validator UI</name>
@@ -14,7 +14,7 @@
         <connection>scm:git:https://github.com/scimsandbox/scim-validator-ui-spring.git</connection>
         <developerConnection>scm:git:https://github.com/scimsandbox/scim-validator-ui-spring.git</developerConnection>
         <url>https://github.com/scimsandbox/scim-validator-ui-spring</url>
-        <tag>HEAD</tag>
+        <tag>v0.0.1</tag>
     </scm>
 
     <distributionManagement>
