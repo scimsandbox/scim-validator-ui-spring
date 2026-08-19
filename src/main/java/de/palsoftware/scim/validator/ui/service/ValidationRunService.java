@@ -16,6 +16,7 @@ import de.palsoftware.scim.validator.ui.repo.ValidationMgmtUserRepository;
 import de.palsoftware.scim.validator.ui.repo.ValidationHttpExchangeRepository;
 import de.palsoftware.scim.validator.ui.repo.ValidationRunRepository;
 import de.palsoftware.scim.validator.ui.repo.ValidationTestResultRepository;
+import de.palsoftware.scim.validator.ui.security.TargetUrlPolicy;
 import org.junit.platform.engine.TestExecutionResult;
 import org.junit.platform.engine.support.descriptor.MethodSource;
 import org.junit.platform.launcher.Launcher;
@@ -103,6 +104,7 @@ public class ValidationRunService {
 
     @Transactional
     public ExecutionResult executeRun(ValidationRunForm form, String actorEmail) {
+        TargetUrlPolicy.validate(form.baseUrl());
         List<ValidationRun> userRuns = runRepository.findOwnedRuns(actorEmail, Sort.by(Sort.Direction.ASC, "executedAt"));
         boolean oldRunDeleted = false;
         
@@ -197,10 +199,10 @@ public class ValidationRunService {
     private ValidationRun requireRunAccess(UUID runId, String actorEmail, boolean admin) {
         if (admin) {
             return runRepository.findById(runId)
-                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Validation run not found"));
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Test suite not found"));
         }
         return runRepository.findAccessibleById(runId, actorEmail)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Validation run not found"));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Test suite not found"));
     }
 
     private static LauncherDiscoveryRequest buildRequest() throws ClassNotFoundException {

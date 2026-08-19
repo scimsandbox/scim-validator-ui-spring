@@ -3,6 +3,7 @@ package de.palsoftware.scim.validator.ui.controller;
 import de.palsoftware.scim.validator.ui.dto.ValidationRunForm;
 import de.palsoftware.scim.validator.ui.dto.ValidationRunView;
 import de.palsoftware.scim.validator.ui.security.AuthenticatedUser;
+import de.palsoftware.scim.validator.ui.security.TargetUrlPolicy;
 import de.palsoftware.scim.validator.ui.service.MgmtUserService;
 import de.palsoftware.scim.validator.ui.service.ValidationRunService;
 import jakarta.validation.Valid;
@@ -68,6 +69,13 @@ public class ValidationController {
             Model model,
             Authentication authentication,
             RedirectAttributes redirectAttributes) {
+        if (!bindingResult.hasFieldErrors("baseUrl")) {
+            try {
+                TargetUrlPolicy.validate(runForm.baseUrl());
+            } catch (IllegalArgumentException ex) {
+                bindingResult.rejectValue("baseUrl", "baseUrl.invalid", ex.getMessage());
+            }
+        }
         if (bindingResult.hasErrors()) {
             model.addAttribute("runs",
                 validationRunService.listRuns(actorEmail(authentication), isAdmin(authentication)));
@@ -82,7 +90,7 @@ public class ValidationController {
         ValidationRunView run = ValidationRunView.from(result.getRun());
         if (result.isOldRunDeleted()) {
             redirectAttributes.addFlashAttribute("infoMessage", 
-                "An older test run was deleted to make room for this new one. Maximum allowed runs per user is " + result.getMaxRuns() + ".");
+                "An older test suite was deleted to make room for this new one. Maximum allowed test suites per user is " + result.getMaxRuns() + ".");
         }
         return "redirect:/runs/" + run.id();
     }

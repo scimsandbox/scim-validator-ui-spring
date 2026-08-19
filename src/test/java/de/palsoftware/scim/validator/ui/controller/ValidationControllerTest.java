@@ -99,12 +99,12 @@ class ValidationControllerTest {
 
     @Test
     void execute_success_redirectsToRunDetail() {
-        ValidationRunForm form = new ValidationRunForm("Test Run", "http://example.com/scim", "token");
+        ValidationRunForm form = new ValidationRunForm("Test Run", "https://example.com/scim", "token");
         BindingResult bindingResult = new BeanPropertyBindingResult(form, "runForm");
 
         ValidationRun run = new ValidationRun();
         run.setName("Test Run");
-        run.setTargetUrl("http://example.com/scim");
+        run.setTargetUrl("https://example.com/scim");
         run.setExecutedAt(OffsetDateTime.now());
         run.setStatus("PASSED");
         run.setCreatedByUser(new ValidationMgmtUser("user@example.com", OffsetDateTime.now()));

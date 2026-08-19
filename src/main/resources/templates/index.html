@@ -3,62 +3,356 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SCIM Validator</title>
+    <meta name="playground_url" th:content="${playgroundUrl}">
+    <title>SCIM 2.0 Validator | Test Suite</title>
     <link rel="icon" type="image/svg+xml" th:href="@{/favicon.svg}" href="/favicon.svg">
     <style>
-        body { font-family: 'Space Grotesk', 'Segoe UI', sans-serif; margin: 0; background: linear-gradient(160deg, #0b1220 0%, #0f172a 45%, #111827 100%); color: #e2e8f0; min-height: 100vh; }
-        .container { max-width: 1100px; margin: 0 auto; padding: 24px; }
-        .site-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 0 14px; border-bottom: 1px solid #475569; margin-bottom: 20px; gap: 12px; }
-        .site-header-brand h1 { margin: 0; font-size: 1.2rem; color: #e2e8f0; }
-        .site-header-user { display: flex; align-items: center; gap: 10px; }
+        :root {
+            --bg: #0b1220;
+            --card-bg: #1e293b;
+            --card-subtle: #0f172a;
+            --text-dark: #0f172a;
+            --text-muted: #94a3b8;
+            --border-light: #334155;
+            --primary: #2563eb;
+            --primary-hover: #1d4ed8;
+            --radius: 8px;
+        }
+
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            background: linear-gradient(160deg, #0b1220 0%, #0f172a 45%, #111827 100%);
+            color: #e2e8f0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .container {
+            max-width: 1340px;
+            margin: 0 auto;
+            padding: 16px 20px 40px;
+            width: 100%;
+            flex: 1;
+        }
+
+        /* Top Header */
+        .site-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 0 16px;
+            border-bottom: 1px solid #334155;
+            margin-bottom: 16px;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        .brand-group {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+        .brand-title {
+            margin: 0;
+            font-size: 1.3rem;
+            font-weight: 700;
+            color: #f8fafc;
+        }
+        .nav-segmented {
+            display: inline-flex;
+            align-items: center;
+            background: #0f172a;
+            border: 1px solid #334155;
+            padding: 4px;
+            border-radius: 8px;
+            gap: 4px;
+            box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.4);
+        }
+        .nav-segment {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 16px;
+            border-radius: 6px;
+            color: #94a3b8;
+            text-decoration: none;
+            font-size: 13.5px;
+            font-weight: 600;
+            transition: all 0.15s ease;
+            user-select: none;
+        }
+        .nav-segment:hover {
+            color: #f8fafc;
+            background: rgba(255, 255, 255, 0.06);
+        }
+        .nav-segment.active {
+            color: #ffffff;
+            background: #2563eb;
+            font-weight: 700;
+            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3), 0 0 10px rgba(37, 99, 235, 0.35);
+        }
+        .nav-segment-icon {
+            width: 16px;
+            height: 16px;
+            flex-shrink: 0;
+        }
+
+        .site-header-user {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
         .user-name { font-size: 13px; color: #94a3b8; }
         .logout-form { margin: 0; }
-        .logout-button { margin-top: 0; padding: 8px 14px; background: #374151; color: #fff; font-size: 13px; }
-        .card { background: #fff; border: 1px solid #d8dbe1; border-radius: 8px; padding: 16px; margin-bottom: 16px; color: #202124; }
-        h1, h2 { margin: 0 0 12px; }
-        .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-        .field { display: flex; flex-direction: column; gap: 6px; }
-        label { font-size: 13px; font-weight: 600; }
-        input { padding: 8px; border: 1px solid #bfc5d0; border-radius: 6px; font-size: 14px; }
-        button { margin-top: 8px; padding: 10px 14px; border: none; border-radius: 6px; background: #2563eb; color: #fff; cursor: pointer; }
+        .logout-button {
+            padding: 6px 12px;
+            background: #334155;
+            color: #fff;
+            font-size: 13px;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .logout-button:hover { background: #475569; }
+
+        /* Card container */
+        .card {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+            color: #f8fafc;
+        }
+        .card-header-title {
+            margin: 0 0 16px;
+            font-size: 1.15rem;
+            font-weight: 700;
+            color: #f8fafc;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        /* Form grid */
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 16px;
+        }
+        @media (max-width: 768px) {
+            .grid { grid-template-columns: 1fr; }
+        }
+        .field {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-bottom: 14px;
+        }
+        label {
+            font-size: 11px;
+            font-weight: 700;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        input {
+            padding: 9px 12px;
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 6px;
+            color: #f8fafc;
+            font-size: 13.5px;
+            font-family: 'Space Grotesk', -apple-system, sans-serif;
+            outline: none;
+            transition: border-color 0.15s, box-shadow 0.15s;
+        }
+        input:focus {
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+        }
+        input::placeholder { color: #64748b; }
+        .error {
+            color: #f87171;
+            font-size: 12px;
+            margin-top: 2px;
+            font-weight: 500;
+        }
+
+        /* Buttons */
+        #run-btn {
+            margin-top: 4px;
+            padding: 9px 20px;
+            background: #2563eb;
+            color: #fff;
+            font-weight: 600;
+            font-size: 13.5px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            transition: background 0.15s;
+        }
+        #run-btn:hover { background: #1d4ed8; }
+
         .inline-form { margin: 0; }
-        .danger-button { margin-top: 0; padding: 6px 10px; background: #dc2626; }
-        .export-button { display: inline-block; margin-top: 0; padding: 6px 10px; background: #2563eb; color: #fff; text-decoration: none; border-radius: 6px; font-size: 14px; text-align: center; }
-        table { width: 100%; border-collapse: collapse; font-size: 14px; }
-        th, td { border-bottom: 1px solid #e6e8ee; padding: 10px; text-align: left; vertical-align: top; }
-        .status-success { color: #166534; font-weight: 700; }
-        .status-failed, .status-error { color: #b91c1c; font-weight: 700; }
-        .error { color: #b91c1c; font-size: 12px; }
-        a { color: #1d4ed8; text-decoration: none; }
+        .danger-button {
+            margin: 0;
+            padding: 5px 12px;
+            background: rgba(239, 68, 68, 0.15);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            color: #f87171;
+            border-radius: 6px;
+            font-size: 12.5px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .danger-button:hover {
+            background: #dc2626;
+            color: #ffffff;
+            border-color: #dc2626;
+        }
+        .export-button {
+            display: inline-flex;
+            align-items: center;
+            margin: 0;
+            padding: 5px 12px;
+            background: #334155;
+            border: 1px solid #475569;
+            color: #f8fafc;
+            text-decoration: none;
+            border-radius: 6px;
+            font-size: 12.5px;
+            font-weight: 600;
+            text-align: center;
+            transition: background 0.15s;
+        }
+        .export-button:hover { background: #475569; color: #fff; }
+
+        /* Storage limit info banner */
+        .info-banner {
+            margin-bottom: 18px;
+            padding: 12px 16px;
+            background: rgba(37, 99, 235, 0.1);
+            border: 1px solid rgba(59, 130, 246, 0.25);
+            border-radius: 8px;
+            color: #93c5fd;
+            font-size: 13.5px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .info-banner strong { color: #bfdbfe; }
+        .info-banner svg { stroke: #60a5fa; flex-shrink: 0; }
+
+        /* Table */
+        .table-responsive {
+            overflow-x: auto;
+            border: 1px solid #334155;
+            border-radius: 8px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13.5px;
+            text-align: left;
+        }
+        th {
+            padding: 12px 16px;
+            background: #0f172a;
+            color: #94a3b8;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            border-bottom: 1px solid #334155;
+            white-space: nowrap;
+        }
+        td {
+            padding: 12px 16px;
+            border-bottom: 1px solid #334155;
+            color: #cbd5e1;
+            vertical-align: middle;
+        }
+        tbody tr:last-child td { border-bottom: none; }
+        tbody tr:hover td { background: rgba(255, 255, 255, 0.02); }
+
+        .run-id-link {
+            color: #60a5fa;
+            font-weight: 600;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12.5px;
+            text-decoration: none;
+            transition: color 0.15s;
+        }
+        .run-id-link:hover {
+            color: #93c5fd;
+            text-decoration: underline;
+        }
+
+        /* Status badges */
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 3px 9px;
+            border-radius: 9999px;
+            font-size: 11.5px;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+        }
+        .status-passed, .status-success {
+            background: rgba(34, 197, 94, 0.15);
+            color: #4ade80;
+            border: 1px solid rgba(34, 197, 94, 0.3);
+        }
+        .status-failed, .status-error, .status-aborted {
+            background: rgba(239, 68, 68, 0.15);
+            color: #f87171;
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+
+        /* Loading dialog */
         #run-overlay {
             display: none;
             position: fixed;
             inset: 0;
-            background: rgba(0, 0, 0, 0.55);
+            background: rgba(11, 18, 32, 0.8);
+            backdrop-filter: blur(4px);
             z-index: 1000;
             align-items: center;
             justify-content: center;
         }
         #run-overlay.active { display: flex; }
         .run-dialog {
-            background: #fff;
-            border-radius: 10px;
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 12px;
             padding: 36px 48px;
             text-align: center;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.25);
+            box-shadow: 0 16px 48px rgba(0,0,0,0.5);
+            color: #f8fafc;
         }
         .run-spinner {
-            width: 48px;
-            height: 48px;
-            border: 5px solid #e5e7eb;
-            border-top-color: #2563eb;
+            width: 44px;
+            height: 44px;
+            border: 4px solid #334155;
+            border-top-color: #3b82f6;
             border-radius: 50%;
             animation: spin 0.8s linear infinite;
-            margin: 0 auto 20px;
+            margin: 0 auto 18px;
         }
         @keyframes spin { to { transform: rotate(360deg); } }
-        .run-dialog p { font-size: 15px; font-weight: 600; color: #202124; margin: 0; }
-        .run-dialog small { font-size: 12px; color: #6b7280; }
+        .run-dialog p { font-size: 16px; font-weight: 700; color: #f8fafc; margin: 0 0 6px; }
+        .run-dialog small { font-size: 13px; color: #94a3b8; }
+
+        /* Buy me a coffee */
         .bmc-widget, .bmc-widget * { box-sizing: border-box; }
         .bmc-widget { position: fixed; right: 1.5rem; bottom: 1.5rem; z-index: 90; }
         .bmc-widget summary { list-style: none; min-height: 3.5rem; display: inline-flex; align-items: center; justify-content: center; gap: 0.55rem; padding: 0.75rem 0.95rem; border-radius: 999px; cursor: pointer; background: linear-gradient(180deg, #ffe066 0%, #ffd43b 100%); box-shadow: 0 20px 45px rgba(15, 23, 42, 0.45); border: 1px solid rgba(255, 255, 255, 0.35); }
@@ -80,18 +374,173 @@
             .bmc-panel-copy { padding: 6px 8px 8px; }
             .bmc-panel-hint { font-size: 9px; }
         }
+
+        /* Footer */
         .site-footer { padding: 2rem 1rem 1.5rem; text-align: center; }
         .site-footer-icons { display: flex; align-items: center; justify-content: center; gap: 1.25rem; }
         .site-footer-icons a { display: inline-flex; align-items: center; justify-content: center; width: 2.25rem; height: 2.25rem; border-radius: 50%; border: 1px solid #475569; color: #94a3b8; transition: color 0.2s, border-color 0.2s, background 0.2s; text-decoration: none; }
-        .site-footer-icons a:hover { color: var(--text); border-color: var(--primary); background: rgba(59,130,246,0.08); }
+        .site-footer-icons a:hover { color: #f8fafc; border-color: #3b82f6; background: rgba(59,130,246,0.08); }
         .site-footer-icons svg { width: 1.4rem; height: 1.4rem; fill: currentColor; }
+
+        /* Fast CSS Tooltips */
+        [data-tooltip] {
+            position: relative;
+        }
+        [data-tooltip]::before,
+        [data-tooltip]::after {
+            position: absolute;
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
+            transition: opacity 0.12s ease-out, transform 0.12s ease-out, visibility 0.12s;
+            z-index: 1000;
+        }
+        [data-tooltip]::after {
+            content: attr(data-tooltip);
+            bottom: calc(100% + 7px);
+            left: 50%;
+            transform: translateX(-50%) translateY(3px);
+            background: #0f172a;
+            color: #f8fafc;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 0.72rem;
+            font-weight: 500;
+            letter-spacing: normal;
+            white-space: nowrap;
+            padding: 4px 8px;
+            border-radius: 5px;
+            border: 1px solid #475569;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+        }
+        [data-tooltip]::before {
+            content: '';
+            bottom: calc(100% + 1px);
+            left: 50%;
+            transform: translateX(-50%) translateY(3px);
+            border: 4px solid transparent;
+            border-top-color: #475569;
+        }
+        [data-tooltip]:hover::before,
+        [data-tooltip]:hover::after,
+        [data-tooltip]:focus-visible::before,
+        [data-tooltip]:focus-visible::after {
+            opacity: 1;
+            visibility: visible;
+            transform: translateX(-50%) translateY(0);
+            transition-delay: 40ms;
+        }
+
+        /* Tooltip on Left */
+        [data-tooltip-pos="left"]::after {
+            bottom: auto;
+            top: 50%;
+            right: calc(100% + 8px);
+            left: auto;
+            transform: translateY(-50%) translateX(3px);
+        }
+        [data-tooltip-pos="left"]::before {
+            bottom: auto;
+            top: 50%;
+            right: calc(100% + 2px);
+            left: auto;
+            transform: translateY(-50%) translateX(3px);
+            border: 4px solid transparent;
+            border-left-color: #475569;
+        }
+        [data-tooltip-pos="left"]:hover::before,
+        [data-tooltip-pos="left"]:hover::after,
+        [data-tooltip-pos="left"]:focus-visible::before,
+        [data-tooltip-pos="left"]:focus-visible::after {
+            transform: translateY(-50%) translateX(0);
+        }
+
+        /* Floating Side Dock with 10s periodic subtle glow (3s duration) */
+        @keyframes dock-container-pulse {
+            0% {
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+                border-color: transparent;
+            }
+            15% { /* Peak of 3s glow */
+                box-shadow:
+                    0 0 28px 4px rgba(59, 130, 246, 0.5),
+                    0 0 12px 2px rgba(147, 197, 253, 0.35),
+                    0 10px 30px rgba(0, 0, 0, 0.4);
+                border-color: rgba(96, 165, 250, 0.45);
+            }
+            30% { /* End of 3s glow */
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+                border-color: transparent;
+            }
+            100% { /* 7s quiet rest before repeating */
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+                border-color: transparent;
+            }
+        }
+
+        .floating-side-dock {
+            position: fixed;
+            right: 14px;
+            top: 50%;
+            transform: translateY(-50%);
+            z-index: 95;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            background: rgba(30, 41, 59, 0.8);
+            -webkit-backdrop-filter: blur(12px);
+            backdrop-filter: blur(12px);
+            border: 1px solid transparent;
+            border-radius: 14px;
+            padding: 8px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+            animation: dock-container-pulse 10s ease-in-out infinite;
+            transition: border-color 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .floating-side-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 50px;
+            height: 50px;
+            border-radius: 12px;
+            border: none;
+            outline: none;
+            background: #334155;
+            color: #e2e8f0;
+            cursor: pointer;
+            text-decoration: none;
+            transition: background 0.2s ease, color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .floating-side-btn:hover {
+            background: var(--primary) !important;
+            color: #ffffff !important;
+            box-shadow: 0 0 24px rgba(59, 130, 246, 0.85) !important;
+            transform: scale(1.12) !important;
+        }
+
+        .floating-side-btn svg {
+            width: 24px;
+            height: 24px;
+        }
     </style>
 </head>
 <body>
 <div class="container">
     <header class="site-header">
-        <div class="site-header-brand">
-            <h1>SCIM Validator</h1>
+        <div class="brand-group">
+            <h1 class="brand-title">SCIM 2.0 Validator</h1>
+            <nav class="nav-segmented" aria-label="Main Navigation">
+                <a th:href="@{/}" href="/" class="nav-segment active">
+                    <svg class="nav-segment-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
+                    <span>Test Suite</span>
+                </a>
+                <a th:href="@{/request-explorer}" href="/request-explorer" class="nav-segment">
+                    <svg class="nav-segment-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"></polygon></svg>
+                    <span>Request Explorer</span>
+                </a>
+            </nav>
         </div>
         <div class="site-header-user">
             <span class="user-name" th:text="${currentUser} + ' (' + ${currentUserRole} + ')'">User (Role)</span>
@@ -101,12 +550,13 @@
             </form>
         </div>
     </header>
+
     <div class="card">
         <form method="post" th:action="@{/runs}" th:object="${runForm}" th:data-runs-count="${#lists.size(runs)}" th:data-max-runs="${maxRuns}">
             <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
             <div class="grid">
                 <div class="field">
-                    <label for="name">Run Name</label>
+                    <label for="name">Test Suite Name</label>
                     <input id="name" type="text" th:field="*{name}" placeholder="e.g. Okta nightly validation">
                     <div class="error" th:if="${#fields.hasErrors('name')}" th:errors="*{name}"></div>
                 </div>
@@ -121,61 +571,67 @@
                 <input id="authToken" type="password" th:field="*{authToken}" placeholder="token">
                 <div class="error" th:if="${#fields.hasErrors('authToken')}" th:errors="*{authToken}"></div>
             </div>
-            <button type="submit" id="run-btn">Run Validation Suite</button>
+            <button type="submit" id="run-btn">Run Test Suite</button>
         </form>
     </div>
 
     <div id="run-overlay">
         <div class="run-dialog">
             <div class="run-spinner"></div>
-            <p>Running tests&hellip;</p>
+            <p>Running test suite&hellip;</p>
             <small>This may take a minute. Please wait.</small>
         </div>
     </div>
 
     <div class="card">
-        <h2 style="display: flex; align-items: center; justify-content: space-between;">
-            <span>Validation Runs</span>
-        </h2>
-        <div th:if="${maxRuns != null}" style="margin-bottom: 16px; padding: 12px 16px; background: #eff6ff; border-left: 4px solid #3b82f6; border-radius: 4px; color: #1e3a8a; font-size: 14px; display: flex; align-items: center; gap: 8px;">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
-            <span style="flex: 1;"><strong>Storage Limit:</strong> We only keep your latest <strong th:text="${maxRuns}">10</strong> runs. If you start a new run when you already have this many, your oldest run will be automatically deleted.</span>
+        <div class="card-header-title">
+            <span>Test Suites</span>
         </div>
-        <table>
-            <thead>
-            <tr>
-                <th>ID</th>
-                <th>Name</th>
-                <th>Owner</th>
-                <th>URL</th>
-                <th>Date</th>
-                <th>Status</th>
-                <th>Result</th>
-                <th>Actions</th>
-            </tr>
-            </thead>
-            <tbody>
-            <tr th:if="${#lists.isEmpty(runs)}">
-                <td colspan="8">No runs yet.</td>
-            </tr>
-            <tr th:each="run : ${runs}">
-                <td><a th:href="@{/runs/{id}(id=${run.id})}" th:text="${run.id}">id</a></td>
-                <td th:text="${run.name}">name</td>
-                <td th:text="${run.createdByEmail}">owner</td>
-                <td th:text="${run.targetUrl}">url</td>
-                <td th:text="${#temporals.format(run.executedAt, 'yyyy-MM-dd HH:mm:ssXXX')}">date</td>
-                <td th:text="${run.status}" th:classappend="${'status-' + #strings.toLowerCase(run.status)}">status</td>
-                <td th:text="${run.passedTests + ' / ' + run.totalTests}">result</td>
-                <td style="display: flex; gap: 8px;">
-                    <a th:href="@{/runs/{id}/export(id=${run.id})}" class="export-button" title="Export as JSON">Export</a>
-                    <form class="inline-form" method="post" th:action="@{/runs/{id}/delete(id=${run.id})}" onsubmit="return confirm('Delete this run and all its recorded test results?');">
-                        <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
-                        <button type="submit" class="danger-button">Delete</button>
-                    </form>
-                </td>
-            </tr>
-            </tbody>
-        </table>
+        <div th:if="${maxRuns != null}" class="info-banner">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+            <span style="flex: 1;"><strong>Storage Limit:</strong> We only keep your latest <strong th:text="${maxRuns}">10</strong> test suites. If you start a new one when you already have this many, your oldest test suite will be automatically deleted.</span>
+        </div>
+        <div class="table-responsive">
+            <table>
+                <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Name</th>
+                    <th>Owner</th>
+                    <th>URL</th>
+                    <th>Date</th>
+                    <th>Status</th>
+                    <th>Result</th>
+                    <th>Actions</th>
+                </tr>
+                </thead>
+                <tbody>
+                <tr th:if="${#lists.isEmpty(runs)}">
+                    <td colspan="8" style="text-align: center; color: #94a3b8; padding: 28px;">No test suites recorded yet.</td>
+                </tr>
+                <tr th:each="run : ${runs}">
+                    <td><a th:href="@{/runs/{id}(id=${run.id})}" class="run-id-link" th:text="${run.id}">id</a></td>
+                    <td th:text="${run.name}">name</td>
+                    <td th:text="${run.createdByEmail}">owner</td>
+                    <td th:text="${run.targetUrl}">url</td>
+                    <td th:text="${#temporals.format(run.executedAt, 'yyyy-MM-dd HH:mm:ssXXX')}">date</td>
+                    <td>
+                        <span class="status-badge" th:text="${run.status}" th:classappend="${'status-' + #strings.toLowerCase(run.status)}">status</span>
+                    </td>
+                    <td th:text="${run.passedTests + ' / ' + run.totalTests}">result</td>
+                    <td>
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            <a th:href="@{/runs/{id}/export(id=${run.id})}" class="export-button" title="Export as JSON">Export</a>
+                            <form class="inline-form" method="post" th:action="@{/runs/{id}/delete(id=${run.id})}" onsubmit="return confirm('Delete this run and all its recorded test results?');">
+                                <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                                <button type="submit" class="danger-button">Delete</button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                </tbody>
+            </table>
+        </div>
     </div>
 </div>
 <script>
@@ -203,14 +659,73 @@
                 }
             });
         }
+
+        function handleIncomingCredentials(incomingUrl, incomingToken) {
+            var baseUrlField = document.getElementById('baseUrl');
+            var tokenField = document.getElementById('authToken');
+            var nameField = document.getElementById('name');
+            if (incomingUrl && baseUrlField) baseUrlField.value = incomingUrl;
+            if (incomingToken && tokenField) tokenField.value = incomingToken;
+            if (incomingUrl && nameField && !nameField.value.trim()) {
+                nameField.value = 'Playground Workspace Validation';
+            }
+        }
+
+        // 1. Check URL Hash fragment (#url=...&token=...)
+        if (window.location.hash) {
+            try {
+                var hashStr = window.location.hash.substring(1);
+                var hashParams = new URLSearchParams(hashStr);
+                var hUrl = hashParams.get('url');
+                var hToken = hashParams.get('token');
+                if (hUrl || hToken) {
+                    handleIncomingCredentials(hUrl ? decodeURIComponent(hUrl) : null, hToken ? decodeURIComponent(hToken) : null);
+                    history.replaceState(null, '', window.location.pathname + window.location.search);
+                }
+            } catch (e) {
+                console.error('Error reading hash params:', e);
+            }
+        } else if (window.location.search) {
+            // Fallback for query parameters (?url=...&token=...)
+            try {
+                var queryParams = new URLSearchParams(window.location.search);
+                var qUrl = queryParams.get('url');
+                var qToken = queryParams.get('token');
+                if (qUrl || qToken) {
+                    handleIncomingCredentials(qUrl, qToken);
+                }
+            } catch (e) {}
+        }
+
+        // 2. Listen for postMessage from opener tab. Only the management UI may hand credentials
+        // over, so anything from another origin is ignored; an unresolvable origin fails closed and
+        // leaves the hash-fragment path as the only handoff.
+        var playgroundOrigin = (function () {
+            var meta = document.querySelector('meta[name="playground_url"]');
+            var configured = meta && meta.content ? meta.content.trim() : '';
+            if (!configured) return null;
+            try {
+                return new URL(configured).origin;
+            } catch (e) {
+                return null;
+            }
+        })();
+        window.addEventListener('message', function (event) {
+            if (!playgroundOrigin || event.origin !== playgroundOrigin) return;
+            if (event.data && event.data.type === 'SCIM_VALIDATOR_INIT') {
+                var mUrl = event.data.baseUrl;
+                var mToken = event.data.authToken;
+                handleIncomingCredentials(mUrl, mToken);
+                if (event.source && event.source.postMessage) {
+                    try {
+                        event.source.postMessage({ type: 'SCIM_VALIDATOR_ACK' }, event.origin);
+                    } catch (e) {}
+                }
+            }
+        });
     })();
 </script>
 <footer class="site-footer">
-    <div style="margin-bottom: 1rem;">
-        <a th:href="${playgroundUrl}" target="_blank" rel="noopener noreferrer" style="display: inline-flex; align-items: center; gap: 0.5rem; color: var(--text-muted); text-decoration: none; font-weight: 500; font-size: 0.95rem;">
-            <img th:src="|${playgroundUrl}/favicon.svg|" alt="Favicon" style="width: 1.25rem; height: 1.25rem; border-radius: 0.25rem;"> SCIM Playground
-        </a>
-    </div>
     <nav class="site-footer-icons" aria-label="Legal and contact links">
         <a href="https://scimsandbox.github.io/scim-app-policy/terms.html" target="_blank" rel="noopener noreferrer" aria-label="Terms of Service" title="Terms of Service"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M1 21h12v2H1zM5.245 8.07l2.83-2.827 14.14 14.142-2.828 2.828zM12.317 1l5.657 5.656-2.83 2.83-5.654-5.66zM3.825 9.485l5.657 5.657-2.828 2.828-5.657-5.657z"/></svg></a>
         <a href="https://scimsandbox.github.io/scim-app-policy/privacy.html" target="_blank" rel="noopener noreferrer" aria-label="Privacy Policy" title="Privacy Policy"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 1 3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z"/></svg></a>
@@ -219,6 +734,12 @@
         <a href="mailto:support@scimsandbox.net" aria-label="Email Support" title="Email Support"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4-8 5-8-5V6l8 5 8-5v2z"/></svg></a>
     </nav>
 </footer>
+<!-- Floating Side Dock -->
+<aside class="floating-side-dock" aria-label="Quick Navigation">
+    <a th:href="${playgroundUrl}" href="https://ui.scimsandbox.net" target="_blank" rel="noopener noreferrer" class="floating-side-btn" data-tooltip="SCIM Playground" data-tooltip-pos="left" aria-label="SCIM Playground">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"></rect><rect width="20" height="8" x="2" y="14" rx="2" ry="2"></rect><line x1="6" x2="6.01" y1="6" y2="6"></line><line x1="6" x2="6.01" y1="18" y2="18"></line></svg>
+    </a>
+</aside>
 <details class="bmc-widget">
     <summary aria-label="Buy me a coffee">
         <img th:src="@{/images/buy-me-a-coffee-icon.svg}" src="/images/buy-me-a-coffee-icon.svg" alt="Buy Me a Coffee icon">

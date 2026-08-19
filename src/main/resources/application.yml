@@ -41,6 +41,10 @@ spring:
             issuer-uri: ${AUTH0_ISSUER_URI}
 
 server:
+  # cloudflared reaches this container over plain http, so without this the servlet layer sees an
+  # insecure request: redirects come back as absolute http:// URLs, the session and CSRF cookies are
+  # written without Secure, and the HSTS writer stays silent. Honour X-Forwarded-Proto instead.
+  forward-headers-strategy: framework
   servlet:
     session:
       cookie:

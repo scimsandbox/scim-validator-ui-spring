@@ -1,0 +1,2870 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="_csrf" th:content="${_csrf.token}"/>
+    <meta name="_csrf_header" th:content="${_csrf.headerName}"/>
+    <meta name="playground_url" th:content="${playgroundUrl}"/>
+    <title>SCIM 2.0 Validator | Request Explorer</title>
+    <link rel="icon" type="image/svg+xml" th:href="@{/favicon.svg}" href="/favicon.svg">
+    <style>
+        :root {
+            --bg: #0b1220;
+            --card-bg: #1e293b;
+            --card-subtle: #0f172a;
+            --text-dark: #f8fafc;
+            --text-muted: #94a3b8;
+            --border-light: #334155;
+            --primary: #2563eb;
+            --primary-hover: #1d4ed8;
+            --radius: 8px;
+        }
+
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            background: linear-gradient(160deg, #0b1220 0%, #0f172a 45%, #111827 100%);
+            color: #e2e8f0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .container {
+            max-width: 1340px;
+            margin: 0 auto;
+            padding: 16px 20px 40px;
+            width: 100%;
+            flex: 1;
+        }
+
+        /* Top Header */
+        .site-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 0 16px;
+            border-bottom: 1px solid #334155;
+            margin-bottom: 16px;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        .brand-group {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+        .brand-title {
+            margin: 0;
+            font-size: 1.3rem;
+            font-weight: 700;
+            color: #f8fafc;
+        }
+        .nav-segmented {
+            display: inline-flex;
+            align-items: center;
+            background: #0f172a;
+            border: 1px solid #334155;
+            padding: 4px;
+            border-radius: 8px;
+            gap: 4px;
+            box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.4);
+        }
+        .nav-segment {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 16px;
+            border-radius: 6px;
+            color: #94a3b8;
+            text-decoration: none;
+            font-size: 13.5px;
+            font-weight: 600;
+            transition: all 0.15s ease;
+            user-select: none;
+        }
+        .nav-segment:hover {
+            color: #f8fafc;
+            background: rgba(255, 255, 255, 0.06);
+        }
+        .nav-segment.active {
+            color: #ffffff;
+            background: #2563eb;
+            font-weight: 700;
+            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3), 0 0 10px rgba(37, 99, 235, 0.35);
+        }
+        .nav-segment-icon {
+            width: 16px;
+            height: 16px;
+            flex-shrink: 0;
+        }
+
+        .site-header-user {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .user-name { font-size: 13px; color: #94a3b8; }
+        .logout-form { margin: 0; }
+        .logout-button {
+            padding: 6px 12px;
+            background: #334155;
+            color: #fff;
+            font-size: 13px;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+        }
+        .logout-button:hover { background: #475569; }
+
+        /* Target Environment Config Bar */
+        .target-bar {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 10px;
+            padding: 14px 18px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+        }
+        .target-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            font-size: 12.5px;
+            font-weight: 700;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .target-fields {
+            display: grid;
+            grid-template-columns: 2.2fr 2fr auto;
+            gap: 12px;
+            align-items: center;
+        }
+        @media (max-width: 900px) {
+            .target-fields { grid-template-columns: 1fr; }
+        }
+        .input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .input-group label {
+            font-size: 11px;
+            font-weight: 600;
+            color: #94a3b8;
+            text-transform: uppercase;
+        }
+        .target-input {
+            padding: 8px 12px;
+            background: #0f172a;
+            border: 1px solid #475569;
+            border-radius: 6px;
+            color: #f8fafc;
+            font-size: 13px;
+            font-family: 'Space Grotesk', monospace;
+            outline: none;
+            transition: border-color 0.15s;
+        }
+        .target-input:focus { border-color: #3b82f6; }
+        .btn-test-env {
+            padding: 9px 16px;
+            background: #2563eb;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 13px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            white-space: nowrap;
+            margin-top: 18px;
+            height: 38px;
+            transition: background 0.15s;
+        }
+        .btn-test-env:hover { background: #1d4ed8; }
+        .env-status-badge {
+            font-size: 12px;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        /* Main Workspace Layout */
+        .workspace {
+            display: grid;
+            grid-template-columns: 240px minmax(0, 1fr);
+            gap: 20px;
+        }
+        @media (max-width: 860px) {
+            .workspace { grid-template-columns: 1fr; }
+        }
+
+        /* Sidebar */
+        .sidebar {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 10px;
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            height: fit-content;
+            position: sticky;
+            top: 16px;
+        }
+        .sidebar-title {
+            font-size: 11px;
+            font-weight: 700;
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+            padding: 6px 10px 4px;
+        }
+        .sidebar-link {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 9px 12px;
+            border-radius: 6px;
+            color: #cbd5e1;
+            text-decoration: none;
+            font-size: 13.5px;
+            font-weight: 600;
+            transition: all 0.15s ease;
+        }
+        .sidebar-link:hover {
+            color: #ffffff;
+            background: rgba(255, 255, 255, 0.06);
+        }
+        .sidebar-link.active {
+            color: #ffffff;
+            background: #2563eb;
+        }
+
+        /* Main Content Cards */
+        .content-area {
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+        }
+
+        .topic-header-bar {
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+            gap: 16px;
+            margin-bottom: 6px;
+            flex-wrap: wrap;
+        }
+        .topic-title {
+            font-size: 1.55rem;
+            font-weight: 700;
+            color: #f8fafc;
+            margin: 0 0 4px;
+        }
+        .topic-desc {
+            font-size: 14px;
+            color: #94a3b8;
+            margin: 0;
+            line-height: 1.45;
+        }
+        .topic-controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .btn-toggle-all {
+            padding: 5px 12px;
+            background: #1e293b;
+            color: #cbd5e1;
+            border: 1px solid #334155;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .btn-toggle-all:hover {
+            background: #334155;
+            color: #ffffff;
+        }
+
+        /* Operation Card (Collapsible) */
+        .op-card {
+            background: #1e293b;
+            color: #f8fafc;
+            border-radius: 10px;
+            border: 1px solid #334155;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+            overflow: hidden;
+            transition: box-shadow 0.15s, border-color 0.15s;
+        }
+        .op-card:hover {
+            box-shadow: 0 6px 24px rgba(0,0,0,0.35);
+            border-color: #475569;
+        }
+
+        .op-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 14px;
+            padding: 14px 18px;
+            cursor: pointer;
+            user-select: none;
+            background: #1e293b;
+            transition: background 0.12s;
+        }
+        .op-head:hover {
+            background: #243248;
+        }
+        .op-card.expanded .op-head {
+            border-bottom: 1px solid #334155;
+            background: #1e293b;
+        }
+
+        .op-head-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex: 1;
+            min-width: 0;
+        }
+        .chevron-icon {
+            width: 18px;
+            height: 18px;
+            color: #94a3b8;
+            transition: transform 0.2s ease;
+            flex-shrink: 0;
+        }
+        .op-card.expanded .chevron-icon {
+            transform: rotate(90deg);
+            color: #60a5fa;
+        }
+
+        .op-title-group {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            min-width: 0;
+        }
+        .op-title {
+            font-size: 1.05rem;
+            font-weight: 700;
+            color: #f8fafc;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .op-desc {
+            font-size: 12.5px;
+            color: #94a3b8;
+            margin: 0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .op-head-right {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-shrink: 0;
+        }
+        .rfc-link {
+            font-size: 11px;
+            font-weight: 700;
+            color: #93c5fd;
+            background: rgba(37, 99, 235, 0.15);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            padding: 3px 8px;
+            border-radius: 5px;
+            text-decoration: none;
+            white-space: nowrap;
+            transition: all 0.15s;
+        }
+        .rfc-link:hover {
+            background: rgba(37, 99, 235, 0.3);
+            color: #bfdbfe;
+        }
+
+        /* Operation Body (Expanded content) */
+        .op-body {
+            display: none;
+            padding: 18px;
+            flex-direction: column;
+            gap: 16px;
+            background: #1e293b;
+        }
+        .op-card.expanded .op-body {
+            display: flex;
+        }
+
+        .op-info-box {
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-left: 3.5px solid #3b82f6;
+            padding: 10px 14px;
+            font-size: 13px;
+            color: #cbd5e1;
+            border-radius: 0 6px 6px 0;
+            line-height: 1.5;
+        }
+        .op-info-box code {
+            background: #1e293b;
+            color: #93c5fd;
+            padding: 2px 5px;
+            border-radius: 4px;
+            font-size: 12px;
+            border: 1px solid #334155;
+        }
+
+        /* Form Parameters Section */
+        .params-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            padding: 16px;
+        }
+        .params-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 14px;
+            align-items: start;
+        }
+        .params-row-2col {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 14px;
+            align-items: start;
+        }
+        @media (max-width: 680px) {
+            .params-row-2col { grid-template-columns: 1fr; }
+        }
+        .field-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        .field-label {
+            font-size: 12px;
+            font-weight: 700;
+            color: #94a3b8;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+        .field-helper {
+            font-size: 11px;
+            color: #64748b;
+            font-weight: 500;
+            white-space: nowrap;
+        }
+        .field-input, .field-select {
+            padding: 8px 12px;
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 6px;
+            font-size: 13px;
+            color: #f8fafc;
+            outline: none;
+            transition: all 0.15s ease;
+            font-family: inherit;
+        }
+        .field-input:focus, .field-select:focus {
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+        }
+        .field-input::placeholder {
+            color: #64748b;
+        }
+        .quick-btn {
+            font-size: 11.5px;
+            font-weight: 600;
+            color: #93c5fd;
+            background: #334155;
+            border: 1px solid #475569;
+            border-radius: 4px;
+            cursor: pointer;
+            padding: 2px 8px;
+            transition: background 0.15s, color 0.15s;
+        }
+        .quick-btn:hover {
+            background: #475569;
+            color: #ffffff;
+        }
+
+        /* Preset Pills for Filters */
+        .preset-pills {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+            margin-top: 4px;
+        }
+        .preset-pill-label {
+            font-size: 11px;
+            color: #94a3b8;
+            font-weight: 600;
+        }
+        .filter-pill {
+            background: #1e293b;
+            color: #94a3b8;
+            border: 1px solid #334155;
+            border-radius: 12px;
+            padding: 3px 9px;
+            font-size: 11px;
+            font-family: monospace;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+        .filter-pill:hover {
+            background: #2563eb;
+            color: #ffffff;
+            border-color: #2563eb;
+        }
+
+        /* URL Preview Bar */
+        .url-preview-bar {
+            background: #0f172a;
+            border-radius: 8px;
+            padding: 10px 14px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            flex-wrap: wrap;
+            box-shadow: inset 0 1px 3px rgba(0,0,0,0.3);
+        }
+        .url-preview-left {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex: 1;
+            min-width: 260px;
+        }
+        .method-badge {
+            font-size: 11px;
+            font-weight: 800;
+            padding: 3px 8px;
+            border-radius: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            flex-shrink: 0;
+        }
+        .method-GET { background: #1e3a8a; color: #93c5fd; }
+        .method-POST { background: #14532d; color: #86efac; }
+        .method-PATCH { background: #78350f; color: #fde68a; }
+        .method-PUT { background: #581c87; color: #d8b4fe; }
+        .method-DELETE { background: #7f1d1d; color: #fca5a5; }
+
+        .url-text-container {
+            font-family: 'Space Grotesk', monospace;
+            font-size: 13px;
+            color: #f8fafc;
+            word-break: break-all;
+            line-height: 1.4;
+        }
+        .url-text-container .url-base { color: #94a3b8; }
+        .url-text-container .url-path { color: #60a5fa; font-weight: 600; }
+        .url-text-container .url-query { color: #fcd34d; }
+
+        .url-preview-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+        .btn-send-req {
+            padding: 8px 18px;
+            background: #2563eb;
+            color: #ffffff;
+            font-size: 13px;
+            font-weight: 700;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: background 0.15s;
+            height: 36px;
+        }
+        .btn-send-req:hover { background: #1d4ed8; }
+        .btn-send-req:disabled { opacity: 0.6; cursor: not-allowed; }
+
+        /* JSON Code Editor */
+        .editor-container {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .editor-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .json-textarea {
+            width: 100%;
+            background: #0f172a;
+            color: #e2e8f0;
+            border: 1px solid #334155;
+            border-radius: 6px;
+            padding: 12px;
+            font-family: 'Space Grotesk', monospace;
+            font-size: 12.5px;
+            line-height: 1.5;
+            resize: vertical;
+            min-height: 130px;
+            outline: none;
+        }
+        .json-textarea:focus { border-color: #3b82f6; }
+
+        /* Response Panel */
+        .resp-panel {
+            display: none;
+            background: #0f172a;
+            border-radius: 8px;
+            border: 1px solid #334155;
+            overflow: hidden;
+            flex-direction: column;
+            animation: fadeIn 0.2s ease-in-out;
+        }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+        .resp-panel.active { display: flex; }
+        .resp-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 14px;
+            background: #1e293b;
+            border-bottom: 1px solid #334155;
+        }
+        .resp-status-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .status-pill {
+            font-size: 11.5px;
+            font-weight: 800;
+            padding: 3px 8px;
+            border-radius: 4px;
+        }
+        .status-2xx { background: #166534; color: #bbf7d0; }
+        .status-3xx { background: #1e3a8a; color: #bfdbfe; }
+        .status-4xx { background: #854d0e; color: #fef08a; }
+        .status-5xx, .status-err { background: #991b1b; color: #fecaca; }
+        .duration-pill { font-size: 12px; color: #94a3b8; font-weight: 600; }
+
+        .resp-actions {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .btn-tiny {
+            padding: 4px 10px;
+            background: #334155;
+            color: #e2e8f0;
+            border: none;
+            border-radius: 4px;
+            font-size: 11.5px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .btn-tiny:hover { background: #475569; }
+
+        .resp-headers-view {
+            display: none;
+            padding: 10px 14px;
+            background: #111827;
+            border-bottom: 1px solid #334155;
+            font-family: monospace;
+            font-size: 11.5px;
+            color: #94a3b8;
+            white-space: pre-wrap;
+        }
+        .resp-headers-view.show { display: block; }
+        .resp-body-pre {
+            margin: 0;
+            padding: 14px;
+            color: #e2e8f0;
+            font-family: 'Space Grotesk', monospace;
+            font-size: 12.5px;
+            line-height: 1.45;
+            white-space: pre-wrap;
+            word-break: break-all;
+            max-height: 480px;
+            overflow-y: auto;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Buy me a coffee */
+        .bmc-widget, .bmc-widget * { box-sizing: border-box; }
+        .bmc-widget { position: fixed; right: 1.5rem; bottom: 1.5rem; z-index: 90; }
+        .bmc-widget summary { list-style: none; min-height: 3.5rem; display: inline-flex; align-items: center; justify-content: center; gap: 0.55rem; padding: 0.75rem 0.95rem; border-radius: 999px; cursor: pointer; background: linear-gradient(180deg, #ffe066 0%, #ffd43b 100%); box-shadow: 0 20px 45px rgba(15, 23, 42, 0.45); border: 1px solid rgba(255, 255, 255, 0.35); }
+        .bmc-widget summary::-webkit-details-marker { display: none; }
+        .bmc-widget summary img { display: block; width: 1.9rem; height: 1.9rem; }
+        .bmc-widget-label { color: #172554; font-size: 0.84rem; font-weight: 800; line-height: 1; white-space: nowrap; }
+        .bmc-widget[open] summary { box-shadow: 0 24px 50px rgba(15, 23, 42, 0.5); }
+        .bmc-panel { position: absolute; right: 0; bottom: calc(100% + 12px); width: min(168px, calc(100vw - 32px)); display: block; background: #fff; border-radius: 24px; overflow: hidden; box-shadow: 0 18px 36px rgba(0,0,0,0.24); opacity: 0; transform: translateY(8px) scale(0.98); pointer-events: none; transition: opacity 0.18s ease, transform 0.18s ease; }
+        .bmc-widget[open] .bmc-panel { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+        .bmc-panel img { display: block; width: 100%; height: auto; }
+        .bmc-panel-copy { display: flex; align-items: center; justify-content: center; padding: 8px 10px 10px; background: #fff4b3; color: #7c2d12; text-align: center; }
+        .bmc-panel-hint { font-size: 12px; font-weight: 700; opacity: 0.85; }
+        @media (max-width: 720px) {
+            .bmc-widget { right: 1rem; bottom: 1rem; }
+            .bmc-widget summary { min-height: 3rem; gap: 0.4rem; padding: 0.65rem 0.8rem; }
+            .bmc-widget summary img { width: 1.6rem; height: 1.6rem; }
+            .bmc-widget-label { font-size: 0.72rem; }
+            .bmc-panel { width: min(120px, calc(100vw - 24px)); border-radius: 18px; }
+            .bmc-panel-copy { padding: 6px 8px 8px; }
+            .bmc-panel-hint { font-size: 9px; }
+        }
+
+        /* Footer */
+        .site-footer { padding: 2rem 1rem 1.5rem; text-align: center; }
+        .site-footer-icons { display: flex; align-items: center; justify-content: center; gap: 1.25rem; }
+        .site-footer-icons a { display: inline-flex; align-items: center; justify-content: center; width: 2.25rem; height: 2.25rem; border-radius: 50%; border: 1px solid #475569; color: #94a3b8; transition: color 0.2s, border-color 0.2s, background 0.2s; text-decoration: none; }
+        .site-footer-icons a:hover { color: #f8fafc; border-color: #3b82f6; background: rgba(59,130,246,0.08); }
+        .site-footer-icons svg { width: 1.4rem; height: 1.4rem; fill: currentColor; }
+
+        /* Fast CSS Tooltips */
+        [data-tooltip] {
+            position: relative;
+        }
+        [data-tooltip]::before,
+        [data-tooltip]::after {
+            position: absolute;
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
+            transition: opacity 0.12s ease-out, transform 0.12s ease-out, visibility 0.12s;
+            z-index: 1000;
+        }
+        [data-tooltip]::after {
+            content: attr(data-tooltip);
+            bottom: calc(100% + 7px);
+            left: 50%;
+            transform: translateX(-50%) translateY(3px);
+            background: #0f172a;
+            color: #f8fafc;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 0.72rem;
+            font-weight: 500;
+            letter-spacing: normal;
+            white-space: nowrap;
+            padding: 4px 8px;
+            border-radius: 5px;
+            border: 1px solid #475569;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+        }
+        [data-tooltip]::before {
+            content: '';
+            bottom: calc(100% + 1px);
+            left: 50%;
+            transform: translateX(-50%) translateY(3px);
+            border: 4px solid transparent;
+            border-top-color: #475569;
+        }
+        [data-tooltip]:hover::before,
+        [data-tooltip]:hover::after,
+        [data-tooltip]:focus-visible::before,
+        [data-tooltip]:focus-visible::after {
+            opacity: 1;
+            visibility: visible;
+            transform: translateX(-50%) translateY(0);
+            transition-delay: 40ms;
+        }
+
+        /* Tooltip on Left */
+        [data-tooltip-pos="left"]::after {
+            bottom: auto;
+            top: 50%;
+            right: calc(100% + 8px);
+            left: auto;
+            transform: translateY(-50%) translateX(3px);
+        }
+        [data-tooltip-pos="left"]::before {
+            bottom: auto;
+            top: 50%;
+            right: calc(100% + 2px);
+            left: auto;
+            transform: translateY(-50%) translateX(3px);
+            border: 4px solid transparent;
+            border-left-color: #475569;
+        }
+        [data-tooltip-pos="left"]:hover::before,
+        [data-tooltip-pos="left"]:hover::after,
+        [data-tooltip-pos="left"]:focus-visible::before,
+        [data-tooltip-pos="left"]:focus-visible::after {
+            transform: translateY(-50%) translateX(0);
+        }
+
+        /* Floating Side Dock with 10s periodic subtle glow (3s duration) */
+        @keyframes dock-container-pulse {
+            0% {
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+                border-color: transparent;
+            }
+            15% { /* Peak of 3s glow */
+                box-shadow:
+                    0 0 28px 4px rgba(59, 130, 246, 0.5),
+                    0 0 12px 2px rgba(147, 197, 253, 0.35),
+                    0 10px 30px rgba(0, 0, 0, 0.4);
+                border-color: rgba(96, 165, 250, 0.45);
+            }
+            30% { /* End of 3s glow */
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+                border-color: transparent;
+            }
+            100% { /* 7s quiet rest before repeating */
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+                border-color: transparent;
+            }
+        }
+
+        .floating-side-dock {
+            position: fixed;
+            right: 14px;
+            top: 50%;
+            transform: translateY(-50%);
+            z-index: 95;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            background: rgba(30, 41, 59, 0.8);
+            -webkit-backdrop-filter: blur(12px);
+            backdrop-filter: blur(12px);
+            border: 1px solid transparent;
+            border-radius: 14px;
+            padding: 8px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+            animation: dock-container-pulse 10s ease-in-out infinite;
+            transition: border-color 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .floating-side-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 50px;
+            height: 50px;
+            border-radius: 12px;
+            border: none;
+            outline: none;
+            background: #334155;
+            color: #e2e8f0;
+            cursor: pointer;
+            text-decoration: none;
+            transition: background 0.2s ease, color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .floating-side-btn:hover {
+            background: var(--primary) !important;
+            color: #ffffff !important;
+            box-shadow: 0 0 24px rgba(59, 130, 246, 0.85) !important;
+            transform: scale(1.12) !important;
+        }
+
+        .floating-side-btn svg {
+            width: 24px;
+            height: 24px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <!-- Site Header -->
+    <header class="site-header">
+        <div class="brand-group">
+            <h1 class="brand-title">SCIM 2.0 Validator</h1>
+            <nav class="nav-segmented" aria-label="Main Navigation">
+                <a th:href="@{/}" href="/" class="nav-segment">
+                    <svg class="nav-segment-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
+                    <span>Test Suite</span>
+                </a>
+                <a th:href="@{/request-explorer}" href="/request-explorer" class="nav-segment active">
+                    <svg class="nav-segment-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"></polygon></svg>
+                    <span>Request Explorer</span>
+                </a>
+            </nav>
+        </div>
+        <div class="site-header-user">
+            <span class="user-name" th:text="${currentUser} + ' (' + ${currentUserRole} + ')'">User (Role)</span>
+            <form method="post" th:action="@{/logout}" class="logout-form">
+                <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                <button type="submit" class="logout-button">Logout</button>
+            </form>
+        </div>
+    </header>
+
+    <!-- Global Target Config Bar -->
+    <div class="target-bar">
+        <div class="target-header">
+            <span>🌐 Active SCIM Server Target</span>
+            <span id="env-status" class="env-status-badge"></span>
+        </div>
+        <div class="target-fields">
+            <div class="input-group">
+                <label for="target-base-url">SCIM Base URL</label>
+                <input type="text" id="target-base-url" class="target-input" placeholder="https://api.example.com/scim/v2">
+            </div>
+            <div class="input-group">
+                <label for="target-token">Bearer Token (Optional)</label>
+                <input type="password" id="target-token" class="target-input" placeholder="eyJhbGciOi...">
+            </div>
+            <button type="button" class="btn-test-env" id="btn-ping-target">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                Ping /ServiceProviderConfig
+            </button>
+        </div>
+    </div>
+
+    <!-- Main Workspace -->
+    <div class="workspace">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar">
+            <div class="sidebar-title">SCIM Endpoints</div>
+            <a th:each="t : ${topics}"
+               th:href="@{'/request-explorer/' + ${t.id}}"
+               th:classappend="${t.id == activeTopic} ? 'active' : ''"
+               class="sidebar-link">
+                <span th:text="${t.title}">Topic</span>
+            </a>
+        </aside>
+
+        <!-- Main Content View -->
+        <main class="content-area">
+
+            <!-- ========================================== -->
+            <!-- 1. USERS PLAYGROUND                        -->
+            <!-- ========================================== -->
+            <div th:if="${activeTopic == 'users'}" class="topic-section">
+                <div class="topic-header-bar">
+                    <div>
+                        <h2 class="topic-title">SCIM Users API</h2>
+                        <p class="topic-desc">Manage identities via RFC 7643 &amp; RFC 7644. Click any operation below to expand and test.</p>
+                    </div>
+                    <div class="topic-controls">
+                        <button type="button" class="btn-toggle-all" onclick="toggleAllCards(true)">Expand All</button>
+                        <button type="button" class="btn-toggle-all" onclick="toggleAllCards(false)">Collapse All</button>
+                    </div>
+                </div>
+
+                <!-- Op 1: List Users -->
+                <div class="op-card" id="card-users-list">
+                    <div class="op-head">
+                        <div class="op-head-left">
+                            <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                            <span class="method-badge method-GET">GET</span>
+                            <div class="op-title-group">
+                                <h3 class="op-title">1. List Users with Pagination &amp; Filters</h3>
+                                <p class="op-desc">Retrieves a paginated list of users wrapped in a ListResponse envelope.</p>
+                            </div>
+                        </div>
+                        <div class="op-head-right">
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.4.2" target="_blank" class="rfc-link">RFC 7644 §3.4.2</a>
+                        </div>
+                    </div>
+                    <div class="op-body">
+                        <div class="op-info-box">
+                            Pagination uses <code>startIndex</code> (1-based index) and <code>count</code> (number of items). Combine with <code>filter</code> to query specific users.
+                        </div>
+                        <div class="params-grid">
+                            <div class="params-row">
+                                <div class="field-group">
+                                    <label class="field-label" for="pg1-start-index"><span>startIndex</span> <span class="field-helper">(1-based)</span></label>
+                                    <input id="pg1-start-index" type="number" class="field-input param-start-index" value="1" min="1">
+                                </div>
+                                <div class="field-group">
+                                    <label class="field-label" for="pg1-count"><span>count</span> <span class="field-helper">(Page size)</span></label>
+                                    <input id="pg1-count" type="number" class="field-input param-count" value="10" min="1" max="200">
+                                </div>
+                                <div class="field-group">
+                                    <label class="field-label" for="pg1-sort-by"><span>sortBy</span> <span class="field-helper">(Optional)</span></label>
+                                    <input id="pg1-sort-by" type="text" class="field-input param-sort-by" placeholder="e.g. userName">
+                                </div>
+                                <div class="field-group">
+                                    <label class="field-label" for="pg1-sort-order"><span>sortOrder</span></label>
+                                    <select id="pg1-sort-order" class="field-select param-sort-order">
+                                        <option value="">Default (Ascending)</option>
+                                        <option value="ascending">ascending</option>
+                                        <option value="descending">descending</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div class="field-group">
+                                <label class="field-label" for="pg1-filter">
+                                    <span>filter <span class="field-helper">(SCIM filter expression)</span></span>
+                                </label>
+                                <input id="pg1-filter" type="text" class="field-input param-filter" placeholder='e.g. userName eq "alex.morgan" or active eq true'>
+                                <div class="preset-pills">
+                                    <span class="preset-pill-label">Examples:</span>
+                                    <button type="button" class="filter-pill" data-filter='userName eq "alex.morgan"'>userName eq "alex.morgan"</button>
+                                    <button type="button" class="filter-pill" data-filter='emails[type eq "work" and value co "@example.com"]'>emails[type eq "work"]</button>
+                                    <button type="button" class="filter-pill" data-filter='active eq true'>active eq true</button>
+                                    <button type="button" class="filter-pill" data-filter='name.familyName sw "M"'>name.familyName sw "M"</button>
+                                    <button type="button" class="filter-pill" data-filter='not (userName sw "test")'>not (userName sw "test")</button>
+                                </div>
+                            </div>
+
+                            <div class="params-row-2col">
+                                <div class="field-group">
+                                    <label class="field-label" for="pg1-attributes"><span>attributes</span> <span class="field-helper">(Include only)</span></label>
+                                    <input id="pg1-attributes" type="text" class="field-input param-attributes" placeholder="e.g. userName,name,emails">
+                                </div>
+                                <div class="field-group">
+                                    <label class="field-label" for="pg1-excluded"><span>excludedAttributes</span> <span class="field-helper">(Exclude from response)</span></label>
+                                    <input id="pg1-excluded" type="text" class="field-input param-excluded" placeholder="e.g. phoneNumbers,addresses">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="url-preview-bar">
+                            <div class="url-preview-left">
+                                <span class="method-badge method-GET">GET</span>
+                                <span class="url-text-container"><span class="url-base"></span><span class="url-path">/Users</span><span class="url-query">?startIndex=1&amp;count=10</span></span>
+                            </div>
+                            <div class="url-preview-actions">
+                                <button type="button" class="btn-send-req"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg> Send Request</button>
+                            </div>
+                        </div>
+                        <div class="resp-panel"></div>
+                    </div>
+                </div>
+
+                <!-- Op 2: Get User by ID -->
+                <div class="op-card" id="card-users-get">
+                    <div class="op-head">
+                        <div class="op-head-left">
+                            <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                            <span class="method-badge method-GET">GET</span>
+                            <div class="op-title-group">
+                                <h3 class="op-title">2. Get User by ID</h3>
+                                <p class="op-desc">Retrieves a single user resource by identifier.</p>
+                            </div>
+                        </div>
+                        <div class="op-head-right">
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.4.1" target="_blank" class="rfc-link">RFC 7644 §3.4.1</a>
+                        </div>
+                    </div>
+                    <div class="op-body">
+                        <div class="params-grid">
+                            <div class="field-group">
+                                <label class="field-label" for="pg2-user-id">
+                                    <span>User ID (UUID or String)</span>
+                                </label>
+                                    <button type="button" class="quick-btn btn-use-last-user">Use Last ID</button>
+                                <input id="pg2-user-id" type="text" class="field-input param-user-id" placeholder="e.g. 57da7724-a956-4d15-a6f7-fe238b7bd34e">
+                            </div>
+                            <div class="params-row-2col">
+                                <div class="field-group">
+                                    <label class="field-label" for="pg2-attributes"><span>attributes</span> <span class="field-helper">(Optional inclusion)</span></label>
+                                    <input id="pg2-attributes" type="text" class="field-input param-attributes" placeholder="e.g. userName,name,emails">
+                                </div>
+                                <div class="field-group">
+                                    <label class="field-label" for="pg2-excluded"><span>excludedAttributes</span> <span class="field-helper">(Optional exclusion)</span></label>
+                                    <input id="pg2-excluded" type="text" class="field-input param-excluded" placeholder="e.g. photos">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="url-preview-bar">
+                            <div class="url-preview-left">
+                                <span class="method-badge method-GET">GET</span>
+                                <span class="url-text-container"><span class="url-base"></span><span class="url-path">/Users/{id}</span><span class="url-query"></span></span>
+                            </div>
+                            <div class="url-preview-actions">
+                                <button type="button" class="btn-send-req"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg> Send Request</button>
+                            </div>
+                        </div>
+                        <div class="resp-panel"></div>
+                    </div>
+                </div>
+
+                <!-- Op 3: Create User -->
+                <div class="op-card" id="card-users-create">
+                    <div class="op-head">
+                        <div class="op-head-left">
+                            <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                            <span class="method-badge method-POST">POST</span>
+                            <div class="op-title-group">
+                                <h3 class="op-title">3. Create User</h3>
+                                <p class="op-desc">Provisions a new user identity in the SCIM directory.</p>
+                            </div>
+                        </div>
+                        <div class="op-head-right">
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.3" target="_blank" class="rfc-link">RFC 7644 §3.3</a>
+                        </div>
+                    </div>
+                    <div class="op-body">
+                        <div class="editor-container">
+                            <div class="editor-head">
+                                <label class="field-label" for="pg3-body-json">Request Body (JSON)</label>
+                                <div style="display:flex; align-items:center; gap:8px;">
+                                    <select id="pg3-body-preset" aria-label="Request body preset" class="field-select body-preset" style="font-size:11.5px; padding:3px 8px;">
+                                        <option value="standard">Preset: Standard User</option>
+                                        <option value="minimal">Preset: Minimal User</option>
+                                        <option value="enterprise">Preset: Enterprise User with Manager</option>
+                                    </select>
+                                    <button type="button" class="quick-btn btn-format-json">Format JSON</button>
+                                </div>
+                            </div>
+                            <textarea id="pg3-body-json" class="json-textarea body-json">{
+  "schemas": [
+    "urn:ietf:params:scim:schemas:core:2.0:User",
+    "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
+  ],
+  "userName": "alex.morgan@example.com",
+  "name": {
+    "familyName": "Morgan",
+    "givenName": "Alex",
+    "formatted": "Alex Morgan"
+  },
+  "displayName": "Alex Morgan",
+  "emails": [
+    {
+      "value": "alex.morgan@example.com",
+      "type": "work",
+      "primary": true
+    }
+  ],
+  "active": true,
+  "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User": {
+    "employeeNumber": "EMP-9402",
+    "department": "Engineering",
+    "organization": "Platform Identity"
+  }
+}</textarea>
+                        </div>
+                        <div class="url-preview-bar">
+                            <div class="url-preview-left">
+                                <span class="method-badge method-POST">POST</span>
+                                <span class="url-text-container"><span class="url-base"></span><span class="url-path">/Users</span></span>
+                            </div>
+                            <div class="url-preview-actions">
+                                <button type="button" class="btn-send-req"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg> Send Request</button>
+                            </div>
+                        </div>
+                        <div class="resp-panel"></div>
+                    </div>
+                </div>
+
+                <!-- Op 4: Update User Attribute -->
+                <div class="op-card" id="card-users-patch">
+                    <div class="op-head">
+                        <div class="op-head-left">
+                            <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                            <span class="method-badge method-PATCH">PATCH</span>
+                            <div class="op-title-group">
+                                <h3 class="op-title">4. Update User Attribute</h3>
+                                <p class="op-desc">Mutates specific user attributes using PatchOp operations.</p>
+                            </div>
+                        </div>
+                        <div class="op-head-right">
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.5.2" target="_blank" class="rfc-link">RFC 7644 §3.5.2</a>
+                        </div>
+                    </div>
+                    <div class="op-body">
+                        <div class="params-grid">
+                            <div class="field-group">
+                                <label class="field-label" for="pg4-user-id">
+                                    <span>User ID</span>
+                                </label>
+                                    <button type="button" class="quick-btn btn-use-last-user">Use Last ID</button>
+                                <input id="pg4-user-id" type="text" class="field-input param-user-id" placeholder="e.g. 57da7724-a956-4d15-a6f7-fe238b7bd34e">
+                            </div>
+                        </div>
+                        <div class="editor-container">
+                            <div class="editor-head">
+                                <label class="field-label" for="pg4-body-json">PatchOp Payload (JSON)</label>
+                                <div style="display:flex; align-items:center; gap:8px;">
+                                    <select id="pg4-patch-preset" aria-label="PatchOp payload preset" class="field-select patch-preset" style="font-size:11.5px; padding:3px 8px;">
+                                        <option value="replace-givenName">Preset: Replace givenName</option>
+                                        <option value="add-email">Preset: Add Work Email</option>
+                                        <option value="set-active">Preset: Deactivate User (active: false)</option>
+                                        <option value="remove-phone">Preset: Remove Phone Numbers</option>
+                                    </select>
+                                    <button type="button" class="quick-btn btn-format-json">Format JSON</button>
+                                </div>
+                            </div>
+                            <textarea id="pg4-body-json" class="json-textarea body-json">{
+  "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+  "Operations": [
+    {
+      "op": "replace",
+      "path": "name.givenName",
+      "value": "Alexandra"
+    }
+  ]
+}</textarea>
+                        </div>
+                        <div class="url-preview-bar">
+                            <div class="url-preview-left">
+                                <span class="method-badge method-PATCH">PATCH</span>
+                                <span class="url-text-container"><span class="url-base"></span><span class="url-path">/Users/{id}</span></span>
+                            </div>
+                            <div class="url-preview-actions">
+                                <button type="button" class="btn-send-req"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg> Send Request</button>
+                            </div>
+                        </div>
+                        <div class="resp-panel"></div>
+                    </div>
+                </div>
+
+                <!-- Op 5: Replace User -->
+                <div class="op-card" id="card-users-put">
+                    <div class="op-head">
+                        <div class="op-head-left">
+                            <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                            <span class="method-badge method-PUT">PUT</span>
+                            <div class="op-title-group">
+                                <h3 class="op-title">5. Replace User</h3>
+                                <p class="op-desc">Replaces all attributes of the user resource completely.</p>
+                            </div>
+                        </div>
+                        <div class="op-head-right">
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.5.1" target="_blank" class="rfc-link">RFC 7644 §3.5.1</a>
+                        </div>
+                    </div>
+                    <div class="op-body">
+                        <div class="params-grid">
+                            <div class="field-group">
+                                <label class="field-label" for="pg5-user-id">
+                                    <span>User ID</span>
+                                </label>
+                                    <button type="button" class="quick-btn btn-use-last-user">Use Last ID</button>
+                                <input id="pg5-user-id" type="text" class="field-input param-user-id" placeholder="e.g. 57da7724-a956-4d15-a6f7-fe238b7bd34e">
+                            </div>
+                        </div>
+                        <div class="editor-container">
+                            <div class="editor-head">
+                                <label class="field-label" for="pg5-body-json">Full Replacement Payload (JSON)</label>
+                                <button type="button" class="quick-btn btn-format-json">Format JSON</button>
+                            </div>
+                            <textarea id="pg5-body-json" class="json-textarea body-json">{
+  "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+  "userName": "alex.morgan@example.com",
+  "displayName": "Alex Morgan (Updated)",
+  "name": {
+    "familyName": "Morgan",
+    "givenName": "Alexandra"
+  },
+  "active": true,
+  "emails": [
+    {
+      "value": "alex.morgan@example.com",
+      "type": "work",
+      "primary": true
+    }
+  ]
+}</textarea>
+                        </div>
+                        <div class="url-preview-bar">
+                            <div class="url-preview-left">
+                                <span class="method-badge method-PUT">PUT</span>
+                                <span class="url-text-container"><span class="url-base"></span><span class="url-path">/Users/{id}</span></span>
+                            </div>
+                            <div class="url-preview-actions">
+                                <button type="button" class="btn-send-req"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg> Send Request</button>
+                            </div>
+                        </div>
+                        <div class="resp-panel"></div>
+                    </div>
+                </div>
+
+                <!-- Op 6: Delete User -->
+                <div class="op-card" id="card-users-delete">
+                    <div class="op-head">
+                        <div class="op-head-left">
+                            <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                            <span class="method-badge method-DELETE">DELETE</span>
+                            <div class="op-title-group">
+                                <h3 class="op-title">6. Delete User</h3>
+                                <p class="op-desc">Permanently removes the user resource from the SCIM directory.</p>
+                            </div>
+                        </div>
+                        <div class="op-head-right">
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.6" target="_blank" class="rfc-link">RFC 7644 §3.6</a>
+                        </div>
+                    </div>
+                    <div class="op-body">
+                        <div class="params-grid">
+                            <div class="field-group">
+                                <label class="field-label" for="pg6-user-id">
+                                    <span>User ID to Delete</span>
+                                </label>
+                                    <button type="button" class="quick-btn btn-use-last-user">Use Last ID</button>
+                                <input id="pg6-user-id" type="text" class="field-input param-user-id" placeholder="e.g. 57da7724-a956-4d15-a6f7-fe238b7bd34e">
+                            </div>
+                        </div>
+                        <div class="url-preview-bar">
+                            <div class="url-preview-left">
+                                <span class="method-badge method-DELETE">DELETE</span>
+                                <span class="url-text-container"><span class="url-base"></span><span class="url-path">/Users/{id}</span></span>
+                            </div>
+                            <div class="url-preview-actions">
+                                <button type="button" class="btn-send-req"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg> Send Request</button>
+                            </div>
+                        </div>
+                        <div class="resp-panel"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ========================================== -->
+            <!-- 2. GROUPS PLAYGROUND                       -->
+            <!-- ========================================== -->
+            <div th:if="${activeTopic == 'groups'}" class="topic-section">
+                <div class="topic-header-bar">
+                    <div>
+                        <h2 class="topic-title">SCIM Groups API</h2>
+                        <p class="topic-desc">Manage groups, role assignments, and member relationships (RFC 7643 §4.2 &amp; RFC 7644).</p>
+                    </div>
+                    <div class="topic-controls">
+                        <button type="button" class="btn-toggle-all" onclick="toggleAllCards(true)">Expand All</button>
+                        <button type="button" class="btn-toggle-all" onclick="toggleAllCards(false)">Collapse All</button>
+                    </div>
+                </div>
+
+                <!-- Op 1: List Groups -->
+                <div class="op-card" id="card-groups-list">
+                    <div class="op-head">
+                        <div class="op-head-left">
+                            <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                            <span class="method-badge method-GET">GET</span>
+                            <div class="op-title-group">
+                                <h3 class="op-title">1. List Groups with Pagination &amp; Filters</h3>
+                                <p class="op-desc">Retrieves groups with pagination and optional display name filtering.</p>
+                            </div>
+                        </div>
+                        <div class="op-head-right">
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.4.2" target="_blank" class="rfc-link">RFC 7644 §3.4.2</a>
+                        </div>
+                    </div>
+                    <div class="op-body">
+                        <div class="params-grid">
+                            <div class="params-row">
+                                <div class="field-group">
+                                    <label class="field-label" for="pg7-start-index"><span>startIndex</span></label>
+                                    <input id="pg7-start-index" type="number" class="field-input param-start-index" value="1" min="1">
+                                </div>
+                                <div class="field-group">
+                                    <label class="field-label" for="pg7-count"><span>count</span></label>
+                                    <input id="pg7-count" type="number" class="field-input param-count" value="10" min="1" max="200">
+                                </div>
+                            </div>
+                            <div class="field-group">
+                                <label class="field-label" for="pg7-filter"><span>filter</span></label>
+                                <input id="pg7-filter" type="text" class="field-input param-filter" placeholder='e.g. displayName eq "Engineering" or members.value eq "USER_ID"'>
+                                <div class="preset-pills">
+                                    <span class="preset-pill-label">Examples:</span>
+                                    <button type="button" class="filter-pill" data-filter='displayName eq "Engineering"'>displayName eq "Engineering"</button>
+                                    <button type="button" class="filter-pill" data-filter='displayName sw "Platform"'>displayName sw "Platform"</button>
+                                </div>
+                            </div>
+                            <div class="params-row-2col">
+                                <div class="field-group">
+                                    <label class="field-label" for="pg7-attributes"><span>attributes</span></label>
+                                    <input id="pg7-attributes" type="text" class="field-input param-attributes" placeholder="e.g. displayName,members">
+                                </div>
+                                <div class="field-group">
+                                    <label class="field-label" for="pg7-excluded"><span>excludedAttributes</span></label>
+                                    <input id="pg7-excluded" type="text" class="field-input param-excluded" placeholder="e.g. members">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="url-preview-bar">
+                            <div class="url-preview-left">
+                                <span class="method-badge method-GET">GET</span>
+                                <span class="url-text-container"><span class="url-base"></span><span class="url-path">/Groups</span><span class="url-query">?startIndex=1&amp;count=10</span></span>
+                            </div>
+                            <div class="url-preview-actions">
+                                <button type="button" class="btn-send-req"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg> Send Request</button>
+                            </div>
+                        </div>
+                        <div class="resp-panel"></div>
+                    </div>
+                </div>
+
+                <!-- Op 2: Get Group by ID -->
+                <div class="op-card" id="card-groups-get">
+                    <div class="op-head">
+                        <div class="op-head-left">
+                            <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                            <span class="method-badge method-GET">GET</span>
+                            <div class="op-title-group">
+                                <h3 class="op-title">2. Get Group by ID</h3>
+                                <p class="op-desc">Fetches group details including member items with value and display.</p>
+                            </div>
+                        </div>
+                        <div class="op-head-right">
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.4.1" target="_blank" class="rfc-link">RFC 7644 §3.4.1</a>
+                        </div>
+                    </div>
+                    <div class="op-body">
+                        <div class="params-grid">
+                            <div class="field-group">
+                                <label class="field-label" for="pg8-group-id">
+                                    <span>Group ID</span>
+                                </label>
+                                    <button type="button" class="quick-btn btn-use-last-group">Use Last ID</button>
+                                <input id="pg8-group-id" type="text" class="field-input param-group-id" placeholder="e.g. grp-948271">
+                            </div>
+                        </div>
+                        <div class="url-preview-bar">
+                            <div class="url-preview-left">
+                                <span class="method-badge method-GET">GET</span>
+                                <span class="url-text-container"><span class="url-base"></span><span class="url-path">/Groups/{id}</span></span>
+                            </div>
+                            <div class="url-preview-actions">
+                                <button type="button" class="btn-send-req"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg> Send Request</button>
+                            </div>
+                        </div>
+                        <div class="resp-panel"></div>
+                    </div>
+                </div>
+
+                <!-- Op 3: Create Group -->
+                <div class="op-card" id="card-groups-create">
+                    <div class="op-head">
+                        <div class="op-head-left">
+                            <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                            <span class="method-badge method-POST">POST</span>
+                            <div class="op-title-group">
+                                <h3 class="op-title">3. Create Group</h3>
+                                <p class="op-desc">Creates a new SCIM Group with a display name and optional initial members.</p>
+                            </div>
+                        </div>
+                        <div class="op-head-right">
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.3" target="_blank" class="rfc-link">RFC 7644 §3.3</a>
+                        </div>
+                    </div>
+                    <div class="op-body">
+                        <div class="editor-container">
+                            <div class="editor-head">
+                                <label class="field-label" for="pg9-body-json">Request Body (JSON)</label>
+                                <button type="button" class="quick-btn btn-format-json">Format JSON</button>
+                            </div>
+                            <textarea id="pg9-body-json" class="json-textarea body-json">{
+  "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
+  "displayName": "Platform Engineers",
+  "members": []
+}</textarea>
+                        </div>
+                        <div class="url-preview-bar">
+                            <div class="url-preview-left">
+                                <span class="method-badge method-POST">POST</span>
+                                <span class="url-text-container"><span class="url-base"></span><span class="url-path">/Groups</span></span>
+                            </div>
+                            <div class="url-preview-actions">
+                                <button type="button" class="btn-send-req"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg> Send Request</button>
+                            </div>
+                        </div>
+                        <div class="resp-panel"></div>
+                    </div>
+                </div>
+
+                <!-- Op 4: Add Member -->
+                <div class="op-card" id="card-groups-add-member">
+                    <div class="op-head">
+                        <div class="op-head-left">
+                            <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                            <span class="method-badge method-PATCH">PATCH</span>
+                            <div class="op-title-group">
+                                <h3 class="op-title">4. Add Members to Group</h3>
+                                <p class="op-desc">Appends new user members to an existing group without overwriting current memberships.</p>
+                            </div>
+                        </div>
+                        <div class="op-head-right">
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.5.2" target="_blank" class="rfc-link">RFC 7644 §3.5.2</a>
+                        </div>
+                    </div>
+                    <div class="op-body">
+                        <div class="params-grid">
+                            <div class="field-group">
+                                <label class="field-label" for="pg10-group-id">
+                                    <span>Group ID</span>
+                                </label>
+                                    <button type="button" class="quick-btn btn-use-last-group">Use Last ID</button>
+                                <input id="pg10-group-id" type="text" class="field-input param-group-id" placeholder="e.g. grp-948271">
+                            </div>
+                        </div>
+                        <div class="editor-container">
+                            <div class="editor-head">
+                                <label class="field-label" for="pg10-body-json">PatchOp Payload (JSON)</label>
+                                <button type="button" class="quick-btn btn-insert-last-user">Insert Last User ID</button>
+                            </div>
+                            <textarea id="pg10-body-json" class="json-textarea body-json">{
+  "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+  "Operations": [
+    {
+      "op": "add",
+      "path": "members",
+      "value": [
+        {
+          "value": "USER_ID_HERE",
+          "display": "Alex Morgan"
+        }
+      ]
+    }
+  ]
+}</textarea>
+                        </div>
+                        <div class="url-preview-bar">
+                            <div class="url-preview-left">
+                                <span class="method-badge method-PATCH">PATCH</span>
+                                <span class="url-text-container"><span class="url-base"></span><span class="url-path">/Groups/{id}</span></span>
+                            </div>
+                            <div class="url-preview-actions">
+                                <button type="button" class="btn-send-req"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg> Send Request</button>
+                            </div>
+                        </div>
+                        <div class="resp-panel"></div>
+                    </div>
+                </div>
+
+                <!-- Op 5: Delete Group -->
+                <div class="op-card" id="card-groups-delete">
+                    <div class="op-head">
+                        <div class="op-head-left">
+                            <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                            <span class="method-badge method-DELETE">DELETE</span>
+                            <div class="op-title-group">
+                                <h3 class="op-title">5. Delete Group</h3>
+                                <p class="op-desc">Permanently removes the group resource from the SCIM directory.</p>
+                            </div>
+                        </div>
+                        <div class="op-head-right">
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.6" target="_blank" class="rfc-link">RFC 7644 §3.6</a>
+                        </div>
+                    </div>
+                    <div class="op-body">
+                        <div class="params-grid">
+                            <div class="field-group">
+                                <label class="field-label" for="pg11-group-id">
+                                    <span>Group ID to Delete</span>
+                                </label>
+                                    <button type="button" class="quick-btn btn-use-last-group">Use Last ID</button>
+                                <input id="pg11-group-id" type="text" class="field-input param-group-id" placeholder="e.g. grp-948271">
+                            </div>
+                        </div>
+                        <div class="url-preview-bar">
+                            <div class="url-preview-left">
+                                <span class="method-badge method-DELETE">DELETE</span>
+                                <span class="url-text-container"><span class="url-base"></span><span class="url-path">/Groups/{id}</span></span>
+                            </div>
+                            <div class="url-preview-actions">
+                                <button type="button" class="btn-send-req"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg> Send Request</button>
+                            </div>
+                        </div>
+                        <div class="resp-panel"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ========================================== -->
+            <!-- 3. RESOURCE TYPES                          -->
+            <!-- ========================================== -->
+            <div th:if="${activeTopic == 'resource-types'}" class="topic-section">
+                <div class="topic-header-bar">
+                    <div>
+                        <h2 class="topic-title">SCIM Resource Types API</h2>
+                        <p class="topic-desc">Discover the resource types supported by this SCIM server (RFC 7643 §6).</p>
+                    </div>
+                    <div class="topic-controls">
+                        <button type="button" class="btn-toggle-all" onclick="toggleAllCards(true)">Expand All</button>
+                        <button type="button" class="btn-toggle-all" onclick="toggleAllCards(false)">Collapse All</button>
+                    </div>
+                </div>
+
+                <!-- Op 1: Discover All Resource Types -->
+                <div class="op-card" id="card-rt-all">
+                    <div class="op-head">
+                        <div class="op-head-left">
+                            <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                            <span class="method-badge method-GET">GET</span>
+                            <div class="op-title-group">
+                                <h3 class="op-title">1. Discover All Resource Types</h3>
+                                <p class="op-desc">Retrieves all registered resource types (User, Group) and schema URNs.</p>
+                            </div>
+                        </div>
+                        <div class="op-head-right">
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7643#section-6" target="_blank" class="rfc-link">RFC 7643 §6</a>
+                        </div>
+                    </div>
+                    <div class="op-body">
+                        <div class="url-preview-bar">
+                            <div class="url-preview-left">
+                                <span class="method-badge method-GET">GET</span>
+                                <span class="url-text-container"><span class="url-base"></span><span class="url-path">/ResourceTypes</span></span>
+                            </div>
+                            <div class="url-preview-actions">
+                                <button type="button" class="btn-send-req"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg> Send Request</button>
+                            </div>
+                        </div>
+                        <div class="resp-panel"></div>
+                    </div>
+                </div>
+
+                <!-- Op 2: User Resource Type -->
+                <div class="op-card" id="card-rt-user">
+                    <div class="op-head">
+                        <div class="op-head-left">
+                            <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                            <span class="method-badge method-GET">GET</span>
+                            <div class="op-title-group">
+                                <h3 class="op-title">2. Get User Resource Type Definition</h3>
+                                <p class="op-desc">Inspects the endpoint, core schema, and schema extensions for User resources.</p>
+                            </div>
+                        </div>
+                        <div class="op-head-right">
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7643#section-6" target="_blank" class="rfc-link">RFC 7643 §6</a>
+                        </div>
+                    </div>
+                    <div class="op-body">
+                        <div class="url-preview-bar">
+                            <div class="url-preview-left">
+                                <span class="method-badge method-GET">GET</span>
+                                <span class="url-text-container"><span class="url-base"></span><span class="url-path">/ResourceTypes/User</span></span>
+                            </div>
+                            <div class="url-preview-actions">
+                                <button type="button" class="btn-send-req"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg> Send Request</button>
+                            </div>
+                        </div>
+                        <div class="resp-panel"></div>
+                    </div>
+                </div>
+
+                <!-- Op 3: Group Resource Type -->
+                <div class="op-card" id="card-rt-group">
+                    <div class="op-head">
+                        <div class="op-head-left">
+                            <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                            <span class="method-badge method-GET">GET</span>
+                            <div class="op-title-group">
+                                <h3 class="op-title">3. Get Group Resource Type Definition</h3>
+                                <p class="op-desc">Inspects the endpoint and schema configuration for Group resources.</p>
+                            </div>
+                        </div>
+                        <div class="op-head-right">
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7643#section-6" target="_blank" class="rfc-link">RFC 7643 §6</a>
+                        </div>
+                    </div>
+                    <div class="op-body">
+                        <div class="url-preview-bar">
+                            <div class="url-preview-left">
+                                <span class="method-badge method-GET">GET</span>
+                                <span class="url-text-container"><span class="url-base"></span><span class="url-path">/ResourceTypes/Group</span></span>
+                            </div>
+                            <div class="url-preview-actions">
+                                <button type="button" class="btn-send-req"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg> Send Request</button>
+                            </div>
+                        </div>
+                        <div class="resp-panel"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ========================================== -->
+            <!-- 4. SCHEMAS                                 -->
+            <!-- ========================================== -->
+            <div th:if="${activeTopic == 'schemas'}" class="topic-section">
+                <div class="topic-header-bar">
+                    <div>
+                        <h2 class="topic-title">SCIM Schemas API</h2>
+                        <p class="topic-desc">Introspect schema definitions, attribute data types, mutability, uniqueness, and sub-attributes (RFC 7643 §7).</p>
+                    </div>
+                    <div class="topic-controls">
+                        <button type="button" class="btn-toggle-all" onclick="toggleAllCards(true)">Expand All</button>
+                        <button type="button" class="btn-toggle-all" onclick="toggleAllCards(false)">Collapse All</button>
+                    </div>
+                </div>
+
+                <!-- Op 1: List Schemas -->
+                <div class="op-card" id="card-schemas-all">
+                    <div class="op-head">
+                        <div class="op-head-left">
+                            <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                            <span class="method-badge method-GET">GET</span>
+                            <div class="op-title-group">
+                                <h3 class="op-title">1. List All Registered Schemas</h3>
+                                <p class="op-desc">Discovers all schemas enabled on the server.</p>
+                            </div>
+                        </div>
+                        <div class="op-head-right">
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7643#section-7" target="_blank" class="rfc-link">RFC 7643 §7</a>
+                        </div>
+                    </div>
+                    <div class="op-body">
+                        <div class="url-preview-bar">
+                            <div class="url-preview-left">
+                                <span class="method-badge method-GET">GET</span>
+                                <span class="url-text-container"><span class="url-base"></span><span class="url-path">/Schemas</span></span>
+                            </div>
+                            <div class="url-preview-actions">
+                                <button type="button" class="btn-send-req"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg> Send Request</button>
+                            </div>
+                        </div>
+                        <div class="resp-panel"></div>
+                    </div>
+                </div>
+
+                <!-- Op 2: Core User Schema -->
+                <div class="op-card" id="card-schemas-user">
+                    <div class="op-head">
+                        <div class="op-head-left">
+                            <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                            <span class="method-badge method-GET">GET</span>
+                            <div class="op-title-group">
+                                <h3 class="op-title">2. Get Core User Schema</h3>
+                                <p class="op-desc">Inspects attributes and constraints for urn:ietf:params:scim:schemas:core:2.0:User.</p>
+                            </div>
+                        </div>
+                        <div class="op-head-right">
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7643#section-4.1" target="_blank" class="rfc-link">RFC 7643 §4.1</a>
+                        </div>
+                    </div>
+                    <div class="op-body">
+                        <div class="url-preview-bar">
+                            <div class="url-preview-left">
+                                <span class="method-badge method-GET">GET</span>
+                                <span class="url-text-container"><span class="url-base"></span><span class="url-path">/Schemas/urn:ietf:params:scim:schemas:core:2.0:User</span></span>
+                            </div>
+                            <div class="url-preview-actions">
+                                <button type="button" class="btn-send-req"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg> Send Request</button>
+                            </div>
+                        </div>
+                        <div class="resp-panel"></div>
+                    </div>
+                </div>
+
+                <!-- Op 3: Enterprise Extension Schema -->
+                <div class="op-card" id="card-schemas-enterprise">
+                    <div class="op-head">
+                        <div class="op-head-left">
+                            <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                            <span class="method-badge method-GET">GET</span>
+                            <div class="op-title-group">
+                                <h3 class="op-title">3. Get Enterprise User Extension Schema</h3>
+                                <p class="op-desc">Inspects enterprise attributes (employeeNumber, costCenter, division, manager).</p>
+                            </div>
+                        </div>
+                        <div class="op-head-right">
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7643#section-4.3" target="_blank" class="rfc-link">RFC 7643 §4.3</a>
+                        </div>
+                    </div>
+                    <div class="op-body">
+                        <div class="url-preview-bar">
+                            <div class="url-preview-left">
+                                <span class="method-badge method-GET">GET</span>
+                                <span class="url-text-container"><span class="url-base"></span><span class="url-path">/Schemas/urn:ietf:params:scim:schemas:extension:enterprise:2.0:User</span></span>
+                            </div>
+                            <div class="url-preview-actions">
+                                <button type="button" class="btn-send-req"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg> Send Request</button>
+                            </div>
+                        </div>
+                        <div class="resp-panel"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ========================================== -->
+            <!-- 5. SERVICE PROVIDER CONFIG                 -->
+            <!-- ========================================== -->
+            <div th:if="${activeTopic == 'service-provider-config'}" class="topic-section">
+                <div class="topic-header-bar">
+                    <div>
+                        <h2 class="topic-title">Service Provider Configuration API</h2>
+                        <p class="topic-desc">Discover specification compliance and features of the target SCIM server (RFC 7643 §5).</p>
+                    </div>
+                </div>
+
+                <!-- Op 1: Get ServiceProviderConfig -->
+                <div class="op-card expanded" id="card-spc">
+                    <div class="op-head">
+                        <div class="op-head-left">
+                            <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                            <span class="method-badge method-GET">GET</span>
+                            <div class="op-title-group">
+                                <h3 class="op-title">1. Query Service Provider Capabilities</h3>
+                                <p class="op-desc">Inspect support for PATCH, Bulk, Filter limits, ETag, Sorting, and Auth schemes.</p>
+                            </div>
+                        </div>
+                        <div class="op-head-right">
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7643#section-5" target="_blank" class="rfc-link">RFC 7643 §5</a>
+                        </div>
+                    </div>
+                    <div class="op-body">
+                        <div class="url-preview-bar">
+                            <div class="url-preview-left">
+                                <span class="method-badge method-GET">GET</span>
+                                <span class="url-text-container"><span class="url-base"></span><span class="url-path">/ServiceProviderConfig</span></span>
+                            </div>
+                            <div class="url-preview-actions">
+                                <button type="button" class="btn-send-req"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg> Send Request</button>
+                            </div>
+                        </div>
+                        <div class="resp-panel"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ========================================== -->
+            <!-- 6. BULK OPERATIONS                         -->
+            <!-- ========================================== -->
+            <div th:if="${activeTopic == 'bulk'}" class="topic-section">
+                <div class="topic-header-bar">
+                    <div>
+                        <h2 class="topic-title">SCIM Bulk API</h2>
+                        <p class="topic-desc">Execute multiple batched SCIM operations in a single HTTP request with cross-referencing via bulkId (RFC 7644 §3.7).</p>
+                    </div>
+                </div>
+
+                <!-- Op 1: Bulk Request -->
+                <div class="op-card" id="card-bulk">
+                    <div class="op-head">
+                        <div class="op-head-left">
+                            <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                            <span class="method-badge method-POST">POST</span>
+                            <div class="op-title-group">
+                                <h3 class="op-title">1. Execute Batched Operations</h3>
+                                <p class="op-desc">Sends multiple create/update/delete operations in a single atomic/batched request.</p>
+                            </div>
+                        </div>
+                        <div class="op-head-right">
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.7" target="_blank" class="rfc-link">RFC 7644 §3.7</a>
+                        </div>
+                    </div>
+                    <div class="op-body">
+                        <div class="params-grid">
+                            <div class="field-group" style="max-width: 240px;">
+                                <label class="field-label" for="pg18-fail-on-errors"><span>failOnErrors</span> <span class="field-helper">(Error limit)</span></label>
+                                <input id="pg18-fail-on-errors" type="number" class="field-input param-fail-on-errors" value="1" min="1">
+                            </div>
+                        </div>
+                        <div class="editor-container">
+                            <div class="editor-head">
+                                <label class="field-label" for="pg18-body-json">Bulk Request Body (JSON)</label>
+                                <button type="button" class="quick-btn btn-format-json">Format JSON</button>
+                            </div>
+                            <textarea id="pg18-body-json" class="json-textarea body-json">{
+  "schemas": ["urn:ietf:params:scim:api:messages:2.0:BulkRequest"],
+  "failOnErrors": 1,
+  "Operations": [
+    {
+      "method": "POST",
+      "path": "/Users",
+      "bulkId": "user_bulk_1",
+      "data": {
+        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+        "userName": "bulk.user1@example.com",
+        "displayName": "Bulk User One",
+        "active": true
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/Groups",
+      "bulkId": "group_bulk_1",
+      "data": {
+        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
+        "displayName": "Bulk Created Group",
+        "members": [
+          {
+            "value": "bulkId:user_bulk_1"
+          }
+        ]
+      }
+    }
+  ]
+}</textarea>
+                        </div>
+                        <div class="url-preview-bar">
+                            <div class="url-preview-left">
+                                <span class="method-badge method-POST">POST</span>
+                                <span class="url-text-container"><span class="url-base"></span><span class="url-path">/Bulk</span></span>
+                            </div>
+                            <div class="url-preview-actions">
+                                <button type="button" class="btn-send-req"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg> Send Request</button>
+                            </div>
+                        </div>
+                        <div class="resp-panel"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ========================================== -->
+            <!-- 7. .SEARCH ENDPOINT                        -->
+            <!-- ========================================== -->
+            <div th:if="${activeTopic == 'search'}" class="topic-section">
+                <div class="topic-header-bar">
+                    <div>
+                        <h2 class="topic-title">SCIM .search API</h2>
+                        <p class="topic-desc">Execute complex search queries via HTTP POST to circumvent URL length limits for long filters (RFC 7644 §3.4.3).</p>
+                    </div>
+                    <div class="topic-controls">
+                        <button type="button" class="btn-toggle-all" onclick="toggleAllCards(true)">Expand All</button>
+                        <button type="button" class="btn-toggle-all" onclick="toggleAllCards(false)">Collapse All</button>
+                    </div>
+                </div>
+
+                <!-- Op 1: User .search -->
+                <div class="op-card" id="card-search-users">
+                    <div class="op-head">
+                        <div class="op-head-left">
+                            <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                            <span class="method-badge method-POST">POST</span>
+                            <div class="op-title-group">
+                                <h3 class="op-title">1. Search Users via .search</h3>
+                                <p class="op-desc">Executes search against /Users using a SearchRequest payload.</p>
+                            </div>
+                        </div>
+                        <div class="op-head-right">
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.4.3" target="_blank" class="rfc-link">RFC 7644 §3.4.3</a>
+                        </div>
+                    </div>
+                    <div class="op-body">
+                        <div class="params-grid">
+                            <div class="params-row">
+                                <div class="field-group">
+                                    <label class="field-label" for="pg19-search-start"><span>startIndex</span></label>
+                                    <input id="pg19-search-start" type="number" class="field-input search-param-start" value="1" min="1">
+                                </div>
+                                <div class="field-group">
+                                    <label class="field-label" for="pg19-search-count"><span>count</span></label>
+                                    <input id="pg19-search-count" type="number" class="field-input search-param-count" value="10" min="1" max="200">
+                                </div>
+                            </div>
+                            <div class="field-group">
+                                <label class="field-label" for="pg19-search-filter"><span>filter expression</span></label>
+                                <input id="pg19-search-filter" type="text" class="field-input search-param-filter" value='userName sw "a" or active eq true'>
+                            </div>
+                            <div class="field-group">
+                                <label class="field-label" for="pg19-search-attr"><span>attributes (comma-separated)</span></label>
+                                <input id="pg19-search-attr" type="text" class="field-input search-param-attr" value="userName,displayName,emails">
+                            </div>
+                        </div>
+                        <div class="editor-container">
+                            <div class="editor-head">
+                                <label class="field-label" for="pg19-body-json">SearchRequest Body (JSON)</label>
+                                <button type="button" class="quick-btn btn-format-json">Format JSON</button>
+                            </div>
+                            <textarea id="pg19-body-json" class="json-textarea body-json">{
+  "schemas": ["urn:ietf:params:scim:api:messages:2.0:SearchRequest"],
+  "filter": "userName sw \"a\" or active eq true",
+  "startIndex": 1,
+  "count": 10,
+  "attributes": ["userName", "displayName", "emails"]
+}</textarea>
+                        </div>
+                        <div class="url-preview-bar">
+                            <div class="url-preview-left">
+                                <span class="method-badge method-POST">POST</span>
+                                <span class="url-text-container"><span class="url-base"></span><span class="url-path">/Users/.search</span></span>
+                            </div>
+                            <div class="url-preview-actions">
+                                <button type="button" class="btn-send-req"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg> Send Request</button>
+                            </div>
+                        </div>
+                        <div class="resp-panel"></div>
+                    </div>
+                </div>
+
+                <!-- Op 2: Global .search -->
+                <div class="op-card" id="card-search-global">
+                    <div class="op-head">
+                        <div class="op-head-left">
+                            <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                            <span class="method-badge method-POST">POST</span>
+                            <div class="op-title-group">
+                                <h3 class="op-title">2. Global Cross-Resource Search</h3>
+                                <p class="op-desc">Executes search across all supported resource types at root endpoint.</p>
+                            </div>
+                        </div>
+                        <div class="op-head-right">
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.4.3" target="_blank" class="rfc-link">RFC 7644 §3.4.3</a>
+                        </div>
+                    </div>
+                    <div class="op-body">
+                        <div class="editor-container">
+                            <div class="editor-head">
+                                <label class="field-label" for="pg20-body-json">SearchRequest Body (JSON)</label>
+                                <button type="button" class="quick-btn btn-format-json">Format JSON</button>
+                            </div>
+                            <textarea id="pg20-body-json" class="json-textarea body-json">{
+  "schemas": ["urn:ietf:params:scim:api:messages:2.0:SearchRequest"],
+  "filter": "displayName pr",
+  "startIndex": 1,
+  "count": 25
+}</textarea>
+                        </div>
+                        <div class="url-preview-bar">
+                            <div class="url-preview-left">
+                                <span class="method-badge method-POST">POST</span>
+                                <span class="url-text-container"><span class="url-base"></span><span class="url-path">/.search</span></span>
+                            </div>
+                            <div class="url-preview-actions">
+                                <button type="button" class="btn-send-req"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg> Send Request</button>
+                            </div>
+                        </div>
+                        <div class="resp-panel"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ========================================== -->
+            <!-- 8. ETAG & CONCURRENCY                      -->
+            <!-- ========================================== -->
+            <div th:if="${activeTopic == 'etag'}" class="topic-section">
+                <div class="topic-header-bar">
+                    <div>
+                        <h2 class="topic-title">SCIM ETag &amp; Optimistic Concurrency</h2>
+                        <p class="topic-desc">Prevent concurrent overwrite collisions and enable conditional caching using HTTP entity tags (RFC 7644 §3.14).</p>
+                    </div>
+                    <div class="topic-controls">
+                        <button type="button" class="btn-toggle-all" onclick="toggleAllCards(true)">Expand All</button>
+                        <button type="button" class="btn-toggle-all" onclick="toggleAllCards(false)">Collapse All</button>
+                    </div>
+                </div>
+
+                <!-- Op 1: Conditional Update with If-Match -->
+                <div class="op-card" id="card-etag-ifmatch">
+                    <div class="op-head">
+                        <div class="op-head-left">
+                            <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                            <span class="method-badge method-PATCH">PATCH</span>
+                            <div class="op-title-group">
+                                <h3 class="op-title">1. Conditional Update with If-Match</h3>
+                                <p class="op-desc">Guards against lost updates using optimistic concurrency locking.</p>
+                            </div>
+                        </div>
+                        <div class="op-head-right">
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.14" target="_blank" class="rfc-link">RFC 7644 §3.14</a>
+                        </div>
+                    </div>
+                    <div class="op-body">
+                        <div class="params-grid">
+                            <div class="params-row-2col">
+                                <div class="field-group">
+                                    <label class="field-label" for="pg21-user-id">
+                                        <span>User ID</span>
+                                    </label>
+                                        <button type="button" class="quick-btn btn-use-last-user">Use Last ID</button>
+                                    <input id="pg21-user-id" type="text" class="field-input param-user-id" placeholder="e.g. 57da7724-a956-4d15-a6f7-fe238b7bd34e">
+                                </div>
+                                <div class="field-group">
+                                    <label class="field-label" for="pg21-if-match"><span>If-Match Header</span> <span class="field-helper">(e.g. W/"0")</span></label>
+                                    <input id="pg21-if-match" type="text" class="field-input param-if-match" value='W/"0"'>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="editor-container">
+                            <div class="editor-head">
+                                <label class="field-label" for="pg21-body-json">PatchOp Payload (JSON)</label>
+                                <button type="button" class="quick-btn btn-format-json">Format JSON</button>
+                            </div>
+                            <textarea id="pg21-body-json" class="json-textarea body-json">{
+  "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+  "Operations": [
+    {
+      "op": "replace",
+      "path": "displayName",
+      "value": "Alex Morgan (Concurrency Verified)"
+    }
+  ]
+}</textarea>
+                        </div>
+                        <div class="url-preview-bar">
+                            <div class="url-preview-left">
+                                <span class="method-badge method-PATCH">PATCH</span>
+                                <span class="url-text-container"><span class="url-base"></span><span class="url-path">/Users/{id}</span></span>
+                            </div>
+                            <div class="url-preview-actions">
+                                <button type="button" class="btn-send-req"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg> Send Request</button>
+                            </div>
+                        </div>
+                        <div class="resp-panel"></div>
+                    </div>
+                </div>
+
+                <!-- Op 2: Conditional Read with If-None-Match -->
+                <div class="op-card" id="card-etag-ifnonematch">
+                    <div class="op-head">
+                        <div class="op-head-left">
+                            <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                            <span class="method-badge method-GET">GET</span>
+                            <div class="op-title-group">
+                                <h3 class="op-title">2. Conditional Read with If-None-Match</h3>
+                                <p class="op-desc">Returns 304 Not Modified if the resource ETag matches.</p>
+                            </div>
+                        </div>
+                        <div class="op-head-right">
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.14" target="_blank" class="rfc-link">RFC 7644 §3.14</a>
+                        </div>
+                    </div>
+                    <div class="op-body">
+                        <div class="params-grid">
+                            <div class="params-row-2col">
+                                <div class="field-group">
+                                    <label class="field-label" for="pg22-user-id">
+                                        <span>User ID</span>
+                                    </label>
+                                        <button type="button" class="quick-btn btn-use-last-user">Use Last ID</button>
+                                    <input id="pg22-user-id" type="text" class="field-input param-user-id" placeholder="e.g. 57da7724-a956-4d15-a6f7-fe238b7bd34e">
+                                </div>
+                                <div class="field-group">
+                                    <label class="field-label" for="pg22-if-none-match"><span>If-None-Match Header</span> <span class="field-helper">(e.g. W/"0")</span></label>
+                                    <input id="pg22-if-none-match" type="text" class="field-input param-if-none-match" value='W/"0"'>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="url-preview-bar">
+                            <div class="url-preview-left">
+                                <span class="method-badge method-GET">GET</span>
+                                <span class="url-text-container"><span class="url-base"></span><span class="url-path">/Users/{id}</span></span>
+                            </div>
+                            <div class="url-preview-actions">
+                                <button type="button" class="btn-send-req"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg> Send Request</button>
+                            </div>
+                        </div>
+                        <div class="resp-panel"></div>
+                    </div>
+                </div>
+            </div>
+
+        </main>
+    </div>
+</div>
+
+<script>
+    const STORAGE_KEY_BASE_URL = 'scim_playground_base_url';
+    const STORAGE_KEY_TOKEN = 'scim_playground_auth_token';
+    const STORAGE_KEY_LAST_USER_ID = 'scim_playground_last_user_id';
+    const STORAGE_KEY_LAST_GROUP_ID = 'scim_playground_last_group_id';
+
+    const baseUrlInput = document.getElementById('target-base-url');
+    const tokenInput = document.getElementById('target-token');
+    const envStatus = document.getElementById('env-status');
+    const btnPing = document.getElementById('btn-ping-target');
+
+    // Clear any previously persisted URL or token in localStorage so new tabs/direct visits always start clean
+    localStorage.removeItem(STORAGE_KEY_TOKEN);
+    localStorage.removeItem(STORAGE_KEY_BASE_URL);
+
+    if (sessionStorage.getItem(STORAGE_KEY_BASE_URL)) {
+        baseUrlInput.value = sessionStorage.getItem(STORAGE_KEY_BASE_URL);
+    }
+    if (sessionStorage.getItem(STORAGE_KEY_TOKEN)) {
+        tokenInput.value = sessionStorage.getItem(STORAGE_KEY_TOKEN);
+    }
+    if (baseUrlInput.value) {
+        updateAllUrlPreviews();
+    }
+
+    let hasAutoPinged = false;
+
+    function handleIncomingCredentials(incomingUrl, incomingToken) {
+        let changed = false;
+        if (incomingUrl && baseUrlInput.value !== incomingUrl) {
+            baseUrlInput.value = incomingUrl;
+            sessionStorage.setItem(STORAGE_KEY_BASE_URL, incomingUrl);
+            changed = true;
+        }
+        if (incomingToken && tokenInput.value !== incomingToken) {
+            tokenInput.value = incomingToken;
+            sessionStorage.setItem(STORAGE_KEY_TOKEN, incomingToken);
+            changed = true;
+        }
+        if (changed || !hasAutoPinged) {
+            hasAutoPinged = true;
+            updateAllUrlPreviews();
+            setTimeout(() => {
+                if (btnPing && !btnPing.disabled) btnPing.click();
+            }, 100);
+        }
+    }
+
+    // 1. Check URL Hash fragment (#url=...&token=...)
+    if (window.location.hash) {
+        try {
+            const hashStr = window.location.hash.substring(1);
+            const hashParams = new URLSearchParams(hashStr);
+            const hUrl = hashParams.get('url');
+            const hToken = hashParams.get('token');
+            if (hUrl || hToken) {
+                handleIncomingCredentials(hUrl ? decodeURIComponent(hUrl) : null, hToken ? decodeURIComponent(hToken) : null);
+                history.replaceState(null, '', window.location.pathname + window.location.search);
+            }
+        } catch (e) {
+            console.error('Error reading hash params:', e);
+        }
+    } else if (window.location.search) {
+        // Fallback for query parameters (?url=...&token=...)
+        try {
+            const queryParams = new URLSearchParams(window.location.search);
+            const qUrl = queryParams.get('url');
+            const qToken = queryParams.get('token');
+            if (qUrl || qToken) {
+                handleIncomingCredentials(qUrl, qToken);
+            }
+        } catch (e) {}
+    }
+
+    // 2. Listen for postMessage from opener tab. Only the management UI may hand credentials over,
+    // so anything from another origin is ignored - an injected baseUrl would otherwise retarget the
+    // token already in the form, and the auto-ping below would send it there. An unresolvable origin
+    // fails closed and leaves the hash-fragment path as the only handoff.
+    const PLAYGROUND_ORIGIN = (() => {
+        const configured = document.querySelector('meta[name="playground_url"]')?.content?.trim();
+        if (!configured) return null;
+        try {
+            return new URL(configured).origin;
+        } catch {
+            return null;
+        }
+    })();
+    window.addEventListener('message', (event) => {
+        if (!PLAYGROUND_ORIGIN || event.origin !== PLAYGROUND_ORIGIN) return;
+        if (event.data && event.data.type === 'SCIM_VALIDATOR_INIT') {
+            const { baseUrl: mUrl, authToken: mToken } = event.data;
+            handleIncomingCredentials(mUrl, mToken);
+            if (event.source && event.source.postMessage) {
+                try {
+                    event.source.postMessage({ type: 'SCIM_VALIDATOR_ACK' }, event.origin);
+                } catch (e) {}
+            }
+        }
+    });
+
+    baseUrlInput.addEventListener('input', () => {
+        sessionStorage.setItem(STORAGE_KEY_BASE_URL, baseUrlInput.value.trim());
+        updateAllUrlPreviews();
+    });
+    tokenInput.addEventListener('input', () => {
+        sessionStorage.setItem(STORAGE_KEY_TOKEN, tokenInput.value.trim());
+    });
+
+    const logoutForm = document.querySelector('.logout-form');
+    if (logoutForm) {
+        logoutForm.addEventListener('submit', () => {
+            sessionStorage.removeItem(STORAGE_KEY_TOKEN);
+            sessionStorage.removeItem(STORAGE_KEY_BASE_URL);
+        });
+    }
+
+    function getCookie(name) {
+        const value = `; ${document.cookie}`;
+        const parts = value.split(`; ${name}=`);
+        if (parts.length === 2) return parts.pop().split(';').shift();
+        return null;
+    }
+
+    function getCsrfToken() {
+        const meta = document.querySelector('meta[name="_csrf"]');
+        if (meta && meta.content) return meta.content;
+        return getCookie('SCIM_VALIDATOR_UI_XSRF') || '';
+    }
+
+    function getCsrfHeaderName() {
+        const meta = document.querySelector('meta[name="_csrf_header"]');
+        return (meta && meta.content) ? meta.content : 'X-XSRF-TOKEN';
+    }
+
+    function getBaseUrl() {
+        let url = baseUrlInput.value.trim();
+        return url.replace(/\/+$/, '');
+    }
+
+    // Ping Test
+    btnPing.addEventListener('click', async () => {
+        const origText = btnPing.innerHTML;
+        btnPing.disabled = true;
+        btnPing.innerHTML = '<span class="spinner"></span> Pinging...';
+        envStatus.textContent = 'Testing...';
+
+        try {
+            const reqHeaders = { 'Content-Type': 'application/json' };
+            const token = getCsrfToken();
+            if (token) reqHeaders[getCsrfHeaderName()] = token;
+
+            const res = await fetch('/api/request-explorer/execute', {
+                method: 'POST',
+                headers: reqHeaders,
+                body: JSON.stringify({
+                    baseUrl: getBaseUrl(),
+                    authToken: tokenInput.value.trim(),
+                    method: 'GET',
+                    endpoint: '/ServiceProviderConfig'
+                })
+            });
+
+            if (!res.ok) {
+                let errText = `HTTP ${res.status} ${res.statusText || ''}`;
+                try {
+                    const errJson = await res.json();
+                    if (errJson && (errJson.error || errJson.message)) errText += ': ' + (errJson.error || errJson.message);
+                } catch (e) {}
+                envStatus.innerHTML = `<span style="color:#ef4444;">✖ ${escapeHtml(errText)}</span>`;
+                return;
+            }
+
+            const data = await res.json();
+            if (data.statusCode >= 200 && data.statusCode < 400) {
+                envStatus.innerHTML = `<span style="color:#22c55e;">✔ Connected (${data.statusCode} in ${data.durationMs}ms)</span>`;
+            } else if (data.error) {
+                envStatus.innerHTML = `<span style="color:#ef4444;">✖ ${escapeHtml(data.error)}</span>`;
+            } else {
+                envStatus.innerHTML = `<span style="color:#f59e0b;">⚠ HTTP ${data.statusCode} (${data.durationMs}ms)</span>`;
+            }
+        } catch (err) {
+            envStatus.innerHTML = `<span style="color:#ef4444;">✖ Network error: ${escapeHtml(err.message)}</span>`;
+        } finally {
+            btnPing.disabled = false;
+            btnPing.innerHTML = origText;
+        }
+    });
+
+    // Toggle All Cards Helper
+    window.toggleAllCards = function(expanded) {
+        document.querySelectorAll('.op-card').forEach(card => {
+            if (expanded) card.classList.add('expanded');
+            else card.classList.remove('expanded');
+        });
+    };
+
+    // Wire up all operation cards
+    document.querySelectorAll('.op-card').forEach(card => {
+        const head = card.querySelector('.op-head');
+        const methodBadge = card.querySelector('.method-badge');
+        const method = methodBadge ? methodBadge.textContent.trim() : 'GET';
+        const sendBtn = card.querySelector('.btn-send-req');
+        const respPanel = card.querySelector('.resp-panel');
+        const urlBaseEl = card.querySelector('.url-base');
+        const urlPathEl = card.querySelector('.url-path');
+        const urlQueryEl = card.querySelector('.url-query');
+        const bodyJsonTextarea = card.querySelector('.body-json');
+
+        // Card header click to toggle expand/collapse
+        if (head) {
+            head.addEventListener('click', (e) => {
+                // Ignore clicks on RFC link button
+                if (e.target.closest('.rfc-link')) return;
+                card.classList.toggle('expanded');
+            });
+        }
+
+        // Parameter inputs
+        const paramStartIndex = card.querySelector('.param-start-index');
+        const paramCount = card.querySelector('.param-count');
+        const paramSortBy = card.querySelector('.param-sort-by');
+        const paramSortOrder = card.querySelector('.param-sort-order');
+        const paramFilter = card.querySelector('.param-filter');
+        const paramAttributes = card.querySelector('.param-attributes');
+        const paramExcluded = card.querySelector('.param-excluded');
+        const paramUserId = card.querySelector('.param-user-id');
+        const paramGroupId = card.querySelector('.param-group-id');
+        const paramIfMatch = card.querySelector('.param-if-match');
+        const paramIfNoneMatch = card.querySelector('.param-if-none-match');
+        const bodyPresetSelect = card.querySelector('.body-preset');
+        const patchPresetSelect = card.querySelector('.patch-preset');
+        const btnFormatJson = card.querySelector('.btn-format-json');
+
+        // Search inputs
+        const paramFailOnErrors = card.querySelector('.param-fail-on-errors');
+
+        const searchStart = card.querySelector('.search-param-start');
+        const searchCount = card.querySelector('.search-param-count');
+        const searchFilter = card.querySelector('.search-param-filter');
+        const searchAttr = card.querySelector('.search-param-attr');
+
+        // Helper buttons
+        const btnUseLastUser = card.querySelector('.btn-use-last-user');
+        const btnUseLastGroup = card.querySelector('.btn-use-last-group');
+        const btnInsertLastUser = card.querySelector('.btn-insert-last-user');
+
+        if (btnUseLastUser && paramUserId) {
+            btnUseLastUser.addEventListener('click', () => {
+                const id = localStorage.getItem(STORAGE_KEY_LAST_USER_ID) || prompt('Enter User ID:');
+                if (id) {
+                    paramUserId.value = id;
+                    updateCardUrl();
+                }
+            });
+        }
+
+        if (btnUseLastGroup && paramGroupId) {
+            btnUseLastGroup.addEventListener('click', () => {
+                const id = localStorage.getItem(STORAGE_KEY_LAST_GROUP_ID) || prompt('Enter Group ID:');
+                if (id) {
+                    paramGroupId.value = id;
+                    updateCardUrl();
+                }
+            });
+        }
+
+        if (btnInsertLastUser && bodyJsonTextarea) {
+            btnInsertLastUser.addEventListener('click', () => {
+                const id = localStorage.getItem(STORAGE_KEY_LAST_USER_ID) || prompt('Enter User ID to insert:');
+                if (id) {
+                    bodyJsonTextarea.value = bodyJsonTextarea.value.replace('USER_ID_HERE', id);
+                }
+            });
+        }
+
+        // Filter pills click
+        card.querySelectorAll('.filter-pill').forEach(pill => {
+            pill.addEventListener('click', () => {
+                if (paramFilter) {
+                    paramFilter.value = pill.dataset.filter;
+                    updateCardUrl();
+                }
+            });
+        });
+
+        if (btnFormatJson && bodyJsonTextarea) {
+            btnFormatJson.addEventListener('click', () => {
+                try {
+                    const parsed = JSON.parse(bodyJsonTextarea.value);
+                    bodyJsonTextarea.value = JSON.stringify(parsed, null, 2);
+                } catch (e) {
+                    alert('Invalid JSON: ' + e.message);
+                }
+            });
+        }
+
+        if (bodyPresetSelect && bodyJsonTextarea) {
+            bodyPresetSelect.addEventListener('change', () => {
+                const val = bodyPresetSelect.value;
+                if (val === 'minimal') {
+                    bodyJsonTextarea.value = JSON.stringify({
+                        schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"],
+                        userName: "john.doe@example.com",
+                        active: true
+                    }, null, 2);
+                } else if (val === 'standard') {
+                    bodyJsonTextarea.value = JSON.stringify({
+                        schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"],
+                        userName: "alex.morgan@example.com",
+                        name: { familyName: "Morgan", givenName: "Alex" },
+                        displayName: "Alex Morgan",
+                        emails: [{ value: "alex.morgan@example.com", type: "work", primary: true }],
+                        active: true
+                    }, null, 2);
+                } else if (val === 'enterprise') {
+                    bodyJsonTextarea.value = JSON.stringify({
+                        schemas: [
+                            "urn:ietf:params:scim:schemas:core:2.0:User",
+                            "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
+                        ],
+                        userName: "alex.morgan@example.com",
+                        name: { familyName: "Morgan", givenName: "Alex" },
+                        displayName: "Alex Morgan",
+                        emails: [{ value: "alex.morgan@example.com", type: "work", primary: true }],
+                        active: true,
+                        "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User": {
+                            employeeNumber: "EMP-9402",
+                            department: "Engineering",
+                            organization: "Platform Identity"
+                        }
+                    }, null, 2);
+                }
+            });
+        }
+
+        if (patchPresetSelect && bodyJsonTextarea) {
+            patchPresetSelect.addEventListener('change', () => {
+                const val = patchPresetSelect.value;
+                if (val === 'replace-givenName') {
+                    bodyJsonTextarea.value = JSON.stringify({
+                        schemas: ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                        Operations: [{ op: "replace", path: "name.givenName", value: "Alexandra" }]
+                    }, null, 2);
+                } else if (val === 'add-email') {
+                    bodyJsonTextarea.value = JSON.stringify({
+                        schemas: ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                        Operations: [{ op: "add", path: "emails", value: [{ value: "alex.alt@example.com", type: "other" }] }]
+                    }, null, 2);
+                } else if (val === 'set-active') {
+                    bodyJsonTextarea.value = JSON.stringify({
+                        schemas: ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                        Operations: [{ op: "replace", path: "active", value: false }]
+                    }, null, 2);
+                } else if (val === 'remove-phone') {
+                    bodyJsonTextarea.value = JSON.stringify({
+                        schemas: ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                        Operations: [{ op: "remove", path: "phoneNumbers" }]
+                    }, null, 2);
+                }
+            });
+        }
+
+        // Keep search params in sync with search body
+        function syncSearchBody() {
+            if (!searchStart || !bodyJsonTextarea) return;
+            try {
+                const req = {
+                    schemas: ["urn:ietf:params:scim:api:messages:2.0:SearchRequest"],
+                    startIndex: parseInt(searchStart.value, 10) || 1,
+                    count: parseInt(searchCount.value, 10) || 10
+                };
+                if (searchFilter && searchFilter.value.trim()) req.filter = searchFilter.value.trim();
+                if (searchAttr && searchAttr.value.trim()) {
+                    req.attributes = searchAttr.value.split(',').map(s => s.trim()).filter(Boolean);
+                }
+                bodyJsonTextarea.value = JSON.stringify(req, null, 2);
+            } catch (e) {}
+        }
+
+        [searchStart, searchCount, searchFilter, searchAttr].forEach(input => {
+            if (input) input.addEventListener('input', syncSearchBody);
+        });
+
+        // Keep failOnErrors in sync with the bulk body. Unlike the search body this is a patch,
+        // not a rebuild: the Operations array is user-authored and must survive untouched.
+        if (paramFailOnErrors && bodyJsonTextarea) {
+            paramFailOnErrors.addEventListener('input', () => {
+                const limit = parseInt(paramFailOnErrors.value, 10);
+                if (Number.isNaN(limit)) {
+                    return;
+                }
+                try {
+                    const parsed = JSON.parse(bodyJsonTextarea.value);
+                    parsed.failOnErrors = limit;
+                    bodyJsonTextarea.value = JSON.stringify(parsed, null, 2);
+                } catch (e) {
+                    // Body is mid-edit and not valid JSON yet; leave the user's text alone.
+                }
+            });
+        }
+
+        // Compute dynamic path and query
+        function computeEndpoint() {
+            let path = '/Users';
+            if (urlPathEl) {
+                path = urlPathEl.getAttribute('data-original-path') || urlPathEl.textContent.trim();
+                if (!urlPathEl.hasAttribute('data-original-path')) {
+                    urlPathEl.setAttribute('data-original-path', path);
+                }
+            }
+
+            // Replace {id} only when a real id is present, so the placeholder stays readable
+            // in the preview and an unresolved path can be detected before sending.
+            if (path.includes('{id}')) {
+                const idVal = (paramUserId ? paramUserId.value.trim() : '') || (paramGroupId ? paramGroupId.value.trim() : '');
+                if (idVal) {
+                    path = path.replace('{id}', encodeURIComponent(idVal));
+                }
+            }
+
+            // Query parameters
+            const queryParts = [];
+            const displayParts = [];
+
+            if (paramStartIndex && paramStartIndex.value) {
+                queryParts.push('startIndex=' + encodeURIComponent(paramStartIndex.value));
+                displayParts.push('startIndex=' + paramStartIndex.value);
+            }
+            if (paramCount && paramCount.value) {
+                queryParts.push('count=' + encodeURIComponent(paramCount.value));
+                displayParts.push('count=' + paramCount.value);
+            }
+            if (paramFilter && paramFilter.value.trim()) {
+                queryParts.push('filter=' + encodeURIComponent(paramFilter.value.trim()));
+                displayParts.push('filter=' + paramFilter.value.trim());
+            }
+            if (paramSortBy && paramSortBy.value.trim()) {
+                queryParts.push('sortBy=' + encodeURIComponent(paramSortBy.value.trim()));
+                displayParts.push('sortBy=' + paramSortBy.value.trim());
+            }
+            if (paramSortOrder && paramSortOrder.value) {
+                queryParts.push('sortOrder=' + encodeURIComponent(paramSortOrder.value));
+                displayParts.push('sortOrder=' + paramSortOrder.value);
+            }
+            if (paramAttributes && paramAttributes.value.trim()) {
+                queryParts.push('attributes=' + encodeURIComponent(paramAttributes.value.trim()));
+                displayParts.push('attributes=' + paramAttributes.value.trim());
+            }
+            if (paramExcluded && paramExcluded.value.trim()) {
+                queryParts.push('excludedAttributes=' + encodeURIComponent(paramExcluded.value.trim()));
+                displayParts.push('excludedAttributes=' + paramExcluded.value.trim());
+            }
+
+            const qs = queryParts.length > 0 ? '?' + queryParts.join('&') : '';
+            const qsDisplay = displayParts.length > 0 ? '?' + displayParts.join('&') : '';
+
+            return {
+                path: path,
+                queryString: qs,
+                queryDisplay: qsDisplay,
+                fullEndpoint: path + qs
+            };
+        }
+
+        function updateCardUrl() {
+            if (urlBaseEl) urlBaseEl.textContent = getBaseUrl();
+            const comp = computeEndpoint();
+            if (urlPathEl) urlPathEl.textContent = comp.path;
+            if (urlQueryEl) urlQueryEl.textContent = comp.queryDisplay;
+        }
+
+        // Attach input listeners
+        [paramStartIndex, paramCount, paramSortBy, paramSortOrder, paramFilter, paramAttributes, paramExcluded, paramUserId, paramGroupId].forEach(input => {
+            if (input) input.addEventListener('input', updateCardUrl);
+        });
+
+        updateCardUrl();
+
+        // Send Request Handler
+        sendBtn.addEventListener('click', async () => {
+            const comp = computeEndpoint();
+            if (comp.path.includes('{id}')) {
+                respPanel.classList.add('active');
+                renderResponse(respPanel, {
+                    statusCode: 0,
+                    statusText: 'Missing input',
+                    durationMs: 0,
+                    error: 'Enter a resource ID before sending this request.'
+                });
+                return;
+            }
+
+            sendBtn.disabled = true;
+            sendBtn.innerHTML = '<span class="spinner"></span> Sending...';
+
+            let customHeaders = {};
+            if (paramIfMatch && paramIfMatch.value.trim()) {
+                customHeaders['If-Match'] = paramIfMatch.value.trim();
+            }
+            if (paramIfNoneMatch && paramIfNoneMatch.value.trim()) {
+                customHeaders['If-None-Match'] = paramIfNoneMatch.value.trim();
+            }
+
+            const bodyContent = bodyJsonTextarea ? bodyJsonTextarea.value.trim() : null;
+
+            respPanel.classList.add('active');
+            respPanel.innerHTML = `
+                <div class="resp-head">
+                    <div class="resp-status-group">
+                        <span class="status-pill" style="background:#334155; color:#cbd5e1;">Running...</span>
+                        <span class="duration-pill"></span>
+                    </div>
+                </div>
+                <pre class="resp-body-pre">Executing request...</pre>
+            `;
+
+            try {
+                const reqHeaders = { 'Content-Type': 'application/json' };
+                const csrfToken = getCsrfToken();
+                if (csrfToken) reqHeaders[getCsrfHeaderName()] = csrfToken;
+
+                const res = await fetch('/api/request-explorer/execute', {
+                    method: 'POST',
+                    headers: reqHeaders,
+                    body: JSON.stringify({
+                        baseUrl: getBaseUrl(),
+                        authToken: tokenInput.value.trim(),
+                        method: method,
+                        endpoint: comp.fullEndpoint,
+                        headers: Object.keys(customHeaders).length > 0 ? customHeaders : null,
+                        body: bodyContent || null
+                    })
+                });
+
+                if (!res.ok) {
+                    let errDetail = `HTTP ${res.status} ${res.statusText || ''}`;
+                    try {
+                        const errJson = await res.json();
+                        if (errJson && (errJson.error || errJson.message)) errDetail += ': ' + (errJson.error || errJson.message);
+                    } catch(e) {}
+                    renderResponse(respPanel, {
+                        statusCode: res.status,
+                        statusText: res.statusText || 'Error',
+                        durationMs: 0,
+                        responseBody: 'Backend Error:\n' + errDetail
+                    });
+                    return;
+                }
+
+                const data = await res.json();
+                renderResponse(respPanel, data);
+
+                // Auto-save discovered ID
+                if (data.responseBody) {
+                    try {
+                        const parsed = JSON.parse(data.responseBody);
+                        if (parsed && parsed.id) {
+                            if (parsed.userName || (parsed.schemas && parsed.schemas.some(s => s.includes('User')))) {
+                                localStorage.setItem(STORAGE_KEY_LAST_USER_ID, parsed.id);
+                            } else if (parsed.displayName || (parsed.schemas && parsed.schemas.some(s => s.includes('Group')))) {
+                                localStorage.setItem(STORAGE_KEY_LAST_GROUP_ID, parsed.id);
+                            }
+                        } else if (parsed && parsed.Resources && parsed.Resources.length > 0) {
+                            const first = parsed.Resources[0];
+                            if (first.id) {
+                                if (first.userName) localStorage.setItem(STORAGE_KEY_LAST_USER_ID, first.id);
+                                else if (first.displayName) localStorage.setItem(STORAGE_KEY_LAST_GROUP_ID, first.id);
+                            }
+                        }
+                    } catch (e) {}
+                }
+
+            } catch (err) {
+                renderResponse(respPanel, {
+                    statusCode: 0,
+                    statusText: 'Client Error',
+                    durationMs: 0,
+                    error: err.message
+                });
+            } finally {
+                sendBtn.disabled = false;
+                sendBtn.innerHTML = `
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                    Send Request
+                `;
+            }
+        });
+    });
+
+    function renderResponse(panel, data) {
+        const sc = data.statusCode || 0;
+        let statusGroup = 'err';
+        if (sc >= 200 && sc < 300) statusGroup = '2xx';
+        else if (sc >= 300 && sc < 400) statusGroup = '3xx';
+        else if (sc >= 400 && sc < 500) statusGroup = '4xx';
+        else if (sc >= 500) statusGroup = '5xx';
+
+        const headersText = data.responseHeaders ? Object.entries(data.responseHeaders).map(([k,v]) => `${k}: ${v}`).join('\n') : '';
+
+        panel.innerHTML = `
+            <div class="resp-head">
+                <div class="resp-status-group">
+                    <span class="status-pill status-${statusGroup}">${sc ? sc + ' ' + (data.statusText || '') : 'Error'}</span>
+                    <span class="duration-pill">${data.durationMs ? '⏱ ' + data.durationMs + ' ms' : ''}</span>
+                </div>
+                <div class="resp-actions">
+                    ${headersText ? '<button type="button" class="btn-tiny btn-toggle-headers">Headers</button>' : ''}
+                    <button type="button" class="btn-tiny btn-copy-curl">Copy cURL</button>
+                    <button type="button" class="btn-tiny btn-copy-body">Copy Body</button>
+                </div>
+            </div>
+            ${headersText ? `<div class="resp-headers-view">${escapeHtml(headersText)}</div>` : ''}
+            <pre class="resp-body-pre">${escapeHtml(data.error ? 'Error: ' + data.error : (data.responseBody || '(Empty response)'))}</pre>
+        `;
+
+        const btnHeaders = panel.querySelector('.btn-toggle-headers');
+        const headersView = panel.querySelector('.resp-headers-view');
+        if (btnHeaders && headersView) {
+            btnHeaders.addEventListener('click', () => {
+                headersView.classList.toggle('show');
+            });
+        }
+
+        const btnCopyBody = panel.querySelector('.btn-copy-body');
+        if (btnCopyBody) {
+            btnCopyBody.addEventListener('click', () => {
+                navigator.clipboard.writeText(data.responseBody || data.error || '');
+                btnCopyBody.textContent = 'Copied!';
+                setTimeout(() => btnCopyBody.textContent = 'Copy Body', 1500);
+            });
+        }
+
+        const btnCopyCurl = panel.querySelector('.btn-copy-curl');
+        if (btnCopyCurl) {
+            btnCopyCurl.addEventListener('click', () => {
+                const curl = buildCurl(data);
+                navigator.clipboard.writeText(curl);
+                btnCopyCurl.textContent = 'Copied!';
+                setTimeout(() => btnCopyCurl.textContent = 'Copy cURL', 1500);
+            });
+        }
+    }
+
+    function buildCurl(data) {
+        let cmd = `curl -X ${data.requestMethod || 'GET'} "${data.requestUrl}"`;
+        // requestHeaders carries the server-masked Authorization value, which is display-only.
+        // Substitute the token the browser already holds so the copied command actually runs.
+        const liveToken = tokenInput.value.trim();
+        if (data.requestHeaders) {
+            for (const [k, v] of Object.entries(data.requestHeaders)) {
+                const value = (k.toLowerCase() === 'authorization' && liveToken)
+                    ? `Bearer ${liveToken}`
+                    : v;
+                cmd += ` \\\n  -H "${k}: ${value}"`;
+            }
+        }
+        if (data.requestBody) {
+            cmd += ` \\\n  -d '${data.requestBody.replace(/'/g, "'\\''")}'`;
+        }
+        return cmd;
+    }
+
+    function updateAllUrlPreviews() {
+        document.querySelectorAll('.url-base').forEach(el => {
+            el.textContent = getBaseUrl();
+        });
+    }
+
+    function escapeHtml(str) {
+        if (!str) return '';
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    updateAllUrlPreviews();
+</script>
+<footer class="site-footer">
+    <nav class="site-footer-icons" aria-label="Legal and contact links">
+        <a href="https://scimsandbox.github.io/scim-app-policy/terms.html" target="_blank" rel="noopener noreferrer" aria-label="Terms of Service" title="Terms of Service"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M1 21h12v2H1zM5.245 8.07l2.83-2.827 14.14 14.142-2.828 2.828zM12.317 1l5.657 5.656-2.83 2.83-5.654-5.66zM3.825 9.485l5.657 5.657-2.828 2.828-5.657-5.657z"/></svg></a>
+        <a href="https://scimsandbox.github.io/scim-app-policy/privacy.html" target="_blank" rel="noopener noreferrer" aria-label="Privacy Policy" title="Privacy Policy"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 1 3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z"/></svg></a>
+        <a href="https://github.com/scimsandbox" target="_blank" rel="noopener noreferrer" aria-label="GitHub" title="GitHub"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.865 8.166 6.839 9.489.5.092.682-.217.682-.482 0-.237-.009-.866-.013-1.7-2.782.603-3.369-1.342-3.369-1.342-.454-1.155-1.11-1.462-1.11-1.462-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.831.092-.646.35-1.086.636-1.337-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0 1 12 6.836a9.59 9.59 0 0 1 2.504.337c1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.163 22 16.418 22 12c0-5.523-4.477-10-10-10z"/></svg></a>
+        <a href="https://github.com/scimsandbox/scim-project/issues" target="_blank" rel="noopener noreferrer" aria-label="Report Issue" title="Report Issue"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 8h-2.81c-.45-.78-1.07-1.45-1.82-1.96L17 4.41 15.59 3l-2.17 2.17C12.96 5.06 12.49 5 12 5c-.49 0-.96.06-1.41.17L8.41 3 7 4.41l1.62 1.63C7.88 6.55 7.26 7.22 6.81 8H4v2h2.09c-.05.33-.09.66-.09 1v1H4v2h2v1c0 .34.04.67.09 1H4v2h2.81c1.04 1.79 2.97 3 5.19 3s4.15-1.21 5.19-3H20v-2h-2.09c.05-.33.09-.66.09-1v-1h2v-2h-2v-1c0-.34-.04-.67-.09-1H20V8zm-6 8h-4v-2h4v2zm0-4h-4v-2h4v2z"/></svg></a>
+        <a href="mailto:support@scimsandbox.net" aria-label="Email Support" title="Email Support"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4-8 5-8-5V6l8 5 8-5v2z"/></svg></a>
+    </nav>
+</footer>
+<!-- Floating Side Dock -->
+<aside class="floating-side-dock" aria-label="Quick Navigation">
+    <a th:href="${playgroundUrl}" href="https://ui.scimsandbox.net" target="_blank" rel="noopener noreferrer" class="floating-side-btn" data-tooltip="SCIM Playground" data-tooltip-pos="left" aria-label="SCIM Playground">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"></rect><rect width="20" height="8" x="2" y="14" rx="2" ry="2"></rect><line x1="6" x2="6.01" y1="6" y2="6"></line><line x1="6" x2="6.01" y1="18" y2="18"></line></svg>
+    </a>
+</aside>
+<details class="bmc-widget">
+    <summary aria-label="Buy me a coffee">
+        <img th:src="@{/images/buy-me-a-coffee-icon.svg}" src="/images/buy-me-a-coffee-icon.svg" alt="Buy Me a Coffee icon">
+        <span class="bmc-widget-label">Buy me a coffee</span>
+    </summary>
+    <a class="bmc-panel" href="https://buymeacoffee.com/eduard.pal" target="_blank" rel="noopener noreferrer" aria-label="Open Buy Me a Coffee">
+        <img th:src="@{/images/buy-me-a-coffee.png}" src="/images/buy-me-a-coffee.png" alt="Buy Me a Coffee QR code">
+        <span class="bmc-panel-copy">
+            <span class="bmc-panel-hint">Scan or click</span>
+        </span>
+    </a>
+</details>
+</body>
+</html>

@@ -20,12 +20,14 @@ import org.springframework.security.oauth2.core.oidc.user.OidcUser;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.logout.LogoutSuccessHandler;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
+import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 
 import java.lang.reflect.Array;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 @Configuration
@@ -52,15 +54,20 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http,
                                                    LogoutSuccessHandler oidcLogoutSuccessHandler) throws Exception {
+        CsrfTokenRequestAttributeHandler requestHandler = new CsrfTokenRequestAttributeHandler();
+        requestHandler.setCsrfRequestAttributeName(null);
+
         http.authorizeHttpRequests(authorize -> authorize
                 .requestMatchers("/actuator/**").permitAll()
-                .requestMatchers("/css/**", "/js/**", "/images/**", "/error").permitAll()
+                .requestMatchers("/css/**", "/js/**", "/images/**", "/favicon.svg", "/favicon.ico", "/error").permitAll()
                 .anyRequest().authenticated())
             .oauth2Login(oauth2 -> oauth2
                 .userInfoEndpoint(userInfo -> userInfo.oidcUserService(oidcUserService())))
             .logout(logout -> logout
                 .logoutSuccessHandler(oidcLogoutSuccessHandler))
-            .csrf(csrf -> csrf.csrfTokenRepository(csrfTokenRepository()));
+            .csrf(csrf -> csrf
+                .csrfTokenRepository(csrfTokenRepository())
+                .csrfTokenRequestHandler(requestHandler));
         
         return http.build();
     }
@@ -124,7 +131,7 @@ public class SecurityConfig {
         if (role == null || role.isBlank()) {
             return null;
         }
-        String normalized = role.trim().toUpperCase();
+        String normalized = role.trim().toUpperCase(Locale.ROOT);
         if (normalized.startsWith("ROLE_")) {
             return normalized.substring("ROLE_".length());
         }
