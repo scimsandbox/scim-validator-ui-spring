@@ -46,7 +46,7 @@ class PlaygroundControllerTest {
     @Test
     void playgroundRoot_redirectsToUsersTopic() {
         String view = controller.playgroundRoot();
-        assertThat(view).isEqualTo("redirect:/request-explorer/users");
+        assertThat(view).isEqualTo("redirect:/playground/users");
     }
 
     @Test

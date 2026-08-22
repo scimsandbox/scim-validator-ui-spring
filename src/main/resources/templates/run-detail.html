@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SCIM 2.0 Validator | Test Suite Result</title>
+    <title>SCIM Compliance | Run Result</title>
     <link rel="icon" type="image/svg+xml" th:href="@{/favicon.svg}" href="/favicon.svg">
     <style>
         :root {
@@ -484,15 +484,15 @@
 <div class="container">
     <header class="site-header">
         <div class="brand-group">
-            <h1 class="brand-title">SCIM 2.0 Validator</h1>
+            <h1 class="brand-title">SCIM Validation</h1>
             <nav class="nav-segmented" aria-label="Main Navigation">
                 <a th:href="@{/}" href="/" class="nav-segment active">
-                    <svg class="nav-segment-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
-                    <span>Test Suite</span>
+                    <svg class="nav-segment-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 17 2 2 4-4"></path><path d="m3 7 2 2 4-4"></path><path d="M13 6h8"></path><path d="M13 12h8"></path><path d="M13 18h8"></path></svg>
+                    <span>SCIM Compliance</span>
                 </a>
-                <a th:href="@{/request-explorer}" href="/request-explorer" class="nav-segment">
+                <a th:href="@{/playground}" href="/playground" class="nav-segment">
                     <svg class="nav-segment-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"></polygon></svg>
-                    <span>Request Explorer</span>
+                    <span>SCIM Playground</span>
                 </a>
             </nav>
         </div>
@@ -506,8 +506,8 @@
     </header>
 
     <div class="card" th:if="${runNotFound}">
-        <h1>Test Suite Result not found</h1>
-        <p><a th:href="@{/}" class="btn-link">← Back to test suites</a></p>
+        <h1>Compliance run not found</h1>
+        <p><a th:href="@{/}" class="btn-link">← Back to compliance runs</a></p>
     </div>
 
     <th:block th:unless="${runNotFound}">
@@ -517,9 +517,9 @@
         
         <div class="card">
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
-                <h1 style="margin: 0;">Test Suite Result</h1>
+                <h1 style="margin: 0;">Compliance Run Result</h1>
                 <div style="display: flex; gap: 10px;">
-                    <a th:href="@{/}" class="btn-link">← Back to test suites</a>
+                    <a th:href="@{/}" class="btn-link">← Back to compliance runs</a>
                     <a th:href="@{/runs/{id}/export(id=${run.id})}" class="btn-link">↓ Export as JSON</a>
                 </div>
             </div>
@@ -628,7 +628,7 @@
 </footer>
 <!-- Floating Side Dock -->
 <aside class="floating-side-dock" aria-label="Quick Navigation">
-    <a th:href="${playgroundUrl}" href="https://ui.scimsandbox.net" target="_blank" rel="noopener noreferrer" class="floating-side-btn" data-tooltip="SCIM Playground" data-tooltip-pos="left" aria-label="SCIM Playground">
+    <a th:href="${serverManagerUrl}" href="https://ui.scimsandbox.net" target="_blank" rel="noopener noreferrer" class="floating-side-btn" data-tooltip="SCIM Server Manager" data-tooltip-pos="left" aria-label="SCIM Server Manager">
         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"></rect><rect width="20" height="8" x="2" y="14" rx="2" ry="2"></rect><line x1="6" x2="6.01" y1="6" y2="6"></line><line x1="6" x2="6.01" y1="18" y2="18"></line></svg>
     </a>
 </aside>

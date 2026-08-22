@@ -56,22 +56,22 @@ public class PlaygroundController {
 
     private final PlaygroundExecutionService executionService;
     private final MgmtUserService mgmtUserService;
-    private final String playgroundUrl;
+    private final String serverManagerUrl;
 
     public PlaygroundController(PlaygroundExecutionService executionService,
                                 MgmtUserService mgmtUserService,
-                                @Value("${app.playground.url}") String playgroundUrl) {
+                                @Value("${app.server-manager.url}") String serverManagerUrl) {
         this.executionService = executionService;
         this.mgmtUserService = mgmtUserService;
-        this.playgroundUrl = playgroundUrl;
+        this.serverManagerUrl = serverManagerUrl;
     }
 
-    @GetMapping("/request-explorer")
+    @GetMapping("/playground")
     public String playgroundRoot() {
-        return "redirect:/request-explorer/users";
+        return "redirect:/playground/users";
     }
 
-    @GetMapping("/request-explorer/{topic}")
+    @GetMapping("/playground/{topic}")
     public String playgroundTopic(@PathVariable String topic, Model model, Authentication authentication) {
         String normalizedTopic = topic != null ? topic.toLowerCase(Locale.ROOT).trim() : "users";
         if (!VALID_TOPICS.contains(normalizedTopic)) {
@@ -82,11 +82,11 @@ public class PlaygroundController {
         model.addAttribute("topics", ALL_TOPICS);
         model.addAttribute(ATTR_CURRENT_USER, resolveDisplayName(authentication));
         model.addAttribute(ATTR_CURRENT_USER_ROLE, currentUserRole(authentication));
-        model.addAttribute("playgroundUrl", playgroundUrl);
+        model.addAttribute("serverManagerUrl", serverManagerUrl);
         return "playground";
     }
 
-    @PostMapping(value = "/api/request-explorer/execute", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
+    @PostMapping(value = "/api/playground/execute", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     @ResponseBody
     public ResponseEntity<PlaygroundExecuteResponse> executeRequest(@Valid @RequestBody PlaygroundExecuteRequest request) {
         PlaygroundExecuteResponse response = executionService.execute(request);

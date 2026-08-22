@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="_csrf" th:content="${_csrf.token}"/>
     <meta name="_csrf_header" th:content="${_csrf.headerName}"/>
-    <meta name="playground_url" th:content="${playgroundUrl}"/>
-    <title>SCIM 2.0 Validator | Request Explorer</title>
-    <link rel="icon" type="image/svg+xml" th:href="@{/favicon.svg}" href="/favicon.svg">
+    <meta name="server_manager_url" th:content="${serverManagerUrl}"/>
+    <title>SCIM Playground | SCIM Validation</title>
+    <link rel="icon" type="image/svg+xml" th:href="@{/favicon-playground.svg}" href="/favicon-playground.svg">
     <style>
         :root {
             --bg: #0b1220;
@@ -905,15 +905,15 @@
     <!-- Site Header -->
     <header class="site-header">
         <div class="brand-group">
-            <h1 class="brand-title">SCIM 2.0 Validator</h1>
+            <h1 class="brand-title">SCIM Validation</h1>
             <nav class="nav-segmented" aria-label="Main Navigation">
                 <a th:href="@{/}" href="/" class="nav-segment">
-                    <svg class="nav-segment-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
-                    <span>Test Suite</span>
+                    <svg class="nav-segment-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 17 2 2 4-4"></path><path d="m3 7 2 2 4-4"></path><path d="M13 6h8"></path><path d="M13 12h8"></path><path d="M13 18h8"></path></svg>
+                    <span>SCIM Compliance</span>
                 </a>
-                <a th:href="@{/request-explorer}" href="/request-explorer" class="nav-segment active">
+                <a th:href="@{/playground}" href="/playground" class="nav-segment active">
                     <svg class="nav-segment-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"></polygon></svg>
-                    <span>Request Explorer</span>
+                    <span>SCIM Playground</span>
                 </a>
             </nav>
         </div>
@@ -954,7 +954,7 @@
         <aside class="sidebar">
             <div class="sidebar-title">SCIM Endpoints</div>
             <a th:each="t : ${topics}"
-               th:href="@{'/request-explorer/' + ${t.id}}"
+               th:href="@{'/playground/' + ${t.id}}"
                th:classappend="${t.id == activeTopic} ? 'active' : ''"
                class="sidebar-link">
                 <span th:text="${t.title}">Topic</span>
@@ -2242,8 +2242,8 @@
     // so anything from another origin is ignored - an injected baseUrl would otherwise retarget the
     // token already in the form, and the auto-ping below would send it there. An unresolvable origin
     // fails closed and leaves the hash-fragment path as the only handoff.
-    const PLAYGROUND_ORIGIN = (() => {
-        const configured = document.querySelector('meta[name="playground_url"]')?.content?.trim();
+    const SERVER_MANAGER_ORIGIN = (() => {
+        const configured = document.querySelector('meta[name="server_manager_url"]')?.content?.trim();
         if (!configured) return null;
         try {
             return new URL(configured).origin;
@@ -2252,7 +2252,7 @@
         }
     })();
     window.addEventListener('message', (event) => {
-        if (!PLAYGROUND_ORIGIN || event.origin !== PLAYGROUND_ORIGIN) return;
+        if (!SERVER_MANAGER_ORIGIN || event.origin !== SERVER_MANAGER_ORIGIN) return;
         if (event.data && event.data.type === 'SCIM_VALIDATOR_INIT') {
             const { baseUrl: mUrl, authToken: mToken } = event.data;
             handleIncomingCredentials(mUrl, mToken);
@@ -2315,7 +2315,7 @@
             const token = getCsrfToken();
             if (token) reqHeaders[getCsrfHeaderName()] = token;
 
-            const res = await fetch('/api/request-explorer/execute', {
+            const res = await fetch('/api/playground/execute', {
                 method: 'POST',
                 headers: reqHeaders,
                 body: JSON.stringify({
@@ -2685,7 +2685,7 @@
                 const csrfToken = getCsrfToken();
                 if (csrfToken) reqHeaders[getCsrfHeaderName()] = csrfToken;
 
-                const res = await fetch('/api/request-explorer/execute', {
+                const res = await fetch('/api/playground/execute', {
                     method: 'POST',
                     headers: reqHeaders,
                     body: JSON.stringify({
@@ -2850,7 +2850,7 @@
 </footer>
 <!-- Floating Side Dock -->
 <aside class="floating-side-dock" aria-label="Quick Navigation">
-    <a th:href="${playgroundUrl}" href="https://ui.scimsandbox.net" target="_blank" rel="noopener noreferrer" class="floating-side-btn" data-tooltip="SCIM Playground" data-tooltip-pos="left" aria-label="SCIM Playground">
+    <a th:href="${serverManagerUrl}" href="https://ui.scimsandbox.net" target="_blank" rel="noopener noreferrer" class="floating-side-btn" data-tooltip="SCIM Server Manager" data-tooltip-pos="left" aria-label="SCIM Server Manager">
         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"></rect><rect width="20" height="8" x="2" y="14" rx="2" ry="2"></rect><line x1="6" x2="6.01" y1="6" y2="6"></line><line x1="6" x2="6.01" y1="18" y2="18"></line></svg>
     </a>
 </aside>

@@ -51,16 +51,16 @@ class PlaygroundControllerTemplateTest {
 
     @Test
     void playgroundRoot_redirectsToUsers() throws Exception {
-        mockMvc.perform(get("/request-explorer")
+        mockMvc.perform(get("/playground")
                         .requestAttr("_csrf", CSRF_TOKEN)
                         .principal(new TestingAuthenticationToken("user@example.com", "n/a")))
                 .andExpect(status().is3xxRedirection())
-                .andExpect(redirectedUrl("/request-explorer/users"));
+                .andExpect(redirectedUrl("/playground/users"));
     }
 
     @Test
     void executeRequest_blankFields_returnValidationMessagesInErrorField() throws Exception {
-        mockMvc.perform(post("/api/request-explorer/execute")
+        mockMvc.perform(post("/api/playground/execute")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"baseUrl\":\"\",\"method\":\"\",\"endpoint\":\"\"}")
                         .requestAttr("_csrf", CSRF_TOKEN)
@@ -73,7 +73,7 @@ class PlaygroundControllerTemplateTest {
 
     @Test
     void executeRequest_malformedJson_returnsReadableError() throws Exception {
-        mockMvc.perform(post("/api/request-explorer/execute")
+        mockMvc.perform(post("/api/playground/execute")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{ not json")
                         .requestAttr("_csrf", CSRF_TOKEN)
@@ -96,14 +96,18 @@ class PlaygroundControllerTemplateTest {
     void playgroundTopics_renderSuccessfully(String topic) throws Exception {
         when(mgmtUserService.resolveDisplayName(anyString(), anyString())).thenReturn("Alex Morgan");
 
-        mockMvc.perform(get("/request-explorer/" + topic)
+        mockMvc.perform(get("/playground/" + topic)
                         .requestAttr("_csrf", CSRF_TOKEN)
                         .principal(new TestingAuthenticationToken("user@example.com", "n/a")))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString(">SCIM 2.0 Validator</h1>")))
+                .andExpect(content().string(containsString(">SCIM Validation</h1>")))
+                // Both nav segments carry their product names, and this page is the active one.
+                .andExpect(content().string(containsString(">SCIM Compliance</span>")))
+                .andExpect(content().string(containsString(">SCIM Playground</span>")))
+                .andExpect(content().string(containsString("nav-segment active")))
                 .andExpect(content().string(containsString("Active SCIM Server Target")))
                 // the sidebar link for the requested topic exists...
-                .andExpect(content().string(containsString("href=\"/request-explorer/" + topic + "\"")))
+                .andExpect(content().string(containsString("href=\"/playground/" + topic + "\"")))
                 // ...and exactly one link is marked active
                 .andExpect(content().string(matchesRegex("(?s).*sidebar-link active.*")))
                 // Model-driven user chip rendered as element TEXT. Asserting the bare string is not
@@ -114,7 +118,10 @@ class PlaygroundControllerTemplateTest {
                 .andExpect(content().string(not(containsString(">User (Role)<"))))
                 // Footer and BMC widget
                 .andExpect(content().string(containsString("<footer class=\"site-footer\">")))
-                .andExpect(content().string(containsString("SCIM Playground")))
+                // The side-dock link OUT to the server management UI. Asserting the bare product
+                // name is not enough here: "SCIM Playground" is now this page's own nav label, so a
+                // loose match would keep passing even if the outbound link were mislabelled.
+                .andExpect(content().string(containsString("aria-label=\"SCIM Server Manager\"")))
                 .andExpect(content().string(containsString("Terms of Service")))
                 .andExpect(content().string(containsString("Privacy Policy")))
                 .andExpect(content().string(containsString("bmc-widget")));
@@ -124,7 +131,7 @@ class PlaygroundControllerTemplateTest {
     void playgroundTopic_marksExactlyOneSidebarLinkActive() throws Exception {
         when(mgmtUserService.resolveDisplayName(anyString(), anyString())).thenReturn("Alex Morgan");
 
-        String html = mockMvc.perform(get("/request-explorer/groups")
+        String html = mockMvc.perform(get("/playground/groups")
                         .requestAttr("_csrf", CSRF_TOKEN)
                         .principal(new TestingAuthenticationToken("user@example.com", "n/a")))
                 .andExpect(status().isOk())

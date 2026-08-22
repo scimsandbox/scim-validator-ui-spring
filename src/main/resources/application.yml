@@ -85,6 +85,6 @@ app:
   runs:
     max-per-user: 10
 
-  playground:
+  server-manager:
     url: http://localhost:8080
 

@@ -1,7 +1,12 @@
 # SCIM Sandbox - Validator UI Spring
 
-This repository contains the Spring Boot UI for running the standalone
-`scim-validator` suite and storing the results in a PostgreSQL database.
+This repository contains two surfaces of the SCIM sandbox:
+
+- **SCIM Compliance** (`/`) — runs the standalone `scim-validator` suite against a
+  SCIM endpoint and stores the results in a PostgreSQL database.
+- **SCIM Playground** (`/playground`) — an interactive request explorer for issuing
+  individual SCIM operations against any endpoint, annotated with the relevant RFC
+  sections.
 
 ## What This Repo Contains
 

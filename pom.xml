@@ -8,7 +8,7 @@
     <packaging>jar</packaging>
 
     <name>SCIM Validator UI</name>
-    <description>Web UI and persistence for SCIM Sandbox validator runs</description>
+    <description>SCIM Compliance and SCIM Playground — web UI and persistence for SCIM Sandbox</description>
 
     <scm>
         <connection>scm:git:https://github.com/scimsandbox/scim-validator-ui-spring.git</connection>

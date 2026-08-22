@@ -59,7 +59,9 @@ public class SecurityConfig {
 
         http.authorizeHttpRequests(authorize -> authorize
                 .requestMatchers("/actuator/**").permitAll()
-                .requestMatchers("/css/**", "/js/**", "/images/**", "/favicon.svg", "/favicon.ico", "/error").permitAll()
+                // favicon*.svg rather than an exact match: this app serves one badge per section
+                // (favicon.svg for SCIM Compliance, favicon-playground.svg for SCIM Playground).
+                .requestMatchers("/css/**", "/js/**", "/images/**", "/favicon*.svg", "/favicon.ico", "/error").permitAll()
                 .anyRequest().authenticated())
             .oauth2Login(oauth2 -> oauth2
                 .userInfoEndpoint(userInfo -> userInfo.oidcUserService(oidcUserService())))

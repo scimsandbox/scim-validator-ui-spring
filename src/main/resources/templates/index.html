@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="playground_url" th:content="${playgroundUrl}">
-    <title>SCIM 2.0 Validator | Test Suite</title>
+    <meta name="server_manager_url" th:content="${serverManagerUrl}">
+    <title>SCIM Compliance | SCIM Validation</title>
     <link rel="icon" type="image/svg+xml" th:href="@{/favicon.svg}" href="/favicon.svg">
     <style>
         :root {
@@ -530,15 +530,15 @@
 <div class="container">
     <header class="site-header">
         <div class="brand-group">
-            <h1 class="brand-title">SCIM 2.0 Validator</h1>
+            <h1 class="brand-title">SCIM Validation</h1>
             <nav class="nav-segmented" aria-label="Main Navigation">
                 <a th:href="@{/}" href="/" class="nav-segment active">
-                    <svg class="nav-segment-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
-                    <span>Test Suite</span>
+                    <svg class="nav-segment-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 17 2 2 4-4"></path><path d="m3 7 2 2 4-4"></path><path d="M13 6h8"></path><path d="M13 12h8"></path><path d="M13 18h8"></path></svg>
+                    <span>SCIM Compliance</span>
                 </a>
-                <a th:href="@{/request-explorer}" href="/request-explorer" class="nav-segment">
+                <a th:href="@{/playground}" href="/playground" class="nav-segment">
                     <svg class="nav-segment-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"></polygon></svg>
-                    <span>Request Explorer</span>
+                    <span>SCIM Playground</span>
                 </a>
             </nav>
         </div>
@@ -556,7 +556,7 @@
             <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
             <div class="grid">
                 <div class="field">
-                    <label for="name">Test Suite Name</label>
+                    <label for="name">Run Name</label>
                     <input id="name" type="text" th:field="*{name}" placeholder="e.g. Okta nightly validation">
                     <div class="error" th:if="${#fields.hasErrors('name')}" th:errors="*{name}"></div>
                 </div>
@@ -571,25 +571,25 @@
                 <input id="authToken" type="password" th:field="*{authToken}" placeholder="token">
                 <div class="error" th:if="${#fields.hasErrors('authToken')}" th:errors="*{authToken}"></div>
             </div>
-            <button type="submit" id="run-btn">Run Test Suite</button>
+            <button type="submit" id="run-btn">Run Compliance Tests</button>
         </form>
     </div>
 
     <div id="run-overlay">
         <div class="run-dialog">
             <div class="run-spinner"></div>
-            <p>Running test suite&hellip;</p>
+            <p>Running compliance tests&hellip;</p>
             <small>This may take a minute. Please wait.</small>
         </div>
     </div>
 
     <div class="card">
         <div class="card-header-title">
-            <span>Test Suites</span>
+            <span>Compliance Runs</span>
         </div>
         <div th:if="${maxRuns != null}" class="info-banner">
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
-            <span style="flex: 1;"><strong>Storage Limit:</strong> We only keep your latest <strong th:text="${maxRuns}">10</strong> test suites. If you start a new one when you already have this many, your oldest test suite will be automatically deleted.</span>
+            <span style="flex: 1;"><strong>Storage Limit:</strong> We only keep your latest <strong th:text="${maxRuns}">10</strong> compliance runs. If you start a new one when you already have this many, your oldest run will be automatically deleted.</span>
         </div>
         <div class="table-responsive">
             <table>
@@ -607,7 +607,7 @@
                 </thead>
                 <tbody>
                 <tr th:if="${#lists.isEmpty(runs)}">
-                    <td colspan="8" style="text-align: center; color: #94a3b8; padding: 28px;">No test suites recorded yet.</td>
+                    <td colspan="8" style="text-align: center; color: #94a3b8; padding: 28px;">No compliance runs recorded yet.</td>
                 </tr>
                 <tr th:each="run : ${runs}">
                     <td><a th:href="@{/runs/{id}(id=${run.id})}" class="run-id-link" th:text="${run.id}">id</a></td>
@@ -667,7 +667,7 @@
             if (incomingUrl && baseUrlField) baseUrlField.value = incomingUrl;
             if (incomingToken && tokenField) tokenField.value = incomingToken;
             if (incomingUrl && nameField && !nameField.value.trim()) {
-                nameField.value = 'Playground Workspace Validation';
+                nameField.value = 'Server Manager Workspace Validation';
             }
         }
 
@@ -700,8 +700,8 @@
         // 2. Listen for postMessage from opener tab. Only the management UI may hand credentials
         // over, so anything from another origin is ignored; an unresolvable origin fails closed and
         // leaves the hash-fragment path as the only handoff.
-        var playgroundOrigin = (function () {
-            var meta = document.querySelector('meta[name="playground_url"]');
+        var serverManagerOrigin = (function () {
+            var meta = document.querySelector('meta[name="server_manager_url"]');
             var configured = meta && meta.content ? meta.content.trim() : '';
             if (!configured) return null;
             try {
@@ -711,7 +711,7 @@
             }
         })();
         window.addEventListener('message', function (event) {
-            if (!playgroundOrigin || event.origin !== playgroundOrigin) return;
+            if (!serverManagerOrigin || event.origin !== serverManagerOrigin) return;
             if (event.data && event.data.type === 'SCIM_VALIDATOR_INIT') {
                 var mUrl = event.data.baseUrl;
                 var mToken = event.data.authToken;
@@ -736,7 +736,7 @@
 </footer>
 <!-- Floating Side Dock -->
 <aside class="floating-side-dock" aria-label="Quick Navigation">
-    <a th:href="${playgroundUrl}" href="https://ui.scimsandbox.net" target="_blank" rel="noopener noreferrer" class="floating-side-btn" data-tooltip="SCIM Playground" data-tooltip-pos="left" aria-label="SCIM Playground">
+    <a th:href="${serverManagerUrl}" href="https://ui.scimsandbox.net" target="_blank" rel="noopener noreferrer" class="floating-side-btn" data-tooltip="SCIM Server Manager" data-tooltip-pos="left" aria-label="SCIM Server Manager">
         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"></rect><rect width="20" height="8" x="2" y="14" rx="2" ry="2"></rect><line x1="6" x2="6.01" y1="6" y2="6"></line><line x1="6" x2="6.01" y1="18" y2="18"></line></svg>
     </a>
 </aside>

@@ -40,14 +40,14 @@ public class ValidationController {
 
     private final ValidationRunService validationRunService;
     private final MgmtUserService mgmtUserService;
-    private final String playgroundUrl;
+    private final String serverManagerUrl;
 
     public ValidationController(ValidationRunService validationRunService,
             MgmtUserService mgmtUserService,
-            @org.springframework.beans.factory.annotation.Value("${app.playground.url}") String playgroundUrl) {
+            @org.springframework.beans.factory.annotation.Value("${app.server-manager.url}") String serverManagerUrl) {
         this.validationRunService = validationRunService;
         this.mgmtUserService = mgmtUserService;
-        this.playgroundUrl = playgroundUrl;
+        this.serverManagerUrl = serverManagerUrl;
     }
 
     @GetMapping("/")
@@ -59,7 +59,7 @@ public class ValidationController {
         model.addAttribute(ATTR_CURRENT_USER, resolveDisplayName(authentication));
         model.addAttribute(ATTR_CURRENT_USER_ROLE, currentUserRole(authentication));
         model.addAttribute("maxRuns", validationRunService.getMaxRunsPerUser());
-        model.addAttribute("playgroundUrl", playgroundUrl);
+        model.addAttribute("serverManagerUrl", serverManagerUrl);
         return "index";
     }
 
@@ -82,7 +82,7 @@ public class ValidationController {
             model.addAttribute(ATTR_CURRENT_USER, resolveDisplayName(authentication));
             model.addAttribute(ATTR_CURRENT_USER_ROLE, currentUserRole(authentication));
             model.addAttribute("maxRuns", validationRunService.getMaxRunsPerUser());
-            model.addAttribute("playgroundUrl", playgroundUrl);
+            model.addAttribute("serverManagerUrl", serverManagerUrl);
             return "index";
         }
 
@@ -111,7 +111,7 @@ public class ValidationController {
         }
         model.addAttribute(ATTR_CURRENT_USER, resolveDisplayName(authentication));
         model.addAttribute(ATTR_CURRENT_USER_ROLE, currentUserRole(authentication));
-        model.addAttribute("playgroundUrl", playgroundUrl);
+        model.addAttribute("serverManagerUrl", serverManagerUrl);
         return "run-detail";
     }
 
