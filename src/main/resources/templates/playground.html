@@ -312,6 +312,11 @@
             border-color: #475569;
         }
 
+        .op-head:focus-visible {
+            outline: 2px solid var(--primary);
+            outline-offset: -2px;
+        }
+
         .op-head {
             display: flex;
             align-items: center;
@@ -981,7 +986,7 @@
 
                 <!-- Op 1: List Users -->
                 <div class="op-card" id="card-users-list">
-                    <div class="op-head">
+                    <div class="op-head" role="button" tabindex="0" aria-expanded="false">
                         <div class="op-head-left">
                             <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                             <span class="method-badge method-GET">GET</span>
@@ -991,7 +996,7 @@
                             </div>
                         </div>
                         <div class="op-head-right">
-                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.4.2" target="_blank" class="rfc-link">RFC 7644 §3.4.2</a>
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.4.2" target="_blank" rel="noopener noreferrer" class="rfc-link">RFC 7644 §3.4.2</a>
                         </div>
                     </div>
                     <div class="op-body">
@@ -1063,7 +1068,7 @@
 
                 <!-- Op 2: Get User by ID -->
                 <div class="op-card" id="card-users-get">
-                    <div class="op-head">
+                    <div class="op-head" role="button" tabindex="0" aria-expanded="false">
                         <div class="op-head-left">
                             <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                             <span class="method-badge method-GET">GET</span>
@@ -1073,7 +1078,7 @@
                             </div>
                         </div>
                         <div class="op-head-right">
-                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.4.1" target="_blank" class="rfc-link">RFC 7644 §3.4.1</a>
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.4.1" target="_blank" rel="noopener noreferrer" class="rfc-link">RFC 7644 §3.4.1</a>
                         </div>
                     </div>
                     <div class="op-body">
@@ -1111,7 +1116,7 @@
 
                 <!-- Op 3: Create User -->
                 <div class="op-card" id="card-users-create">
-                    <div class="op-head">
+                    <div class="op-head" role="button" tabindex="0" aria-expanded="false">
                         <div class="op-head-left">
                             <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                             <span class="method-badge method-POST">POST</span>
@@ -1121,7 +1126,7 @@
                             </div>
                         </div>
                         <div class="op-head-right">
-                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.3" target="_blank" class="rfc-link">RFC 7644 §3.3</a>
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.3" target="_blank" rel="noopener noreferrer" class="rfc-link">RFC 7644 §3.3</a>
                         </div>
                     </div>
                     <div class="op-body">
@@ -1179,7 +1184,7 @@
 
                 <!-- Op 4: Update User Attribute -->
                 <div class="op-card" id="card-users-patch">
-                    <div class="op-head">
+                    <div class="op-head" role="button" tabindex="0" aria-expanded="false">
                         <div class="op-head-left">
                             <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                             <span class="method-badge method-PATCH">PATCH</span>
@@ -1189,7 +1194,7 @@
                             </div>
                         </div>
                         <div class="op-head-right">
-                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.5.2" target="_blank" class="rfc-link">RFC 7644 §3.5.2</a>
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.5.2" target="_blank" rel="noopener noreferrer" class="rfc-link">RFC 7644 §3.5.2</a>
                         </div>
                     </div>
                     <div class="op-body">
@@ -1241,7 +1246,7 @@
 
                 <!-- Op 5: Replace User -->
                 <div class="op-card" id="card-users-put">
-                    <div class="op-head">
+                    <div class="op-head" role="button" tabindex="0" aria-expanded="false">
                         <div class="op-head-left">
                             <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                             <span class="method-badge method-PUT">PUT</span>
@@ -1251,7 +1256,7 @@
                             </div>
                         </div>
                         <div class="op-head-right">
-                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.5.1" target="_blank" class="rfc-link">RFC 7644 §3.5.1</a>
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.5.1" target="_blank" rel="noopener noreferrer" class="rfc-link">RFC 7644 §3.5.1</a>
                         </div>
                     </div>
                     <div class="op-body">
@@ -1302,7 +1307,7 @@
 
                 <!-- Op 6: Delete User -->
                 <div class="op-card" id="card-users-delete">
-                    <div class="op-head">
+                    <div class="op-head" role="button" tabindex="0" aria-expanded="false">
                         <div class="op-head-left">
                             <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                             <span class="method-badge method-DELETE">DELETE</span>
@@ -1312,7 +1317,7 @@
                             </div>
                         </div>
                         <div class="op-head-right">
-                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.6" target="_blank" class="rfc-link">RFC 7644 §3.6</a>
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.6" target="_blank" rel="noopener noreferrer" class="rfc-link">RFC 7644 §3.6</a>
                         </div>
                     </div>
                     <div class="op-body">
@@ -1356,7 +1361,7 @@
 
                 <!-- Op 1: List Groups -->
                 <div class="op-card" id="card-groups-list">
-                    <div class="op-head">
+                    <div class="op-head" role="button" tabindex="0" aria-expanded="false">
                         <div class="op-head-left">
                             <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                             <span class="method-badge method-GET">GET</span>
@@ -1366,7 +1371,7 @@
                             </div>
                         </div>
                         <div class="op-head-right">
-                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.4.2" target="_blank" class="rfc-link">RFC 7644 §3.4.2</a>
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.4.2" target="_blank" rel="noopener noreferrer" class="rfc-link">RFC 7644 §3.4.2</a>
                         </div>
                     </div>
                     <div class="op-body">
@@ -1416,7 +1421,7 @@
 
                 <!-- Op 2: Get Group by ID -->
                 <div class="op-card" id="card-groups-get">
-                    <div class="op-head">
+                    <div class="op-head" role="button" tabindex="0" aria-expanded="false">
                         <div class="op-head-left">
                             <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                             <span class="method-badge method-GET">GET</span>
@@ -1426,7 +1431,7 @@
                             </div>
                         </div>
                         <div class="op-head-right">
-                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.4.1" target="_blank" class="rfc-link">RFC 7644 §3.4.1</a>
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.4.1" target="_blank" rel="noopener noreferrer" class="rfc-link">RFC 7644 §3.4.1</a>
                         </div>
                     </div>
                     <div class="op-body">
@@ -1454,7 +1459,7 @@
 
                 <!-- Op 3: Create Group -->
                 <div class="op-card" id="card-groups-create">
-                    <div class="op-head">
+                    <div class="op-head" role="button" tabindex="0" aria-expanded="false">
                         <div class="op-head-left">
                             <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                             <span class="method-badge method-POST">POST</span>
@@ -1464,7 +1469,7 @@
                             </div>
                         </div>
                         <div class="op-head-right">
-                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.3" target="_blank" class="rfc-link">RFC 7644 §3.3</a>
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.3" target="_blank" rel="noopener noreferrer" class="rfc-link">RFC 7644 §3.3</a>
                         </div>
                     </div>
                     <div class="op-body">
@@ -1494,7 +1499,7 @@
 
                 <!-- Op 4: Add Member -->
                 <div class="op-card" id="card-groups-add-member">
-                    <div class="op-head">
+                    <div class="op-head" role="button" tabindex="0" aria-expanded="false">
                         <div class="op-head-left">
                             <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                             <span class="method-badge method-PATCH">PATCH</span>
@@ -1504,7 +1509,7 @@
                             </div>
                         </div>
                         <div class="op-head-right">
-                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.5.2" target="_blank" class="rfc-link">RFC 7644 §3.5.2</a>
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.5.2" target="_blank" rel="noopener noreferrer" class="rfc-link">RFC 7644 §3.5.2</a>
                         </div>
                     </div>
                     <div class="op-body">
@@ -1553,7 +1558,7 @@
 
                 <!-- Op 5: Delete Group -->
                 <div class="op-card" id="card-groups-delete">
-                    <div class="op-head">
+                    <div class="op-head" role="button" tabindex="0" aria-expanded="false">
                         <div class="op-head-left">
                             <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                             <span class="method-badge method-DELETE">DELETE</span>
@@ -1563,7 +1568,7 @@
                             </div>
                         </div>
                         <div class="op-head-right">
-                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.6" target="_blank" class="rfc-link">RFC 7644 §3.6</a>
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.6" target="_blank" rel="noopener noreferrer" class="rfc-link">RFC 7644 §3.6</a>
                         </div>
                     </div>
                     <div class="op-body">
@@ -1607,7 +1612,7 @@
 
                 <!-- Op 1: Discover All Resource Types -->
                 <div class="op-card" id="card-rt-all">
-                    <div class="op-head">
+                    <div class="op-head" role="button" tabindex="0" aria-expanded="false">
                         <div class="op-head-left">
                             <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                             <span class="method-badge method-GET">GET</span>
@@ -1617,7 +1622,7 @@
                             </div>
                         </div>
                         <div class="op-head-right">
-                            <a href="https://datatracker.ietf.org/doc/html/rfc7643#section-6" target="_blank" class="rfc-link">RFC 7643 §6</a>
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7643#section-6" target="_blank" rel="noopener noreferrer" class="rfc-link">RFC 7643 §6</a>
                         </div>
                     </div>
                     <div class="op-body">
@@ -1636,7 +1641,7 @@
 
                 <!-- Op 2: User Resource Type -->
                 <div class="op-card" id="card-rt-user">
-                    <div class="op-head">
+                    <div class="op-head" role="button" tabindex="0" aria-expanded="false">
                         <div class="op-head-left">
                             <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                             <span class="method-badge method-GET">GET</span>
@@ -1646,7 +1651,7 @@
                             </div>
                         </div>
                         <div class="op-head-right">
-                            <a href="https://datatracker.ietf.org/doc/html/rfc7643#section-6" target="_blank" class="rfc-link">RFC 7643 §6</a>
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7643#section-6" target="_blank" rel="noopener noreferrer" class="rfc-link">RFC 7643 §6</a>
                         </div>
                     </div>
                     <div class="op-body">
@@ -1665,7 +1670,7 @@
 
                 <!-- Op 3: Group Resource Type -->
                 <div class="op-card" id="card-rt-group">
-                    <div class="op-head">
+                    <div class="op-head" role="button" tabindex="0" aria-expanded="false">
                         <div class="op-head-left">
                             <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                             <span class="method-badge method-GET">GET</span>
@@ -1675,7 +1680,7 @@
                             </div>
                         </div>
                         <div class="op-head-right">
-                            <a href="https://datatracker.ietf.org/doc/html/rfc7643#section-6" target="_blank" class="rfc-link">RFC 7643 §6</a>
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7643#section-6" target="_blank" rel="noopener noreferrer" class="rfc-link">RFC 7643 §6</a>
                         </div>
                     </div>
                     <div class="op-body">
@@ -1710,7 +1715,7 @@
 
                 <!-- Op 1: List Schemas -->
                 <div class="op-card" id="card-schemas-all">
-                    <div class="op-head">
+                    <div class="op-head" role="button" tabindex="0" aria-expanded="false">
                         <div class="op-head-left">
                             <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                             <span class="method-badge method-GET">GET</span>
@@ -1720,7 +1725,7 @@
                             </div>
                         </div>
                         <div class="op-head-right">
-                            <a href="https://datatracker.ietf.org/doc/html/rfc7643#section-7" target="_blank" class="rfc-link">RFC 7643 §7</a>
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7643#section-7" target="_blank" rel="noopener noreferrer" class="rfc-link">RFC 7643 §7</a>
                         </div>
                     </div>
                     <div class="op-body">
@@ -1739,7 +1744,7 @@
 
                 <!-- Op 2: Core User Schema -->
                 <div class="op-card" id="card-schemas-user">
-                    <div class="op-head">
+                    <div class="op-head" role="button" tabindex="0" aria-expanded="false">
                         <div class="op-head-left">
                             <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                             <span class="method-badge method-GET">GET</span>
@@ -1749,7 +1754,7 @@
                             </div>
                         </div>
                         <div class="op-head-right">
-                            <a href="https://datatracker.ietf.org/doc/html/rfc7643#section-4.1" target="_blank" class="rfc-link">RFC 7643 §4.1</a>
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7643#section-4.1" target="_blank" rel="noopener noreferrer" class="rfc-link">RFC 7643 §4.1</a>
                         </div>
                     </div>
                     <div class="op-body">
@@ -1768,7 +1773,7 @@
 
                 <!-- Op 3: Enterprise Extension Schema -->
                 <div class="op-card" id="card-schemas-enterprise">
-                    <div class="op-head">
+                    <div class="op-head" role="button" tabindex="0" aria-expanded="false">
                         <div class="op-head-left">
                             <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                             <span class="method-badge method-GET">GET</span>
@@ -1778,7 +1783,7 @@
                             </div>
                         </div>
                         <div class="op-head-right">
-                            <a href="https://datatracker.ietf.org/doc/html/rfc7643#section-4.3" target="_blank" class="rfc-link">RFC 7643 §4.3</a>
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7643#section-4.3" target="_blank" rel="noopener noreferrer" class="rfc-link">RFC 7643 §4.3</a>
                         </div>
                     </div>
                     <div class="op-body">
@@ -1809,7 +1814,7 @@
 
                 <!-- Op 1: Get ServiceProviderConfig -->
                 <div class="op-card expanded" id="card-spc">
-                    <div class="op-head">
+                    <div class="op-head" role="button" tabindex="0" aria-expanded="false">
                         <div class="op-head-left">
                             <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                             <span class="method-badge method-GET">GET</span>
@@ -1819,7 +1824,7 @@
                             </div>
                         </div>
                         <div class="op-head-right">
-                            <a href="https://datatracker.ietf.org/doc/html/rfc7643#section-5" target="_blank" class="rfc-link">RFC 7643 §5</a>
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7643#section-5" target="_blank" rel="noopener noreferrer" class="rfc-link">RFC 7643 §5</a>
                         </div>
                     </div>
                     <div class="op-body">
@@ -1850,7 +1855,7 @@
 
                 <!-- Op 1: Bulk Request -->
                 <div class="op-card" id="card-bulk">
-                    <div class="op-head">
+                    <div class="op-head" role="button" tabindex="0" aria-expanded="false">
                         <div class="op-head-left">
                             <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                             <span class="method-badge method-POST">POST</span>
@@ -1860,7 +1865,7 @@
                             </div>
                         </div>
                         <div class="op-head-right">
-                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.7" target="_blank" class="rfc-link">RFC 7644 §3.7</a>
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.7" target="_blank" rel="noopener noreferrer" class="rfc-link">RFC 7644 §3.7</a>
                         </div>
                     </div>
                     <div class="op-body">
@@ -1938,7 +1943,7 @@
 
                 <!-- Op 1: User .search -->
                 <div class="op-card" id="card-search-users">
-                    <div class="op-head">
+                    <div class="op-head" role="button" tabindex="0" aria-expanded="false">
                         <div class="op-head-left">
                             <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                             <span class="method-badge method-POST">POST</span>
@@ -1948,7 +1953,7 @@
                             </div>
                         </div>
                         <div class="op-head-right">
-                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.4.3" target="_blank" class="rfc-link">RFC 7644 §3.4.3</a>
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.4.3" target="_blank" rel="noopener noreferrer" class="rfc-link">RFC 7644 §3.4.3</a>
                         </div>
                     </div>
                     <div class="op-body">
@@ -2000,7 +2005,7 @@
 
                 <!-- Op 2: Global .search -->
                 <div class="op-card" id="card-search-global">
-                    <div class="op-head">
+                    <div class="op-head" role="button" tabindex="0" aria-expanded="false">
                         <div class="op-head-left">
                             <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                             <span class="method-badge method-POST">POST</span>
@@ -2010,7 +2015,7 @@
                             </div>
                         </div>
                         <div class="op-head-right">
-                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.4.3" target="_blank" class="rfc-link">RFC 7644 §3.4.3</a>
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.4.3" target="_blank" rel="noopener noreferrer" class="rfc-link">RFC 7644 §3.4.3</a>
                         </div>
                     </div>
                     <div class="op-body">
@@ -2057,7 +2062,7 @@
 
                 <!-- Op 1: Conditional Update with If-Match -->
                 <div class="op-card" id="card-etag-ifmatch">
-                    <div class="op-head">
+                    <div class="op-head" role="button" tabindex="0" aria-expanded="false">
                         <div class="op-head-left">
                             <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                             <span class="method-badge method-PATCH">PATCH</span>
@@ -2067,7 +2072,7 @@
                             </div>
                         </div>
                         <div class="op-head-right">
-                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.14" target="_blank" class="rfc-link">RFC 7644 §3.14</a>
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.14" target="_blank" rel="noopener noreferrer" class="rfc-link">RFC 7644 §3.14</a>
                         </div>
                     </div>
                     <div class="op-body">
@@ -2117,7 +2122,7 @@
 
                 <!-- Op 2: Conditional Read with If-None-Match -->
                 <div class="op-card" id="card-etag-ifnonematch">
-                    <div class="op-head">
+                    <div class="op-head" role="button" tabindex="0" aria-expanded="false">
                         <div class="op-head-left">
                             <svg class="chevron-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                             <span class="method-badge method-GET">GET</span>
@@ -2127,7 +2132,7 @@
                             </div>
                         </div>
                         <div class="op-head-right">
-                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.14" target="_blank" class="rfc-link">RFC 7644 §3.14</a>
+                            <a href="https://datatracker.ietf.org/doc/html/rfc7644#section-3.14" target="_blank" rel="noopener noreferrer" class="rfc-link">RFC 7644 §3.14</a>
                         </div>
                     </div>
                     <div class="op-body">
@@ -2355,8 +2360,9 @@
     // Toggle All Cards Helper
     window.toggleAllCards = function(expanded) {
         document.querySelectorAll('.op-card').forEach(card => {
-            if (expanded) card.classList.add('expanded');
-            else card.classList.remove('expanded');
+            card.classList.toggle('expanded', expanded);
+            const head = card.querySelector('.op-head');
+            if (head) head.setAttribute('aria-expanded', expanded ? 'true' : 'false');
         });
     };
 
@@ -2374,10 +2380,23 @@
 
         // Card header click to toggle expand/collapse
         if (head) {
+            const toggleCard = () => {
+                const isOpen = card.classList.toggle('expanded');
+                head.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+            };
             head.addEventListener('click', (e) => {
                 // Ignore clicks on RFC link button
                 if (e.target.closest('.rfc-link')) return;
-                card.classList.toggle('expanded');
+                toggleCard();
+            });
+            // The header is a div with role="button", so Enter and Space have to be
+            // wired by hand -- without this the whole playground is mouse-only.
+            head.addEventListener('keydown', (e) => {
+                if (e.target.closest('.rfc-link')) return;
+                if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+                    e.preventDefault();
+                    toggleCard();
+                }
             });
         }
 

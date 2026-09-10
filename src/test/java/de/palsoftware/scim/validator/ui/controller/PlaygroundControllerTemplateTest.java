@@ -143,4 +143,52 @@ class PlaygroundControllerTemplateTest {
                 .as("exactly one sidebar link should carry the active class")
                 .isEqualTo(1);
     }
+
+    @Test
+    void playgroundTopic_operationHeadersAreKeyboardOperable() throws Exception {
+        when(mgmtUserService.resolveDisplayName(anyString(), anyString())).thenReturn("Alex Morgan");
+
+        String html = mockMvc.perform(get("/playground/users")
+                        .requestAttr("_csrf", CSRF_TOKEN)
+                        .principal(new TestingAuthenticationToken("user@example.com", "n/a")))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+
+        String body = html.substring(html.indexOf("<body>"));
+        int heads = body.split("class=\"op-head\"", -1).length - 1;
+        int operable = body.split("class=\"op-head\" role=\"button\" tabindex=\"0\" aria-expanded=", -1).length - 1;
+
+        org.assertj.core.api.Assertions.assertThat(heads)
+                .as("the users topic should render operation headers")
+                .isGreaterThan(0);
+        org.assertj.core.api.Assertions.assertThat(operable)
+                .as("every operation header must be focusable and expose aria-expanded, "
+                        + "otherwise the accordion cannot be opened without a mouse")
+                .isEqualTo(heads);
+    }
+
+    @Test
+    void playgroundTopic_externalLinksCarryNoopener() throws Exception {
+        when(mgmtUserService.resolveDisplayName(anyString(), anyString())).thenReturn("Alex Morgan");
+
+        String html = mockMvc.perform(get("/playground/users")
+                        .requestAttr("_csrf", CSRF_TOKEN)
+                        .principal(new TestingAuthenticationToken("user@example.com", "n/a")))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+
+        String body = html.substring(html.indexOf("<body>"));
+        java.util.regex.Matcher anchors = java.util.regex.Pattern.compile("<a\\b[^>]*>").matcher(body);
+        java.util.List<String> unsafe = new java.util.ArrayList<>();
+        while (anchors.find()) {
+            String tag = anchors.group();
+            if (tag.contains("target=\"_blank\"") && !tag.contains("rel=")) {
+                unsafe.add(tag);
+            }
+        }
+
+        org.assertj.core.api.Assertions.assertThat(unsafe)
+                .as("every target=_blank link needs rel=noopener to avoid handing the opener to the target page")
+                .isEmpty();
+    }
 }
