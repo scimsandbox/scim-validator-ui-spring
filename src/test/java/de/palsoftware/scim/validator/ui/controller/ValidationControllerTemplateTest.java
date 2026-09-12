@@ -48,6 +48,9 @@ class ValidationControllerTemplateTest {
         @MockitoBean
         private MgmtUserService mgmtUserService;
 
+        @MockitoBean
+        private de.palsoftware.scim.validator.ui.service.ValidationProgressTracker validationProgressTracker;
+
         @Test
         void indexUsesContextAwareCreateRunAction() throws Exception {
                 when(validationRunService.listRuns(anyString(), anyBoolean())).thenReturn(List.of());

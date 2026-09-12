@@ -23,15 +23,19 @@ import org.junit.platform.launcher.Launcher;
 import org.junit.platform.launcher.LauncherDiscoveryRequest;
 import org.junit.platform.launcher.TestExecutionListener;
 import org.junit.platform.launcher.TestIdentifier;
+import org.junit.platform.launcher.TestPlan;
 import org.junit.platform.launcher.core.LauncherDiscoveryRequestBuilder;
 import org.junit.platform.launcher.core.LauncherFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpStatus;
 import org.springframework.data.domain.Sort;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.io.PrintWriter;
@@ -42,6 +46,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import static org.junit.platform.engine.discovery.DiscoverySelectors.selectClass;
 
@@ -68,19 +74,41 @@ public class ValidationRunService {
     private final ValidationMgmtUserRepository mgmtUserRepository;
     private final ValidationTestResultRepository testResultRepository;
     private final ValidationHttpExchangeRepository exchangeRepository;
+    private final ValidationProgressTracker progressTracker;
+    private final ExecutorService executorService;
 
     public ValidationRunService(ValidationRunRepository runRepository,
             ValidationMgmtUserRepository mgmtUserRepository,
             ValidationTestResultRepository testResultRepository,
             ValidationHttpExchangeRepository exchangeRepository) {
+        this(runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, new ValidationProgressTracker(), Executors.newCachedThreadPool());
+    }
+
+    @Autowired
+    public ValidationRunService(ValidationRunRepository runRepository,
+            ValidationMgmtUserRepository mgmtUserRepository,
+            ValidationTestResultRepository testResultRepository,
+            ValidationHttpExchangeRepository exchangeRepository,
+            ValidationProgressTracker progressTracker) {
+        this(runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, progressTracker, Executors.newCachedThreadPool());
+    }
+
+    public ValidationRunService(ValidationRunRepository runRepository,
+            ValidationMgmtUserRepository mgmtUserRepository,
+            ValidationTestResultRepository testResultRepository,
+            ValidationHttpExchangeRepository exchangeRepository,
+            ValidationProgressTracker progressTracker,
+            ExecutorService executorService) {
         this.runRepository = runRepository;
         this.mgmtUserRepository = mgmtUserRepository;
         this.testResultRepository = testResultRepository;
         this.exchangeRepository = exchangeRepository;
+        this.progressTracker = progressTracker != null ? progressTracker : new ValidationProgressTracker();
+        this.executorService = executorService != null ? executorService : Executors.newCachedThreadPool();
     }
 
-    @Value("${app.runs.max-per-user}")
-    private int maxRunsPerUser;
+    @Value("${app.runs.max-per-user:10}")
+    private int maxRunsPerUser = 10;
 
     public int getMaxRunsPerUser() {
         return maxRunsPerUser;
@@ -116,6 +144,8 @@ public class ValidationRunService {
             }
         }
 
+        int plannedTotal = discoverTestCount(form.baseUrl(), form.authToken());
+
         ValidationRun run = new ValidationRun();
         run.setName(form.name().trim());
         run.setTargetUrl(form.baseUrl().trim());
@@ -124,17 +154,25 @@ public class ValidationRunService {
         ValidationMgmtUser owner = mgmtUserRepository.findById(actorEmail)
                 .orElseThrow(() -> new IllegalStateException("Authenticated management user must exist"));
         run.setCreatedByUser(owner);
-        run.setTotalTests(0);
+        run.setTotalTests(plannedTotal);
         run.setPassedTests(0);
         run.setFailedTests(0);
         run = runRepository.save(run);
 
+        UUID runId = run.getId();
+        if (runId != null) {
+            progressTracker.registerRun(runId, plannedTotal, "/runs/" + runId);
+        }
+
+        ValidationExecutionListener listener = null;
         try {
             ValidatorConfiguration.useRunOverrides(form.baseUrl(), form.authToken());
             ScimBaseSpec.resetRunState();
-            ScimRunContext.beginRun(run.getId().toString());
+            if (runId != null) {
+                ScimRunContext.beginRun(runId.toString());
+            }
 
-            ValidationExecutionListener listener = new ValidationExecutionListener(run, testResultRepository,
+            listener = new ValidationExecutionListener(run, plannedTotal, progressTracker, testResultRepository,
                     exchangeRepository);
             Launcher launcher = LauncherFactory.create();
             launcher.registerTestExecutionListeners(listener);
@@ -143,10 +181,17 @@ public class ValidationRunService {
             run.setTotalTests(listener.total);
             run.setPassedTests(listener.passed);
             run.setFailedTests(listener.failed);
-            run.setStatus(listener.failed > 0 ? "FAILED" : "PASSED");
+            String finalStatus = listener.failed > 0 ? "FAILED" : "PASSED";
+            run.setStatus(finalStatus);
+            if (runId != null) {
+                progressTracker.completeRun(runId, finalStatus, listener.total, listener.passed, listener.failed);
+            }
         } catch (Exception ex) {
             log.error("Error executing validation run", ex);
             run.setStatus("ERROR");
+            if (runId != null) {
+                progressTracker.failRun(runId, ex.getMessage() != null ? ex.getMessage() : "Execution error");
+            }
         } finally {
             ScimRunContext.endRun();
             ScimBaseSpec.resetRunState();
@@ -154,6 +199,117 @@ public class ValidationRunService {
         }
 
         return new ExecutionResult(runRepository.save(run), oldRunDeleted, maxRunsPerUser);
+    }
+
+    @Transactional
+    public ExecutionResult executeRunAsync(ValidationRunForm form, String actorEmail) {
+        TargetUrlPolicy.validate(form.baseUrl());
+        List<ValidationRun> userRuns = runRepository.findOwnedRuns(actorEmail, Sort.by(Sort.Direction.ASC, "executedAt"));
+        boolean oldRunDeleted = false;
+        
+        if (userRuns.size() >= maxRunsPerUser) {
+            int toDelete = userRuns.size() - maxRunsPerUser + 1;
+            for (int i = 0; i < toDelete; i++) {
+                runRepository.delete(userRuns.get(i));
+                oldRunDeleted = true;
+            }
+        }
+
+        int plannedTotal = discoverTestCount(form.baseUrl(), form.authToken());
+
+        ValidationRun run = new ValidationRun();
+        run.setName(form.name().trim());
+        run.setTargetUrl(form.baseUrl().trim());
+        run.setExecutedAt(OffsetDateTime.now());
+        run.setStatus("RUNNING");
+        ValidationMgmtUser owner = mgmtUserRepository.findById(actorEmail)
+                .orElseThrow(() -> new IllegalStateException("Authenticated management user must exist"));
+        run.setCreatedByUser(owner);
+        run.setTotalTests(plannedTotal);
+        run.setPassedTests(0);
+        run.setFailedTests(0);
+        run = runRepository.saveAndFlush(run);
+
+        UUID runId = run.getId();
+        if (runId != null) {
+            progressTracker.registerRun(runId, plannedTotal, "/runs/" + runId);
+            if (TransactionSynchronizationManager.isSynchronizationActive()) {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        executorService.submit(() -> runTestsInBackground(runId, form, plannedTotal));
+                    }
+                });
+            } else {
+                executorService.submit(() -> runTestsInBackground(runId, form, plannedTotal));
+            }
+        }
+
+        return new ExecutionResult(run, oldRunDeleted, maxRunsPerUser);
+    }
+
+    void runTestsInBackground(UUID runId, ValidationRunForm form, int plannedTotal) {
+        ValidationRun run = null;
+        for (int attempt = 0; attempt < 5; attempt++) {
+            run = runRepository.findById(runId).orElse(null);
+            if (run != null) {
+                break;
+            }
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+
+        if (run == null) {
+            log.error("Run not found for id {}", runId);
+            progressTracker.failRun(runId, "Validation run could not be initialized");
+            return;
+        }
+
+        ValidationExecutionListener listener = null;
+        try {
+            ValidatorConfiguration.useRunOverrides(form.baseUrl(), form.authToken());
+            ScimBaseSpec.resetRunState();
+            ScimRunContext.beginRun(runId.toString());
+
+            listener = new ValidationExecutionListener(
+                    run,
+                    plannedTotal,
+                    progressTracker,
+                    testResultRepository,
+                    exchangeRepository
+            );
+
+            Launcher launcher = LauncherFactory.create();
+            launcher.registerTestExecutionListeners(listener);
+            launcher.execute(buildRequest());
+
+            run.setTotalTests(listener.total);
+            run.setPassedTests(listener.passed);
+            run.setFailedTests(listener.failed);
+            String finalStatus = listener.failed > 0 ? "FAILED" : "PASSED";
+            run.setStatus(finalStatus);
+            runRepository.save(run);
+
+            progressTracker.completeRun(runId, finalStatus, listener.total, listener.passed, listener.failed);
+        } catch (Throwable ex) {
+            log.error("Error executing background validation run {}", runId, ex);
+            run.setStatus("ERROR");
+            if (listener != null) {
+                run.setTotalTests(listener.total);
+                run.setPassedTests(listener.passed);
+                run.setFailedTests(listener.failed);
+            }
+            runRepository.save(run);
+            progressTracker.failRun(runId, ex.getMessage() != null ? ex.getMessage() : "Execution error");
+        } finally {
+            ScimRunContext.endRun();
+            ScimBaseSpec.resetRunState();
+            ValidatorConfiguration.clearRunOverrides();
+        }
     }
 
     public List<ValidationRunView> listRuns(String actorEmail, boolean admin) {
@@ -205,6 +361,28 @@ public class ValidationRunService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Test suite not found"));
     }
 
+    int discoverTestCount() {
+        return discoverTestCount(null, null);
+    }
+
+    int discoverTestCount(String baseUrl, String authToken) {
+        try {
+            if (baseUrl != null && !baseUrl.isBlank()) {
+                ValidatorConfiguration.useRunOverrides(baseUrl, authToken);
+            }
+            Launcher launcher = LauncherFactory.create();
+            LauncherDiscoveryRequest request = buildRequest();
+            TestPlan plan = launcher.discover(request);
+            long count = plan.countTestIdentifiers(TestIdentifier::isTest);
+            return count > 0 ? (int) count : 183;
+        } catch (Throwable ex) {
+            log.warn("Could not discover test plan count", ex);
+            return 183;
+        } finally {
+            ValidatorConfiguration.clearRunOverrides();
+        }
+    }
+
     private static LauncherDiscoveryRequest buildRequest() throws ClassNotFoundException {
         LauncherDiscoveryRequestBuilder builder = LauncherDiscoveryRequestBuilder.request()
                 .configurationParameter("junit.jupiter.execution.parallel.enabled", "false");
@@ -220,6 +398,8 @@ public class ValidationRunService {
     private static class ValidationExecutionListener implements TestExecutionListener {
 
         private final ValidationRun run;
+        private final int plannedTotal;
+        private final ValidationProgressTracker progressTracker;
         private final ValidationTestResultRepository testResultRepository;
         private final ValidationHttpExchangeRepository exchangeRepository;
         private final Map<String, OffsetDateTime> starts = new LinkedHashMap<>();
@@ -229,9 +409,13 @@ public class ValidationRunService {
         private int failed;
 
         private ValidationExecutionListener(ValidationRun run,
+                int plannedTotal,
+                ValidationProgressTracker progressTracker,
                 ValidationTestResultRepository testResultRepository,
                 ValidationHttpExchangeRepository exchangeRepository) {
             this.run = run;
+            this.plannedTotal = plannedTotal;
+            this.progressTracker = progressTracker;
             this.testResultRepository = testResultRepository;
             this.exchangeRepository = exchangeRepository;
         }
@@ -244,6 +428,23 @@ public class ValidationRunService {
             String uniqueId = testIdentifier.getUniqueId();
             starts.put(uniqueId, OffsetDateTime.now());
             ScimRunContext.beginTest(uniqueId);
+
+            int currentTestIndex = total + 1;
+            int effectiveTotal = Math.max(plannedTotal, currentTestIndex);
+            String displayName = testIdentifier.getDisplayName();
+            String specName = resolveSpecName(testIdentifier);
+
+            if (progressTracker != null && run.getId() != null) {
+                progressTracker.updateProgress(
+                        run.getId(),
+                        currentTestIndex,
+                        effectiveTotal,
+                        passed,
+                        failed,
+                        specName,
+                        displayName
+                );
+            }
         }
 
         @Override
@@ -305,6 +506,32 @@ public class ValidationRunService {
                 failed++;
             }
             ScimRunContext.endTest();
+
+            int effectiveTotal = Math.max(plannedTotal, total);
+            String displayName = testIdentifier.getDisplayName();
+            String specName = resolveSpecName(testIdentifier);
+
+            if (progressTracker != null && run.getId() != null) {
+                progressTracker.updateProgress(
+                        run.getId(),
+                        total,
+                        effectiveTotal,
+                        passed,
+                        failed,
+                        specName,
+                        displayName
+                );
+            }
+        }
+
+        private static String resolveSpecName(TestIdentifier testIdentifier) {
+            Object source = testIdentifier.getSource().orElse(null);
+            if (source instanceof MethodSource methodSource) {
+                String fullClassName = methodSource.getClassName();
+                int dot = fullClassName.lastIndexOf('.');
+                return dot >= 0 ? fullClassName.substring(dot + 1) : fullClassName;
+            }
+            return "";
         }
 
         private static String normalizeStatus(TestExecutionResult.Status status) {

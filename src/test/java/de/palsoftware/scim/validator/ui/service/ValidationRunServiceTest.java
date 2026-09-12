@@ -53,6 +53,9 @@ class ValidationRunServiceTest {
     @Mock
     private ValidationHttpExchangeRepository exchangeRepository;
 
+    @Mock
+    private ValidationProgressTracker progressTracker;
+
     @InjectMocks
     private ValidationRunService service;
 

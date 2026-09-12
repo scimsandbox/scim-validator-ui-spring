@@ -1,10 +1,13 @@
 package de.palsoftware.scim.validator.ui.controller;
 
+import de.palsoftware.scim.validator.ui.dto.ValidationProgress;
 import de.palsoftware.scim.validator.ui.dto.ValidationRunForm;
 import de.palsoftware.scim.validator.ui.dto.ValidationRunView;
+import de.palsoftware.scim.validator.ui.model.ValidationRun;
 import de.palsoftware.scim.validator.ui.security.AuthenticatedUser;
 import de.palsoftware.scim.validator.ui.security.TargetUrlPolicy;
 import de.palsoftware.scim.validator.ui.service.MgmtUserService;
+import de.palsoftware.scim.validator.ui.service.ValidationProgressTracker;
 import de.palsoftware.scim.validator.ui.service.ValidationRunService;
 import jakarta.validation.Valid;
 import org.springframework.security.core.Authentication;
@@ -15,6 +18,8 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.ResponseBody;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
@@ -40,13 +45,16 @@ public class ValidationController {
 
     private final ValidationRunService validationRunService;
     private final MgmtUserService mgmtUserService;
+    private final ValidationProgressTracker validationProgressTracker;
     private final String serverManagerUrl;
 
     public ValidationController(ValidationRunService validationRunService,
             MgmtUserService mgmtUserService,
+            ValidationProgressTracker validationProgressTracker,
             @org.springframework.beans.factory.annotation.Value("${app.server-manager.url}") String serverManagerUrl) {
         this.validationRunService = validationRunService;
         this.mgmtUserService = mgmtUserService;
+        this.validationProgressTracker = validationProgressTracker;
         this.serverManagerUrl = serverManagerUrl;
     }
 
@@ -61,6 +69,36 @@ public class ValidationController {
         model.addAttribute("maxRuns", validationRunService.getMaxRunsPerUser());
         model.addAttribute("serverManagerUrl", serverManagerUrl);
         return "index";
+    }
+
+    @PostMapping(value = "/runs", produces = MediaType.APPLICATION_JSON_VALUE)
+    @ResponseBody
+    public ResponseEntity<?> executeAsync(
+            @Valid @ModelAttribute("runForm") ValidationRunForm runForm,
+            BindingResult bindingResult,
+            Authentication authentication) {
+        if (!bindingResult.hasFieldErrors("baseUrl")) {
+            try {
+                TargetUrlPolicy.validate(runForm.baseUrl());
+            } catch (IllegalArgumentException ex) {
+                bindingResult.rejectValue("baseUrl", "baseUrl.invalid", ex.getMessage());
+            }
+        }
+        if (bindingResult.hasErrors()) {
+            Map<String, String> errors = new HashMap<>();
+            bindingResult.getFieldErrors().forEach(error -> errors.put(error.getField(), error.getDefaultMessage()));
+            return ResponseEntity.badRequest().body(Map.of("errors", errors));
+        }
+
+        ValidationRunService.ExecutionResult result = validationRunService.executeRunAsync(runForm, actorEmail(authentication));
+        ValidationRun run = result.getRun();
+        Map<String, Object> response = new HashMap<>();
+        response.put("runId", run.getId().toString());
+        response.put("totalTests", run.getTotalTests());
+        response.put("redirectUrl", "/runs/" + run.getId());
+        response.put("oldRunDeleted", result.isOldRunDeleted());
+        response.put("maxRuns", result.getMaxRuns());
+        return ResponseEntity.ok(response);
     }
 
     @PostMapping("/runs")
@@ -93,6 +131,39 @@ public class ValidationController {
                 "An older test suite was deleted to make room for this new one. Maximum allowed test suites per user is " + result.getMaxRuns() + ".");
         }
         return "redirect:/runs/" + run.id();
+    }
+
+    @GetMapping(value = "/runs/{runId}/progress", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @ResponseBody
+    public SseEmitter streamProgress(@PathVariable UUID runId, Authentication authentication) {
+        validationRunService.getRun(runId, actorEmail(authentication), isAdmin(authentication));
+        return validationProgressTracker.subscribe(runId);
+    }
+
+    @GetMapping(value = "/runs/{runId}/status", produces = MediaType.APPLICATION_JSON_VALUE)
+    @ResponseBody
+    public ResponseEntity<ValidationProgress> getStatus(@PathVariable UUID runId, Authentication authentication) {
+        ValidationRunView run = validationRunService.getRun(runId, actorEmail(authentication), isAdmin(authentication));
+        ValidationProgress progress = validationProgressTracker.getProgress(runId);
+        if (progress == null) {
+            String status = run.status();
+            boolean isTerminal = "PASSED".equals(status) || "FAILED".equals(status);
+            progress = new ValidationProgress(
+                    run.id(),
+                    status,
+                    run.totalTests(),
+                    run.totalTests(),
+                    0,
+                    100,
+                    run.passedTests(),
+                    run.failedTests(),
+                    "",
+                    isTerminal ? "Validation completed" : status,
+                    null,
+                    "/runs/" + run.id()
+            );
+        }
+        return ResponseEntity.ok(progress);
     }
 
     @GetMapping("/runs/{runId}")
