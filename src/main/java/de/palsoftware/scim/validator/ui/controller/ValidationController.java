@@ -59,11 +59,21 @@ public class ValidationController {
     }
 
     @GetMapping("/")
-    public String index(Model model, Authentication authentication) {
+    public String index(
+            @org.springframework.web.bind.annotation.RequestParam(name = "showOthers", required = false) String showOthers,
+            Model model,
+            Authentication authentication) {
         if (!model.containsAttribute("runForm")) {
             model.addAttribute("runForm", new ValidationRunForm("", "", ""));
         }
-        model.addAttribute("runs", validationRunService.listRuns(actorEmail(authentication), isAdmin(authentication)));
+        String userEmail = actorEmail(authentication);
+        boolean admin = isAdmin(authentication);
+        boolean showOthersEnabled = admin && !"false".equalsIgnoreCase(showOthers);
+        model.addAttribute("runs", validationRunService.listRuns(userEmail, admin));
+        model.addAttribute("myRunsCount", validationRunService.countOwnedRuns(userEmail));
+        model.addAttribute("currentUserEmail", userEmail);
+        model.addAttribute("isAdmin", admin);
+        model.addAttribute("showOthers", showOthersEnabled);
         model.addAttribute(ATTR_CURRENT_USER, resolveDisplayName(authentication));
         model.addAttribute(ATTR_CURRENT_USER_ROLE, currentUserRole(authentication));
         model.addAttribute("maxRuns", validationRunService.getMaxRunsPerUser());
@@ -90,7 +100,8 @@ public class ValidationController {
             return ResponseEntity.badRequest().body(Map.of("errors", errors));
         }
 
-        ValidationRunService.ExecutionResult result = validationRunService.executeRunAsync(runForm, actorEmail(authentication));
+        String userEmail = actorEmail(authentication);
+        ValidationRunService.ExecutionResult result = validationRunService.executeRunAsync(runForm, userEmail);
         ValidationRun run = result.getRun();
         Map<String, Object> response = new HashMap<>();
         response.put("runId", run.getId().toString());
@@ -98,6 +109,7 @@ public class ValidationController {
         response.put("redirectUrl", "/runs/" + run.getId());
         response.put("oldRunDeleted", result.isOldRunDeleted());
         response.put("maxRuns", result.getMaxRuns());
+        response.put("myRunsCount", validationRunService.countOwnedRuns(userEmail));
         return ResponseEntity.ok(response);
     }
 
@@ -115,8 +127,14 @@ public class ValidationController {
             }
         }
         if (bindingResult.hasErrors()) {
+            String userEmail = actorEmail(authentication);
+            boolean admin = isAdmin(authentication);
             model.addAttribute("runs",
-                validationRunService.listRuns(actorEmail(authentication), isAdmin(authentication)));
+                validationRunService.listRuns(userEmail, admin));
+            model.addAttribute("myRunsCount", validationRunService.countOwnedRuns(userEmail));
+            model.addAttribute("currentUserEmail", userEmail);
+            model.addAttribute("isAdmin", admin);
+            model.addAttribute("showOthers", true);
             model.addAttribute(ATTR_CURRENT_USER, resolveDisplayName(authentication));
             model.addAttribute(ATTR_CURRENT_USER_ROLE, currentUserRole(authentication));
             model.addAttribute("maxRuns", validationRunService.getMaxRunsPerUser());

@@ -323,6 +323,13 @@ public class ValidationRunService {
         }
     }
 
+    public long countOwnedRuns(String actorEmail) {
+        if (actorEmail == null) {
+            return 0;
+        }
+        return runRepository.countOwnedRuns(actorEmail);
+    }
+
     public List<ValidationRunView> listRuns(String actorEmail, boolean admin) {
         List<ValidationRun> runs;
         Sort sort = Sort.by(Sort.Direction.DESC, "executedAt");

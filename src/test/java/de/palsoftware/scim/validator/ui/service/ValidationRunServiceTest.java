@@ -147,6 +147,16 @@ class ValidationRunServiceTest {
         assertThat(result).isEmpty();
     }
 
+    @Test
+    void countOwnedRuns_returnsCountFromRepo() {
+        when(runRepository.countOwnedRuns(eq("user@example.com"))).thenReturn(5L);
+
+        long count = service.countOwnedRuns("user@example.com");
+
+        assertThat(count).isEqualTo(5L);
+        verify(runRepository).countOwnedRuns(eq("user@example.com"));
+    }
+
     // ─── getRun ─────────────────────────────────────────────────────────
 
     @Test

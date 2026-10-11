@@ -27,7 +27,8 @@ public final class AuthenticatedUser {
         if (fallback == null || fallback.isBlank()) {
             throw new IllegalStateException("Unable to resolve authenticated email");
         }
-        return fallback;
+        String normalized = normalizeEmail(fallback);
+        return normalized != null ? normalized : fallback;
     }
 
     public static String displayName(Authentication authentication) {

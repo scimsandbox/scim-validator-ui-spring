@@ -137,6 +137,32 @@
             align-items: center;
             justify-content: space-between;
         }
+        .admin-filter-controls {
+            display: flex;
+            align-items: center;
+        }
+        .filter-checkbox-label {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            font-weight: 500;
+            color: #94a3b8;
+            cursor: pointer;
+            user-select: none;
+            text-transform: none;
+            letter-spacing: normal;
+        }
+        .filter-checkbox-label:hover {
+            color: #f8fafc;
+        }
+        .filter-checkbox-label input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            accent-color: #2563eb;
+            cursor: pointer;
+            margin: 0;
+        }
 
         /* Form grid */
         .grid {
@@ -751,7 +777,7 @@
     </header>
 
     <div class="card">
-        <form method="post" th:action="@{/runs}" th:object="${runForm}" th:data-runs-count="${#lists.size(runs)}" th:data-max-runs="${maxRuns}">
+        <form method="post" th:action="@{/runs}" th:object="${runForm}" th:data-runs-count="${myRunsCount}" th:data-max-runs="${maxRuns}">
             <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
             <div class="grid">
                 <div class="field">
@@ -816,7 +842,7 @@
                     <span><strong id="stat-failed">0</strong> failed</span>
                 </div>
                 <div class="progress-stat-pill pill-remaining">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
                     <span><strong id="stat-remaining">--</strong> left</span>
                 </div>
             </div>
@@ -831,6 +857,12 @@
     <div class="card">
         <div class="card-header-title">
             <span>Compliance Runs</span>
+            <div th:if="${currentUserRole == 'Admin'}" class="admin-filter-controls">
+                <label class="filter-checkbox-label" for="toggle-other-runs">
+                    <input type="checkbox" id="toggle-other-runs" th:checked="${showOthers}">
+                    <span>Show runs from other users</span>
+                </label>
+            </div>
         </div>
         <div th:if="${maxRuns != null}" class="info-banner">
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
@@ -850,11 +882,17 @@
                     <th>Actions</th>
                 </tr>
                 </thead>
-                <tbody>
-                <tr th:if="${#lists.isEmpty(runs)}">
+                <tbody id="runs-tbody">
+                <tr th:if="${#lists.isEmpty(runs)}" id="no-runs-row">
                     <td colspan="8" style="text-align: center; color: #94a3b8; padding: 28px;">No compliance runs recorded yet.</td>
                 </tr>
-                <tr th:each="run : ${runs}">
+                <tr id="no-filtered-runs-row" th:style="${(!showOthers and (myRunsCount == null or myRunsCount == 0) and not #lists.isEmpty(runs)) ? '' : 'display: none;'}">
+                    <td colspan="8" style="text-align: center; color: #94a3b8; padding: 28px;">No compliance runs recorded for your user.</td>
+                </tr>
+                <tr th:each="run : ${runs}"
+                    class="run-row"
+                    th:data-is-own="${currentUserEmail != null and #strings.equalsIgnoreCase(run.createdByEmail, currentUserEmail)}"
+                    th:style="${(!showOthers and (currentUserEmail == null or !#strings.equalsIgnoreCase(run.createdByEmail, currentUserEmail))) ? 'display: none;' : ''}">
                     <td><a th:href="@{/runs/{id}(id=${run.id})}" class="run-id-link" th:text="${run.id}">id</a></td>
                     <td th:text="${run.name}">name</td>
                     <td th:text="${run.createdByEmail}">owner</td>
@@ -1140,6 +1178,9 @@
                     }
 
                     var runId = result.data.runId;
+                    if (result.data.myRunsCount !== undefined) {
+                        form.dataset.runsCount = result.data.myRunsCount;
+                    }
                     startProgressTracking(runId, result.data.totalTests || 0);
                 })
                 .catch(function (err) {
@@ -1147,6 +1188,47 @@
                     onError('Failed to initiate compliance run: ' + err.message);
                 });
             });
+        }
+
+        var toggleOtherRuns = document.getElementById('toggle-other-runs');
+        if (toggleOtherRuns) {
+            var urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.has('showOthers')) {
+                toggleOtherRuns.checked = (urlParams.get('showOthers').toLowerCase() !== 'false');
+            } else {
+                var savedPref = localStorage.getItem('scim_show_other_users');
+                if (savedPref !== null) {
+                    toggleOtherRuns.checked = (savedPref === 'true');
+                }
+            }
+
+            function applyRunFilter() {
+                var showOthers = toggleOtherRuns.checked;
+                localStorage.setItem('scim_show_other_users', showOthers ? 'true' : 'false');
+                var rows = document.querySelectorAll('.run-row');
+                var visibleCount = 0;
+                rows.forEach(function (row) {
+                    var isOwn = row.getAttribute('data-is-own') === 'true';
+                    if (showOthers || isOwn) {
+                        row.style.display = '';
+                        visibleCount++;
+                    } else {
+                        row.style.display = 'none';
+                    }
+                });
+
+                var noRunsRow = document.getElementById('no-runs-row');
+                var noFilteredRunsRow = document.getElementById('no-filtered-runs-row');
+                if (noFilteredRunsRow) {
+                    noFilteredRunsRow.style.display = (visibleCount === 0 && rows.length > 0) ? '' : 'none';
+                }
+                if (noRunsRow) {
+                    noRunsRow.style.display = (rows.length === 0) ? '' : 'none';
+                }
+            }
+
+            toggleOtherRuns.addEventListener('change', applyRunFilter);
+            applyRunFilter();
         }
 
         function handleIncomingCredentials(incomingUrl, incomingToken) {

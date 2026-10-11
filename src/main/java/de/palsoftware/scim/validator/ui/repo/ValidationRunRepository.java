@@ -13,14 +13,20 @@ import java.util.UUID;
 public interface ValidationRunRepository extends JpaRepository<ValidationRun, UUID> {
     @Query("""
         select run from ValidationRun run
-        where run.createdByUser.email = :actorEmail
+        where lower(run.createdByUser.email) = lower(:actorEmail)
         """)
     List<ValidationRun> findOwnedRuns(@Param("actorEmail") String actorEmail, Sort sort);
 
     @Query("""
+        select count(run) from ValidationRun run
+        where lower(run.createdByUser.email) = lower(:actorEmail)
+        """)
+    long countOwnedRuns(@Param("actorEmail") String actorEmail);
+
+    @Query("""
         select run from ValidationRun run
         where run.id = :id
-          and run.createdByUser.email = :actorEmail
+          and lower(run.createdByUser.email) = lower(:actorEmail)
         """)
     Optional<ValidationRun> findAccessibleById(@Param("id") UUID id,
                                               @Param("actorEmail") String actorEmail);

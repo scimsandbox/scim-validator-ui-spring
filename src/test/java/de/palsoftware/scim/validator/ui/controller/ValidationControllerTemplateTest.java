@@ -65,6 +65,40 @@ class ValidationControllerTemplateTest {
         }
 
         @Test
+        void indexRendersShowOtherUsersCheckboxForAdmin() throws Exception {
+                when(validationRunService.listRuns(anyString(), anyBoolean())).thenReturn(List.of());
+                when(validationRunService.countOwnedRuns(anyString())).thenReturn(3L);
+
+                var adminToken = new TestingAuthenticationToken("admin@example.com", "n/a",
+                                List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_ADMIN")));
+
+                mockMvc.perform(get("/validator-ui/")
+                                .contextPath("/validator-ui")
+                                .requestAttr("_csrf", CSRF_TOKEN)
+                                .principal(adminToken))
+                                .andExpect(status().isOk())
+                                .andExpect(content().string(org.hamcrest.Matchers.containsString("id=\"toggle-other-runs\"")))
+                                .andExpect(content().string(org.hamcrest.Matchers.containsString("Show runs from other users")))
+                                .andExpect(content().string(org.hamcrest.Matchers.containsString("data-runs-count=\"3\"")));
+        }
+
+        @Test
+        void indexDoesNotRenderShowOtherUsersCheckboxForRegularUser() throws Exception {
+                when(validationRunService.listRuns(anyString(), anyBoolean())).thenReturn(List.of());
+
+                var userToken = new TestingAuthenticationToken("user@example.com", "n/a",
+                                List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_USER")));
+
+                mockMvc.perform(get("/validator-ui/")
+                                .contextPath("/validator-ui")
+                                .requestAttr("_csrf", CSRF_TOKEN)
+                                .principal(userToken))
+                                .andExpect(status().isOk())
+                                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content()
+                                                .string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("id=\"toggle-other-runs\""))));
+        }
+
+        @Test
         void detailUsesContextAwareBackLink() throws Exception {
                 UUID runId = UUID.randomUUID();
                 when(validationRunService.getRun(eq(runId), anyString(), anyBoolean()))
