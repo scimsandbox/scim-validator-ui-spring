@@ -13,7 +13,12 @@ import de.palsoftware.scim.validator.ui.repo.ValidationTestResultRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.platform.engine.TestDescriptor;
+import org.junit.platform.engine.TestExecutionResult;
+import org.junit.platform.engine.UniqueId;
 import org.junit.platform.launcher.LauncherDiscoveryRequest;
+import org.junit.platform.launcher.TestIdentifier;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -31,6 +36,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -272,6 +278,58 @@ class ValidationRunServiceTest {
 
         assertThatThrownBy(() -> service.deleteRun(runId, "user@example.com", false))
                 .isInstanceOf(ResponseStatusException.class);
+    }
+
+    // ─── ValidationExecutionListener ───────────────────────────────────
+
+    @Test
+    void validationExecutionListener_treatsAbortedTestsAsSkipped() {
+        ValidationRun run = new ValidationRun();
+        ValidationRunService.ValidationExecutionListener listener =
+                new ValidationRunService.ValidationExecutionListener(run, 3, progressTracker, testResultRepository, exchangeRepository);
+
+        TestDescriptor descriptor = org.mockito.Mockito.mock(TestDescriptor.class);
+        when(descriptor.getUniqueId()).thenReturn(UniqueId.forEngine("test-engine"));
+        when(descriptor.getType()).thenReturn(TestDescriptor.Type.TEST);
+        when(descriptor.getDisplayName()).thenReturn("testFeature");
+        TestIdentifier identifier = TestIdentifier.from(descriptor);
+
+        when(testResultRepository.save(any(ValidationTestResult.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        // 1. Successful test
+        listener.executionFinished(identifier, TestExecutionResult.successful());
+        assertThat(listener.getTotal()).isEqualTo(1);
+        assertThat(listener.getPassed()).isEqualTo(1);
+        assertThat(listener.getFailed()).isZero();
+
+        // 2. Aborted test (e.g. capability gating)
+        listener.executionFinished(identifier, TestExecutionResult.aborted(new RuntimeException("Capability not supported")));
+        assertThat(listener.getTotal()).isEqualTo(2);
+        assertThat(listener.getPassed()).isEqualTo(1);
+        assertThat(listener.getFailed()).isZero();
+
+        // 3. Failed test
+        listener.executionFinished(identifier, TestExecutionResult.failed(new AssertionError("Expectation failed")));
+        assertThat(listener.getTotal()).isEqualTo(3);
+        assertThat(listener.getPassed()).isEqualTo(1);
+        assertThat(listener.getFailed()).isEqualTo(1);
+
+        // Verify persisted entities and statuses
+        ArgumentCaptor<ValidationTestResult> captor = ArgumentCaptor.forClass(ValidationTestResult.class);
+        verify(testResultRepository, times(3)).save(captor.capture());
+
+        List<ValidationTestResult> saved = captor.getAllValues();
+        assertThat(saved).hasSize(3);
+
+        assertThat(saved.get(0).getStatus()).isEqualTo("SUCCESS");
+        assertThat(saved.get(0).getErrorMessage()).isNull();
+
+        assertThat(saved.get(1).getStatus()).isEqualTo("ABORTED");
+        assertThat(saved.get(1).getErrorMessage()).isEqualTo("Capability not supported");
+
+        assertThat(saved.get(2).getStatus()).isEqualTo("FAILED");
+        assertThat(saved.get(2).getErrorMessage()).isEqualTo("Expectation failed");
     }
 
     // ─── helpers ────────────────────────────────────────────────────────

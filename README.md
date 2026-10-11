@@ -15,8 +15,8 @@ This repository contains two surfaces of the SCIM sandbox:
   exchanges
 - Auth0 OIDC login, role mapping, CSRF protection, and an actuator API-key
   filter
-- a JUnit Platform launcher integration that executes the A1-A9 validator specs
-  from `scim-validator`
+- a JUnit Platform launcher integration that executes the A1-A11 validator specs
+  (including RFC 9865 cursor pagination and RFC 9967 async events) from `scim-validator`
 - a Dockerfile and GitHub Actions workflows for build, release, and image
   publishing
 

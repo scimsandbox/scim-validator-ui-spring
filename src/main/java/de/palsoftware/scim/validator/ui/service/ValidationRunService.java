@@ -68,7 +68,9 @@ public class ValidationRunService {
             "de.palsoftware.scim.validator.specs.A6_GroupLifecycleSpec",
             "de.palsoftware.scim.validator.specs.A7_BulkOperationsSpec",
             "de.palsoftware.scim.validator.specs.A8_SecurityAndRobustnessSpec",
-            "de.palsoftware.scim.validator.specs.A9_NegativeAndEdgeCasesSpec");
+            "de.palsoftware.scim.validator.specs.A9_NegativeAndEdgeCasesSpec",
+            "de.palsoftware.scim.validator.specs.A10_CursorPaginationSpec",
+            "de.palsoftware.scim.validator.specs.A11_AsyncOperationsSpec");
 
     private final ValidationRunRepository runRepository;
     private final ValidationMgmtUserRepository mgmtUserRepository;
@@ -189,6 +191,13 @@ public class ValidationRunService {
         } catch (Exception ex) {
             log.error("Error executing validation run", ex);
             run.setStatus("ERROR");
+            if (listener != null) {
+                run.setTotalTests(listener.total);
+                run.setPassedTests(listener.passed);
+                run.setFailedTests(listener.failed);
+            } else {
+                run.setTotalTests(0);
+            }
             if (runId != null) {
                 progressTracker.failRun(runId, ex.getMessage() != null ? ex.getMessage() : "Execution error");
             }
@@ -302,6 +311,8 @@ public class ValidationRunService {
                 run.setTotalTests(listener.total);
                 run.setPassedTests(listener.passed);
                 run.setFailedTests(listener.failed);
+            } else {
+                run.setTotalTests(0);
             }
             runRepository.save(run);
             progressTracker.failRun(runId, ex.getMessage() != null ? ex.getMessage() : "Execution error");
@@ -374,10 +385,10 @@ public class ValidationRunService {
             LauncherDiscoveryRequest request = buildRequest();
             TestPlan plan = launcher.discover(request);
             long count = plan.countTestIdentifiers(TestIdentifier::isTest);
-            return count > 0 ? (int) count : 183;
+            return count > 0 ? (int) count : 250;
         } catch (Throwable ex) {
             log.warn("Could not discover test plan count", ex);
-            return 183;
+            return 250;
         } finally {
             ValidatorConfiguration.clearRunOverrides();
         }
@@ -395,7 +406,7 @@ public class ValidationRunService {
         return builder.build();
     }
 
-    private static class ValidationExecutionListener implements TestExecutionListener {
+    static class ValidationExecutionListener implements TestExecutionListener {
 
         private final ValidationRun run;
         private final int plannedTotal;
@@ -408,7 +419,7 @@ public class ValidationRunService {
         private int passed;
         private int failed;
 
-        private ValidationExecutionListener(ValidationRun run,
+        ValidationExecutionListener(ValidationRun run,
                 int plannedTotal,
                 ValidationProgressTracker progressTracker,
                 ValidationTestResultRepository testResultRepository,
@@ -418,6 +429,18 @@ public class ValidationRunService {
             this.progressTracker = progressTracker;
             this.testResultRepository = testResultRepository;
             this.exchangeRepository = exchangeRepository;
+        }
+
+        int getTotal() {
+            return total;
+        }
+
+        int getPassed() {
+            return passed;
+        }
+
+        int getFailed() {
+            return failed;
         }
 
         @Override
@@ -502,7 +525,7 @@ public class ValidationRunService {
             total++;
             if ("SUCCESS".equals(testResult.getStatus())) {
                 passed++;
-            } else {
+            } else if (!"ABORTED".equals(testResult.getStatus())) {
                 failed++;
             }
             ScimRunContext.endTest();

@@ -312,10 +312,15 @@
             color: #4ade80;
             border: 1px solid rgba(34, 197, 94, 0.3);
         }
-        .status-failed, .status-error, .status-aborted {
+        .status-failed, .status-error {
             background: rgba(239, 68, 68, 0.15);
             color: #f87171;
             border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+        .status-aborted {
+            background: rgba(234, 179, 8, 0.15);
+            color: #facc15;
+            border: 1px solid rgba(234, 179, 8, 0.3);
         }
         .status-running {
             background: rgba(59, 130, 246, 0.15);
@@ -976,7 +981,11 @@
             if (progressTitle) {
                 progressTitle.textContent = data.status === 'PASSED' ? 'Compliance Check Passed!' : 'Compliance Check Completed';
             }
-            var summary = 'Executed ' + (data.totalTests || 0) + ' tests: ' + (data.passedTests || 0) + ' passed, ' + (data.failedTests || 0) + ' failed.';
+            var total = data.totalTests || 0;
+            var passed = data.passedTests || 0;
+            var failed = data.failedTests || 0;
+            var skipped = Math.max(0, total - passed - failed);
+            var summary = 'Executed ' + total + ' tests: ' + passed + ' passed, ' + failed + ' failed' + (skipped > 0 ? ', ' + skipped + ' skipped' : '') + '.';
             if (progressDesc) progressDesc.textContent = summary + ' Loading report...';
             if (testNameEl) testNameEl.textContent = 'All tests finished. Redirecting to test suite report...';
 
