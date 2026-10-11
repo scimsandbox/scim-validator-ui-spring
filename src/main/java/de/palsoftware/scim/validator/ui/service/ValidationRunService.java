@@ -68,7 +68,9 @@ public class ValidationRunService {
             "de.palsoftware.scim.validator.specs.A6_GroupLifecycleSpec",
             "de.palsoftware.scim.validator.specs.A7_BulkOperationsSpec",
             "de.palsoftware.scim.validator.specs.A8_SecurityAndRobustnessSpec",
-            "de.palsoftware.scim.validator.specs.A9_NegativeAndEdgeCasesSpec");
+            "de.palsoftware.scim.validator.specs.A9_NegativeAndEdgeCasesSpec",
+            "de.palsoftware.scim.validator.specs.A10_CursorPaginationSpec",
+            "de.palsoftware.scim.validator.specs.A11_AsyncOperationsSpec");
 
     private final ValidationRunRepository runRepository;
     private final ValidationMgmtUserRepository mgmtUserRepository;
@@ -374,10 +376,10 @@ public class ValidationRunService {
             LauncherDiscoveryRequest request = buildRequest();
             TestPlan plan = launcher.discover(request);
             long count = plan.countTestIdentifiers(TestIdentifier::isTest);
-            return count > 0 ? (int) count : 183;
+            return count > 0 ? (int) count : 250;
         } catch (Throwable ex) {
             log.warn("Could not discover test plan count", ex);
-            return 183;
+            return 250;
         } finally {
             ValidatorConfiguration.clearRunOverrides();
         }
