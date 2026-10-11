@@ -397,7 +397,7 @@ public class ValidationRunService {
         return builder.build();
     }
 
-    private static class ValidationExecutionListener implements TestExecutionListener {
+    static class ValidationExecutionListener implements TestExecutionListener {
 
         private final ValidationRun run;
         private final int plannedTotal;
@@ -410,7 +410,7 @@ public class ValidationRunService {
         private int passed;
         private int failed;
 
-        private ValidationExecutionListener(ValidationRun run,
+        ValidationExecutionListener(ValidationRun run,
                 int plannedTotal,
                 ValidationProgressTracker progressTracker,
                 ValidationTestResultRepository testResultRepository,
@@ -420,6 +420,18 @@ public class ValidationRunService {
             this.progressTracker = progressTracker;
             this.testResultRepository = testResultRepository;
             this.exchangeRepository = exchangeRepository;
+        }
+
+        int getTotal() {
+            return total;
+        }
+
+        int getPassed() {
+            return passed;
+        }
+
+        int getFailed() {
+            return failed;
         }
 
         @Override
@@ -504,7 +516,7 @@ public class ValidationRunService {
             total++;
             if ("SUCCESS".equals(testResult.getStatus())) {
                 passed++;
-            } else {
+            } else if (!"ABORTED".equals(testResult.getStatus())) {
                 failed++;
             }
             ScimRunContext.endTest();

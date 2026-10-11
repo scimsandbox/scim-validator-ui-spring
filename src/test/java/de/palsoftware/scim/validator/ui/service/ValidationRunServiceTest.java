@@ -13,7 +13,11 @@ import de.palsoftware.scim.validator.ui.repo.ValidationTestResultRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.platform.engine.TestDescriptor;
+import org.junit.platform.engine.TestExecutionResult;
+import org.junit.platform.engine.UniqueId;
 import org.junit.platform.launcher.LauncherDiscoveryRequest;
+import org.junit.platform.launcher.TestIdentifier;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -272,6 +276,42 @@ class ValidationRunServiceTest {
 
         assertThatThrownBy(() -> service.deleteRun(runId, "user@example.com", false))
                 .isInstanceOf(ResponseStatusException.class);
+    }
+
+    // ─── ValidationExecutionListener ───────────────────────────────────
+
+    @Test
+    void validationExecutionListener_treatsAbortedTestsAsSkipped() {
+        ValidationRun run = new ValidationRun();
+        ValidationRunService.ValidationExecutionListener listener =
+                new ValidationRunService.ValidationExecutionListener(run, 3, progressTracker, testResultRepository, exchangeRepository);
+
+        TestDescriptor descriptor = org.mockito.Mockito.mock(TestDescriptor.class);
+        when(descriptor.getUniqueId()).thenReturn(UniqueId.forEngine("test-engine"));
+        when(descriptor.getType()).thenReturn(TestDescriptor.Type.TEST);
+        when(descriptor.getDisplayName()).thenReturn("testFeature");
+        TestIdentifier identifier = TestIdentifier.from(descriptor);
+
+        when(testResultRepository.save(any(ValidationTestResult.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        // 1. Successful test
+        listener.executionFinished(identifier, TestExecutionResult.successful());
+        assertThat(listener.getTotal()).isEqualTo(1);
+        assertThat(listener.getPassed()).isEqualTo(1);
+        assertThat(listener.getFailed()).isZero();
+
+        // 2. Aborted test (e.g. capability gating)
+        listener.executionFinished(identifier, TestExecutionResult.aborted(new RuntimeException("Capability not supported")));
+        assertThat(listener.getTotal()).isEqualTo(2);
+        assertThat(listener.getPassed()).isEqualTo(1);
+        assertThat(listener.getFailed()).isZero();
+
+        // 3. Failed test
+        listener.executionFinished(identifier, TestExecutionResult.failed(new AssertionError("Expectation failed")));
+        assertThat(listener.getTotal()).isEqualTo(3);
+        assertThat(listener.getPassed()).isEqualTo(1);
+        assertThat(listener.getFailed()).isEqualTo(1);
     }
 
     // ─── helpers ────────────────────────────────────────────────────────
