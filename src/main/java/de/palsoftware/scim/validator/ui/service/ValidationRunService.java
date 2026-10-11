@@ -191,6 +191,13 @@ public class ValidationRunService {
         } catch (Exception ex) {
             log.error("Error executing validation run", ex);
             run.setStatus("ERROR");
+            if (listener != null) {
+                run.setTotalTests(listener.total);
+                run.setPassedTests(listener.passed);
+                run.setFailedTests(listener.failed);
+            } else {
+                run.setTotalTests(0);
+            }
             if (runId != null) {
                 progressTracker.failRun(runId, ex.getMessage() != null ? ex.getMessage() : "Execution error");
             }
@@ -304,6 +311,8 @@ public class ValidationRunService {
                 run.setTotalTests(listener.total);
                 run.setPassedTests(listener.passed);
                 run.setFailedTests(listener.failed);
+            } else {
+                run.setTotalTests(0);
             }
             runRepository.save(run);
             progressTracker.failRun(runId, ex.getMessage() != null ? ex.getMessage() : "Execution error");

@@ -18,6 +18,7 @@ import org.junit.platform.engine.TestExecutionResult;
 import org.junit.platform.engine.UniqueId;
 import org.junit.platform.launcher.LauncherDiscoveryRequest;
 import org.junit.platform.launcher.TestIdentifier;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -35,6 +36,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -312,6 +314,22 @@ class ValidationRunServiceTest {
         assertThat(listener.getTotal()).isEqualTo(3);
         assertThat(listener.getPassed()).isEqualTo(1);
         assertThat(listener.getFailed()).isEqualTo(1);
+
+        // Verify persisted entities and statuses
+        ArgumentCaptor<ValidationTestResult> captor = ArgumentCaptor.forClass(ValidationTestResult.class);
+        verify(testResultRepository, times(3)).save(captor.capture());
+
+        List<ValidationTestResult> saved = captor.getAllValues();
+        assertThat(saved).hasSize(3);
+
+        assertThat(saved.get(0).getStatus()).isEqualTo("SUCCESS");
+        assertThat(saved.get(0).getErrorMessage()).isNull();
+
+        assertThat(saved.get(1).getStatus()).isEqualTo("ABORTED");
+        assertThat(saved.get(1).getErrorMessage()).isEqualTo("Capability not supported");
+
+        assertThat(saved.get(2).getStatus()).isEqualTo("FAILED");
+        assertThat(saved.get(2).getErrorMessage()).isEqualTo("Expectation failed");
     }
 
     // ─── helpers ────────────────────────────────────────────────────────
