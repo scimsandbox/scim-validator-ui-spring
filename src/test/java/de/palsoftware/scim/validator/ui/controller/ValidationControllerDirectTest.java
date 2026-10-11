@@ -159,6 +159,11 @@ class ValidationControllerDirectTest {
         public int getMaxRunsPerUser() {
             return 10;
         }
+
+        @Override
+        public long countOwnedRuns(String actorEmail) {
+            return 0;
+        }
     }
 
     private static class TestMgmtUserService extends MgmtUserService {

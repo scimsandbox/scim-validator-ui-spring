@@ -891,7 +891,6 @@
                 </tr>
                 <tr th:each="run : ${runs}"
                     class="run-row"
-                    th:data-owner="${run.createdByEmail}"
                     th:data-is-own="${currentUserEmail != null and #strings.equalsIgnoreCase(run.createdByEmail, currentUserEmail)}"
                     th:style="${(!showOthers and (currentUserEmail == null or !#strings.equalsIgnoreCase(run.createdByEmail, currentUserEmail))) ? 'display: none;' : ''}">
                     <td><a th:href="@{/runs/{id}(id=${run.id})}" class="run-id-link" th:text="${run.id}">id</a></td>
@@ -1195,7 +1194,7 @@
         if (toggleOtherRuns) {
             var urlParams = new URLSearchParams(window.location.search);
             if (urlParams.has('showOthers')) {
-                toggleOtherRuns.checked = (urlParams.get('showOthers') !== 'false');
+                toggleOtherRuns.checked = (urlParams.get('showOthers').toLowerCase() !== 'false');
             } else {
                 var savedPref = localStorage.getItem('scim_show_other_users');
                 if (savedPref !== null) {

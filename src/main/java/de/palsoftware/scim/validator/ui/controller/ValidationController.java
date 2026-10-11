@@ -60,7 +60,7 @@ public class ValidationController {
 
     @GetMapping("/")
     public String index(
-            @org.springframework.web.bind.annotation.RequestParam(name = "showOthers", required = false) Boolean showOthers,
+            @org.springframework.web.bind.annotation.RequestParam(name = "showOthers", required = false) String showOthers,
             Model model,
             Authentication authentication) {
         if (!model.containsAttribute("runForm")) {
@@ -68,21 +68,17 @@ public class ValidationController {
         }
         String userEmail = actorEmail(authentication);
         boolean admin = isAdmin(authentication);
-        boolean includeOthers = admin && (showOthers == null || showOthers);
+        boolean showOthersEnabled = admin && !"false".equalsIgnoreCase(showOthers);
         model.addAttribute("runs", validationRunService.listRuns(userEmail, admin));
         model.addAttribute("myRunsCount", validationRunService.countOwnedRuns(userEmail));
         model.addAttribute("currentUserEmail", userEmail);
         model.addAttribute("isAdmin", admin);
-        model.addAttribute("showOthers", includeOthers);
+        model.addAttribute("showOthers", showOthersEnabled);
         model.addAttribute(ATTR_CURRENT_USER, resolveDisplayName(authentication));
         model.addAttribute(ATTR_CURRENT_USER_ROLE, currentUserRole(authentication));
         model.addAttribute("maxRuns", validationRunService.getMaxRunsPerUser());
         model.addAttribute("serverManagerUrl", serverManagerUrl);
         return "index";
-    }
-
-    public String index(Model model, Authentication authentication) {
-        return index(null, model, authentication);
     }
 
     @PostMapping(value = "/runs", produces = MediaType.APPLICATION_JSON_VALUE)
