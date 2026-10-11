@@ -147,6 +147,38 @@ class ValidationRunServiceTest {
         assertThat(result).isEmpty();
     }
 
+    @Test
+    void listRuns_admin_includeOthersFalse_returnsOwnedRuns() {
+        when(runRepository.findOwnedRuns(eq("admin@example.com"), any(Sort.class)))
+                .thenReturn(List.of(sampleRun));
+
+        List<ValidationRunView> result = service.listRuns("admin@example.com", true, false);
+
+        assertThat(result).hasSize(1);
+        verify(runRepository).findOwnedRuns(eq("admin@example.com"), any(Sort.class));
+    }
+
+    @Test
+    void listRuns_admin_includeOthersTrue_returnsAllRuns() {
+        when(runRepository.findAll(any(Sort.class)))
+                .thenReturn(List.of(sampleRun));
+
+        List<ValidationRunView> result = service.listRuns("admin@example.com", true, true);
+
+        assertThat(result).hasSize(1);
+        verify(runRepository).findAll(any(Sort.class));
+    }
+
+    @Test
+    void countOwnedRuns_returnsCountFromRepo() {
+        when(runRepository.countOwnedRuns(eq("user@example.com"))).thenReturn(5L);
+
+        long count = service.countOwnedRuns("user@example.com");
+
+        assertThat(count).isEqualTo(5L);
+        verify(runRepository).countOwnedRuns(eq("user@example.com"));
+    }
+
     // ─── getRun ─────────────────────────────────────────────────────────
 
     @Test

@@ -71,6 +71,7 @@ class ValidationControllerDirectTest {
         assertThat(body.get("runId")).isEqualTo(runService.createdRun.getId().toString());
         assertThat(body.get("totalTests")).isEqualTo(52);
         assertThat(body.get("redirectUrl")).isEqualTo("/runs/" + runService.createdRun.getId());
+        assertThat(body.get("myRunsCount")).isEqualTo(0L);
     }
 
     @Test

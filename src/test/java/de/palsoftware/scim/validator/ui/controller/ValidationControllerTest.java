@@ -76,7 +76,25 @@ class ValidationControllerTest {
         assertThat(view).isEqualTo("index");
         assertThat(model.containsAttribute("runForm")).isTrue();
         assertThat(model.containsAttribute("runs")).isTrue();
+        assertThat(model.containsAttribute("myRunsCount")).isTrue();
+        assertThat(model.containsAttribute("currentUserEmail")).isTrue();
+        assertThat(model.containsAttribute("isAdmin")).isTrue();
+        assertThat(model.containsAttribute("showOthers")).isTrue();
         assertThat(model.containsAttribute("currentUser")).isTrue();
+    }
+
+    @Test
+    void index_admin_withShowOthersFalse_setsShowOthersFalse() {
+        Authentication adminAuth = new TestingAuthenticationToken("admin@example.com", "n/a",
+                List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_ADMIN")));
+        when(validationRunService.listRuns(anyString(), anyBoolean()))
+                .thenReturn(Collections.emptyList());
+
+        controller.index(false, model, adminAuth);
+
+        assertThat(model.getAttribute("showOthers")).isEqualTo(false);
+        assertThat(model.getAttribute("isAdmin")).isEqualTo(true);
+        assertThat(model.getAttribute("currentUserEmail")).isEqualTo("admin@example.com");
     }
 
     @Test
@@ -215,6 +233,7 @@ class ValidationControllerTest {
         assertThat(body.get("runId")).isEqualTo(runId.toString());
         assertThat(body.get("totalTests")).isEqualTo(52);
         assertThat(body.get("redirectUrl")).isEqualTo("/runs/" + runId);
+        assertThat(body.get("myRunsCount")).isEqualTo(0L);
     }
 
     @Test
