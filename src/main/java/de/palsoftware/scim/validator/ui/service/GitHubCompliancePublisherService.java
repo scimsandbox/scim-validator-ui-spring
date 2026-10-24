@@ -30,6 +30,15 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Pattern;
 
+/**
+ * Publishes sanitized SCIM 2.0 compliance reports and SVG badges to the {@code scim-website} GitHub repository.
+ *
+ * <p><strong>Concurrency &amp; Deployment Assumption:</strong> In-memory run claims ({@code claimedRunTimestamps},
+ * {@code mergedRunIds}) and {@code publishLock} check-and-claim synchronization assume a single application
+ * instance ({@code replicas: 1} in Kubernetes). Concurrent publications of distinct runs execute GitHub API
+ * workflows in parallel outside {@code publishLock} and rely on {@code executePublishWithRetry} when racing
+ * on {@code compliance/index.json} or {@code refs/heads/main}.</p>
+ */
 @Service
 public class GitHubCompliancePublisherService {
 
@@ -144,22 +153,23 @@ public class GitHubCompliancePublisherService {
             }
             validateSlugOwnership(request);
             claimedRunTimestamps.put(request.runId(), System.currentTimeMillis());
-            try {
-                CompliancePublicationResult result = executePublishWithRetry(request, 3);
-                if (result == null || !result.success()) {
-                    releaseClaim(request.runId());
-                } else {
-                    mergedRunIds.add(request.runId());
-                    // Pin the in-memory claim so it never expires after a successful GitHub merge
-                    claimedRunTimestamps.put(request.runId(), Long.MAX_VALUE / 2);
-                }
-                return result;
-            } catch (RuntimeException | Error e) {
-                releaseClaim(request.runId());
-                throw e;
-            }
         } finally {
             publishLock.unlock();
+        }
+
+        try {
+            CompliancePublicationResult result = executePublishWithRetry(request, 3);
+            if (result == null || !result.success()) {
+                releaseClaim(request.runId());
+            } else {
+                mergedRunIds.add(request.runId());
+                // Pin the in-memory claim so it never expires after a successful GitHub merge
+                claimedRunTimestamps.put(request.runId(), Long.MAX_VALUE / 2);
+            }
+            return result;
+        } catch (RuntimeException | Error e) {
+            releaseClaim(request.runId());
+            throw e;
         }
     }
 
@@ -731,9 +741,15 @@ public class GitHubCompliancePublisherService {
                     .method("PATCH", HttpRequest.BodyPublishers.ofString(body))
                     .build();
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() == 409 || response.statusCode() == 422) {
+                throw new GitHubMergeConflictException(
+                        "Branch ref update conflict for " + branchName + " (HTTP " + response.statusCode() + "): " + response.body());
+            }
             if (response.statusCode() != 200) {
                 throw new IllegalStateException("Failed to update branch ref: HTTP " + response.statusCode() + " " + response.body());
             }
+        } catch (GitHubMergeConflictException ce) {
+            throw ce;
         } catch (Exception e) {
             throw new RuntimeException("Error updating branch ref " + branchName + ": " + e.getMessage(), e);
         }

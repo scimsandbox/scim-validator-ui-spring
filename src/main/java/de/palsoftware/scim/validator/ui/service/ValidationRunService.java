@@ -66,6 +66,16 @@ import java.util.concurrent.Executors;
 
 import static org.junit.platform.engine.discovery.DiscoverySelectors.selectClass;
 
+/**
+ * Service managing SCIM validation run execution, persistence, and compliance publication reservations.
+ *
+ * <p><strong>Concurrency &amp; Deployment Assumption:</strong> Quota enforcement, product-slug ownership
+ * reservation locking ({@code reservationLock}), and in-memory reconciliation tracking
+ * ({@code reconciliationRequiredRunIds}, {@code pendingReconciliations}) are designed for a single
+ * application instance ({@code replicas: 1} in Kubernetes). Scaling horizontally beyond a single replica
+ * requires migrating these guards to database-level pessimistic locking ({@code SELECT ... FOR UPDATE})
+ * or distributed locks.</p>
+ */
 @Service
 @Transactional(readOnly = true)
 public class ValidationRunService {
@@ -535,10 +545,14 @@ public class ValidationRunService {
     @Transactional
     public void deleteRun(UUID runId, String actorEmail, boolean admin) {
         ValidationRun run = requireRunAccess(runId, actorEmail, admin);
-        if (!admin && run.isPublished()) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Published runs cannot be deleted");
+        boolean publishedInDb = publicationRepository != null
+                && publicationRepository.findById(runId).filter(p -> !p.isPendingReservation()).isPresent();
+        if (run.isPublished() || publishedInDb) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Published compliance runs cannot be deleted because they are linked from the public compliance directory.");
         }
-        if (!admin && run.hasPendingReservation() && !isStaleReservation(run.getPublication())) {
+        if (isReconciliationRequired(runId)
+                || (run.hasPendingReservation() && !isStaleReservation(run.getPublication()))) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Run publication is currently in progress");
         }
         if (publicationRepository != null && (run.getPublication() != null || publicationRepository.existsById(runId))) {

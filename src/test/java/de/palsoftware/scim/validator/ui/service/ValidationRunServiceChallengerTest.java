@@ -245,7 +245,7 @@ public class ValidationRunServiceChallengerTest {
     // ─────────────────────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("CH-4.1: Non-admin deleting their own published run is blocked with 403 Forbidden")
+    @DisplayName("CH-4.1: Non-admin deleting their own published run is blocked with 409 Conflict")
     void challenge_nonAdmin_cannotDeletePublishedRun() {
         ValidationRun pubRun = createPublishedRun(alice, "Certified SCIM 2.0", OffsetDateTime.now());
         UUID runId = pubRun.getId();
@@ -254,8 +254,8 @@ public class ValidationRunServiceChallengerTest {
                 .isInstanceOf(ResponseStatusException.class)
                 .satisfies(ex -> {
                     ResponseStatusException rse = (ResponseStatusException) ex;
-                    assertThat(rse.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
-                    assertThat(rse.getReason()).isEqualTo("Published runs cannot be deleted");
+                    assertThat(rse.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(rse.getReason()).contains("Published compliance runs cannot be deleted");
                 });
 
         // Run and publication MUST still exist
@@ -264,17 +264,22 @@ public class ValidationRunServiceChallengerTest {
     }
 
     @Test
-    @DisplayName("CH-4.2: Admin deleting a published run succeeds and removes publication record")
+    @DisplayName("CH-4.2: Admin deleting a published run is also blocked with 409 Conflict")
     void challenge_admin_canDeletePublishedRun() {
         ValidationRun pubRun = createPublishedRun(alice, "Certified SCIM 2.0", OffsetDateTime.now());
         UUID runId = pubRun.getId();
 
-        assertThatCode(() -> service.deleteRun(runId, ADMIN_EMAIL, true))
-                .doesNotThrowAnyException();
+        assertThatThrownBy(() -> service.deleteRun(runId, ADMIN_EMAIL, true))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(ex -> {
+                    ResponseStatusException rse = (ResponseStatusException) ex;
+                    assertThat(rse.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(rse.getReason()).contains("Published compliance runs cannot be deleted");
+                });
 
-        // Run and publication MUST both be deleted
-        assertThat(runRepository.findById(runId)).isEmpty();
-        assertThat(publicationRepository.findById(runId)).isEmpty();
+        // Run and publication MUST still exist
+        assertThat(runRepository.findById(runId)).isPresent();
+        assertThat(publicationRepository.findById(runId)).isPresent();
     }
 
     @Test
@@ -481,7 +486,7 @@ public class ValidationRunServiceChallengerTest {
     // ─────────────────────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("CH-10.1: Admin deletion of published run cleans up publication entity, run entity, and frees quota")
+    @DisplayName("CH-10.1: Admin deletion of published run is blocked and preserves publication quota")
     void challenge_adminDelete_cascadeAndQuotaLiberation() {
         ValidationRun pubRun = createPublishedRun(alice, "Certified Cascade", OffsetDateTime.now());
         UUID runId = pubRun.getId();
@@ -489,13 +494,13 @@ public class ValidationRunServiceChallengerTest {
         assertThat(publicationRepository.findById(runId)).isPresent();
         assertThat(service.countOwnedPublications(ALICE_EMAIL)).isEqualTo(1L);
 
-        // Admin delete must invoke publicationRepository.delete and runRepository.deleteById
-        assertThatCode(() -> service.deleteRun(runId, ADMIN_EMAIL, true))
-                .doesNotThrowAnyException();
+        assertThatThrownBy(() -> service.deleteRun(runId, ADMIN_EMAIL, true))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode()).isEqualTo(HttpStatus.CONFLICT));
 
-        assertThat(runRepository.findById(runId)).isEmpty();
-        assertThat(publicationRepository.findById(runId)).isEmpty();
-        assertThat(service.countOwnedPublications(ALICE_EMAIL)).isEqualTo(0L);
+        assertThat(runRepository.findById(runId)).isPresent();
+        assertThat(publicationRepository.findById(runId)).isPresent();
+        assertThat(service.countOwnedPublications(ALICE_EMAIL)).isEqualTo(1L);
     }
 
     // ─────────────────────────────────────────────────────────────────────────

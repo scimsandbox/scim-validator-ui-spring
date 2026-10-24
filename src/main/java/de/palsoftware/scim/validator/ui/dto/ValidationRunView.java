@@ -17,7 +17,22 @@ public record ValidationRunView(
         int totalTests,
         int passedTests,
         int failedTests,
-        boolean publishingInProgress) {
+        boolean publishingInProgress,
+        boolean published) {
+
+    public ValidationRunView(
+            UUID id,
+            String name,
+            String targetUrl,
+            OffsetDateTime executedAt,
+            String status,
+            String createdByEmail,
+            int totalTests,
+            int passedTests,
+            int failedTests,
+            boolean publishingInProgress) {
+        this(id, name, targetUrl, executedAt, status, createdByEmail, totalTests, passedTests, failedTests, publishingInProgress, false);
+    }
 
     public ValidationRunView(
             UUID id,
@@ -29,7 +44,7 @@ public record ValidationRunView(
             int totalTests,
             int passedTests,
             int failedTests) {
-        this(id, name, targetUrl, executedAt, status, createdByEmail, totalTests, passedTests, failedTests, false);
+        this(id, name, targetUrl, executedAt, status, createdByEmail, totalTests, passedTests, failedTests, false, false);
     }
 
     public static ValidationRunView from(ValidationRun run) {
@@ -53,6 +68,7 @@ public record ValidationRunView(
                 run.getTotalTests(),
                 run.getPassedTests(),
                 run.getFailedTests(),
-                publishingInProgress);
+                publishingInProgress,
+                run.isPublished());
     }
 }

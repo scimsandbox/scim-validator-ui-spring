@@ -642,9 +642,29 @@ public class ValidationController {
     }
 
     @PostMapping("/runs/{runId}/delete")
-    public String deleteRun(@PathVariable UUID runId, Authentication authentication) {
-        validationRunService.deleteRun(runId, actorEmail(authentication), isAdmin(authentication));
+    public String deleteRun(
+            @PathVariable UUID runId,
+            Authentication authentication,
+            RedirectAttributes redirectAttributes) {
+        try {
+            validationRunService.deleteRun(runId, actorEmail(authentication), isAdmin(authentication));
+        } catch (ResponseStatusException ex) {
+            if (ex.getStatusCode() == HttpStatus.CONFLICT
+                    || ex.getStatusCode() == HttpStatus.FORBIDDEN
+                    || ex.getStatusCode() == HttpStatus.BAD_REQUEST) {
+                if (redirectAttributes != null) {
+                    redirectAttributes.addFlashAttribute("errorMessage",
+                            ex.getReason() != null ? ex.getReason() : "This validation run cannot be deleted.");
+                }
+                return "redirect:/";
+            }
+            throw ex;
+        }
         return "redirect:/";
+    }
+
+    public String deleteRun(UUID runId, Authentication authentication) {
+        return deleteRun(runId, authentication, new org.springframework.web.servlet.mvc.support.RedirectAttributesModelMap());
     }
 
     @GetMapping(value = "/runs/{runId}/export", produces = MediaType.APPLICATION_JSON_VALUE)

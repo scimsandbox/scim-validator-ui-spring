@@ -109,6 +109,12 @@ Follow the existing patterns unless a refactor is explicitly part of the work:
 - keep transactional boundaries deliberate
 - keep validator-launcher and persistence behavior in the service layer rather
   than scattering it through controllers or templates
+- note that compliance publication quota checks, product-slug reservation
+  locking (`reservationLock`), and in-memory claim/reconciliation tracking
+  (`claimedRunTimestamps`, `pendingReconciliations`) are designed for a single
+  application replica (`replicas: 1` in Kubernetes); horizontal scaling beyond
+  1 replica requires migrating these guards to database-level pessimistic
+  locking (`SELECT ... FOR UPDATE`) or distributed locks
 
 ## If You Change These Areas
 

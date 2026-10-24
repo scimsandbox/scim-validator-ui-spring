@@ -239,6 +239,17 @@ release triggers the Docker publish workflow for `edipal/scim-validator-ui`.
 - `ValidationRunService` launches the suite and persists run/test/exchange data
 - `SecurityConfig` configures OIDC login, logout, CSRF, and the actuator API-key filter
 - `src/main/resources/templates` contains the Thymeleaf UI
+- **Published Run Immutability**: Published compliance runs cannot be deleted
+  via `POST /runs/{runId}/delete` so that public leaderboard links on
+  `scimsandbox.net` and product-slug ownership records remain permanently
+  intact.
+- **Single-Instance Concurrency Assumption (`replicas: 1`)**: Quota
+  enforcement, product-slug reservation locking (`reservationLock`), and
+  in-memory publication claim/reconciliation tracking (`claimedRunTimestamps`,
+  `pendingReconciliations`) assume a single application instance (`replicas: 1`
+  in Kubernetes). Scaling horizontally beyond 1 replica requires migrating
+  these guards to database-level pessimistic locking (`SELECT ... FOR UPDATE`)
+  or distributed locks.
 
 ## Contributing
 

@@ -127,7 +127,7 @@ class ValidationRunServiceRetentionTest {
         }
 
         @Test
-        @DisplayName("F2-T1-5: Non-admin deleting published run is blocked with 403 Forbidden")
+        @DisplayName("F2-T1-5: Non-admin deleting published run is blocked with 409 Conflict")
         void deleteRun_nonAdmin_published_throws403() {
             ValidationRun run = createPublishedRun("Certified 1.0");
             UUID runId = run.getId();
@@ -136,7 +136,7 @@ class ValidationRunServiceRetentionTest {
                     .isInstanceOf(ResponseStatusException.class)
                     .satisfies(ex -> {
                         ResponseStatusException rse = (ResponseStatusException) ex;
-                        assertThat(rse.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+                        assertThat(rse.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
                         assertThat(rse.getReason()).contains("Published");
                     });
 
@@ -193,15 +193,17 @@ class ValidationRunServiceRetentionTest {
         }
 
         @Test
-        @DisplayName("F2-T2-4: Admin can delete a published run")
+        @DisplayName("F2-T2-4: Admin deleting a published run is also blocked with 409 Conflict")
         void deleteRun_admin_published_success() {
             ValidationRun run = createPublishedRun("Certified 1.0");
             UUID runId = run.getId();
 
-            service.deleteRun(runId, ADMIN_EMAIL, true);
+            assertThatThrownBy(() -> service.deleteRun(runId, ADMIN_EMAIL, true))
+                    .isInstanceOf(ResponseStatusException.class)
+                    .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode()).isEqualTo(HttpStatus.CONFLICT));
 
-            assertThat(runRepository.findById(runId)).isEmpty();
-            assertThat(publicationRepository.findById(runId)).isEmpty();
+            assertThat(runRepository.findById(runId)).isPresent();
+            assertThat(publicationRepository.findById(runId)).isPresent();
         }
 
         @Test
@@ -375,17 +377,19 @@ class ValidationRunServiceRetentionTest {
             assertThat(publicationRepository.findById(pubRun1.getId())).isPresent();
             assertThat(publicationRepository.findById(pubRun2.getId())).isPresent();
 
-            // 5. Non-admin user attempts deletion of published run -> 403 Forbidden
+            // 5. Non-admin user attempts deletion of published run -> 409 Conflict
             assertThatThrownBy(() -> service.deleteRun(pubRun1.getId(), USER_EMAIL, false))
                     .isInstanceOf(ResponseStatusException.class)
-                    .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN));
+                    .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode()).isEqualTo(HttpStatus.CONFLICT));
 
-            // 6. Admin user deletes published run -> succeeds cleanly
-            service.deleteRun(pubRun1.getId(), ADMIN_EMAIL, true);
-            assertThat(runRepository.findById(pubRun1.getId())).isEmpty();
-            assertThat(publicationRepository.findById(pubRun1.getId())).isEmpty();
+            // 6. Admin user attempts deletion of published run -> also blocked with 409 Conflict
+            assertThatThrownBy(() -> service.deleteRun(pubRun1.getId(), ADMIN_EMAIL, true))
+                    .isInstanceOf(ResponseStatusException.class)
+                    .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode()).isEqualTo(HttpStatus.CONFLICT));
+            assertThat(runRepository.findById(pubRun1.getId())).isPresent();
+            assertThat(publicationRepository.findById(pubRun1.getId())).isPresent();
 
-            // pubRun2 remains
+            // pubRun2 also remains
             assertThat(runRepository.findById(pubRun2.getId())).isPresent();
             assertThat(publicationRepository.findById(pubRun2.getId())).isPresent();
         }

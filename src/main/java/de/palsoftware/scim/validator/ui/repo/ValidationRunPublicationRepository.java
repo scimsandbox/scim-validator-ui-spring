@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Optional;
@@ -72,6 +73,7 @@ public interface ValidationRunPublicationRepository extends JpaRepository<Valida
     /**
      * Atomically delete a pending reservation only if it is still in pending state and older than cutoff.
      */
+    @Transactional
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("""
         delete from ValidationRunPublication p
@@ -87,6 +89,7 @@ public interface ValidationRunPublicationRepository extends JpaRepository<Valida
     /**
      * Atomically claim a stale pending reservation by updating its heartbeat timestamp only if it is still stale.
      */
+    @Transactional
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("""
         update ValidationRunPublication p

@@ -596,6 +596,23 @@ class ValidationControllerPublishTest {
         assertThat(uuidNamedForm.resolveProductSlug()).isEqualTo("product-550e8400-e29b-41d4-a716-446655440000");
     }
 
+    @Test
+    void deleteRun_publishedRunConflict_redirectsWithFlashErrorMessage() {
+        UUID runId = UUID.randomUUID();
+        org.mockito.Mockito.doThrow(new ResponseStatusException(
+                        HttpStatus.CONFLICT,
+                        "Published compliance runs cannot be deleted because they are linked from the public compliance directory."))
+                .when(validationRunService).deleteRun(runId, "admin@example.com", true);
+
+        RedirectAttributes redirectAttributes = new RedirectAttributesModelMap();
+        String redirect = controller.deleteRun(runId, adminAuth, redirectAttributes);
+
+        assertThat(redirect).isEqualTo("redirect:/");
+        assertThat(redirectAttributes.getFlashAttributes()).containsKey("errorMessage");
+        assertThat(redirectAttributes.getFlashAttributes().get("errorMessage").toString())
+                .contains("Published compliance runs cannot be deleted");
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Helper Factories
     // ─────────────────────────────────────────────────────────────────────────
