@@ -82,7 +82,7 @@ public class ValidationRunRepositoryIsolationAndConstraintsTest {
 
             assertThat(sql)
                     .containsIgnoringCase("CREATE TABLE validation_run_publication")
-                    .containsIgnoringCase("FOREIGN KEY (run_id) REFERENCES validation_run (id) ON DELETE RESTRICT")
+                    .containsIgnoringCase("FOREIGN KEY (run_id, created_by_email) REFERENCES validation_run (id, created_by_email) ON DELETE RESTRICT")
                     .containsIgnoringCase("idx_validation_run_publication_email")
                     .containsIgnoringCase("(created_by_email, published_at DESC)");
         }
