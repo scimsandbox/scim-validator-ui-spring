@@ -104,6 +104,10 @@ public class ValidationRun {
         this.createdByUser = createdByUser;
     }
 
+    public String getCreatedByEmail() {
+        return createdByUser != null ? createdByUser.getEmail() : null;
+    }
+
     public int getTotalTests() {
         return totalTests;
     }

@@ -129,13 +129,32 @@ public class SpecCatalogService {
         return in;
     }
 
+    private Set<String> resolveSpecClassNames() {
+        Set<String> classNames = new LinkedHashSet<>(SPEC_CLASS_NAMES);
+        try {
+            Resource[] resources = resourceResolver.getResources("classpath*:de/palsoftware/scim/validator/specs/*Spec.class");
+            for (Resource res : resources) {
+                String filename = res.getFilename();
+                if (filename != null && filename.endsWith(".class") && !filename.contains("$")) {
+                    String simpleName = filename.substring(0, filename.length() - ".class".length());
+                    if (!"ScimBaseSpec".equals(simpleName)) {
+                        classNames.add("de.palsoftware.scim.validator.specs." + simpleName);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Dynamic classpath scan for validator specs fell back to static list: {}", e.getMessage());
+        }
+        return classNames;
+    }
+
     private void scanSpockSpecifications() {
         ClassLoader cl = Thread.currentThread().getContextClassLoader();
         if (cl == null) {
             cl = getClass().getClassLoader();
         }
 
-        for (String className : SPEC_CLASS_NAMES) {
+        for (String className : resolveSpecClassNames()) {
             try {
                 // CRITICAL: initialize = false prevents triggering ScimBaseSpec.<clinit>()
                 Class<?> clazz = Class.forName(className, false, cl);

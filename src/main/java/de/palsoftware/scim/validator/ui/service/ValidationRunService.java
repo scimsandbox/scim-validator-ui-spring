@@ -452,13 +452,11 @@ public class ValidationRunService {
     }
 
     public List<ValidationHttpExchange> getRawExchanges(UUID runId) {
-        if (testResultRepository == null || exchangeRepository == null) {
+        if (exchangeRepository == null) {
             return List.of();
         }
-        List<ValidationTestResult> testResults = testResultRepository.findByRunIdOrderByStartedAtAsc(runId);
-        return testResults.stream()
-                .flatMap(tr -> exchangeRepository.findByTestResultIdOrderBySequenceNumberAsc(tr.getId()).stream())
-                .toList();
+        List<ValidationHttpExchange> exchanges = exchangeRepository.findServiceProviderConfigExchangesByRunId(runId);
+        return exchanges != null ? exchanges : List.of();
     }
 
     public Optional<ValidationRunPublication> getPublication(UUID runId) {
@@ -474,9 +472,17 @@ public class ValidationRunService {
             String actorEmail,
             CompliancePublishRequest request,
             CompliancePublicationResult result) {
+        if (run.isPublished() || (publicationRepository != null && run.getId() != null && publicationRepository.existsById(run.getId()))) {
+            throw new IllegalStateException("Validation run has already been published: " + run.getId());
+        }
+        String ownerEmail = (run.getCreatedByEmail() != null && !run.getCreatedByEmail().isBlank())
+                ? run.getCreatedByEmail()
+                : actorEmail;
+        validatePublishQuota(ownerEmail);
+
         ValidationRunPublication publication = new ValidationRunPublication();
         publication.setRun(run);
-        publication.setCreatedByEmail(actorEmail);
+        publication.setCreatedByEmail(ownerEmail);
         publication.setProductName(request.productName());
         publication.setProductSlug(request.productSlug());
         publication.setProductVersion(request.productVersion());

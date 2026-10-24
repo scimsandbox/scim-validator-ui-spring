@@ -1520,11 +1520,11 @@
                     <div>
                         <div class="normative-header">
                             <span class="normative-pill must">MUST (Weight 3x)</span>
-                            <span class="normative-percent" th:text="${scorecard.mustBreakdown.conformancePercent + '%'}">100%</span>
+                            <span class="normative-percent" th:text="${scorecard.mustBreakdown.activeRequirements > 0 ? scorecard.mustBreakdown.conformancePercent + '%' : 'N/A'}">100%</span>
                         </div>
                         <div class="normative-progress-bg">
                             <div class="normative-progress-fill fill-must"
-                                 th:style="'width: ' + ${scorecard.mustBreakdown.conformancePercent} + '%;'"></div>
+                                 th:style="'width: ' + ${scorecard.mustBreakdown.activeRequirements > 0 ? scorecard.mustBreakdown.conformancePercent : 0} + '%;'"></div>
                         </div>
                     </div>
                     <div class="normative-details">
@@ -1541,11 +1541,11 @@
                     <div>
                         <div class="normative-header">
                             <span class="normative-pill should">SHOULD (Weight 2x)</span>
-                            <span class="normative-percent" th:text="${scorecard.shouldBreakdown.conformancePercent + '%'}">100%</span>
+                            <span class="normative-percent" th:text="${scorecard.shouldBreakdown.activeRequirements > 0 ? scorecard.shouldBreakdown.conformancePercent + '%' : 'N/A'}">100%</span>
                         </div>
                         <div class="normative-progress-bg">
                             <div class="normative-progress-fill fill-should"
-                                 th:style="'width: ' + ${scorecard.shouldBreakdown.conformancePercent} + '%;'"></div>
+                                 th:style="'width: ' + ${scorecard.shouldBreakdown.activeRequirements > 0 ? scorecard.shouldBreakdown.conformancePercent : 0} + '%;'"></div>
                         </div>
                     </div>
                     <div class="normative-details">
@@ -1562,11 +1562,11 @@
                     <div>
                         <div class="normative-header">
                             <span class="normative-pill may">MAY (Weight 1x)</span>
-                            <span class="normative-percent" th:text="${scorecard.mayBreakdown.conformancePercent + '%'}">100%</span>
+                            <span class="normative-percent" th:text="${scorecard.mayBreakdown.activeRequirements > 0 ? scorecard.mayBreakdown.conformancePercent + '%' : 'N/A'}">100%</span>
                         </div>
                         <div class="normative-progress-bg">
                             <div class="normative-progress-fill fill-may"
-                                 th:style="'width: ' + ${scorecard.mayBreakdown.conformancePercent} + '%;'"></div>
+                                 th:style="'width: ' + ${scorecard.mayBreakdown.activeRequirements > 0 ? scorecard.mayBreakdown.conformancePercent : 0} + '%;'"></div>
                         </div>
                     </div>
                     <div class="normative-details">
@@ -1636,27 +1636,27 @@
                     <div class="rfc-summary-cards" th:if="${scorecard.rfcSummaries != null}">
                         <div class="rfc-summary-card active" onclick="filterMatrixByRfc('ALL', this)">
                             <div class="rfc-card-title">All RFC Catalogs</div>
-                            <div class="rfc-card-score" th:text="${scorecard.coreScore + '%'}">100%</div>
+                            <div class="rfc-card-score" th:text="${scorecard.activeRequirementsCount > 0 ? scorecard.coreScore + '%' : 'N/A'}">100%</div>
                             <div class="rfc-card-sub" th:text="${scorecard.catalogRequirementsTotal + ' total requirements'}">157 total requirements</div>
                         </div>
                         <div class="rfc-summary-card" th:if="${scorecard.rfcSummaries.containsKey('7643')}" onclick="filterMatrixByRfc('7643', this)">
                             <div class="rfc-card-title">RFC 7643: Schemas</div>
-                            <div class="rfc-card-score" th:text="${scorecard.rfcSummaries.get('7643').conformancePercent + '%'}">100%</div>
+                            <div class="rfc-card-score" th:text="${scorecard.rfcSummaries.get('7643').activeRequirements > 0 ? scorecard.rfcSummaries.get('7643').conformancePercent + '%' : 'N/A'}">100%</div>
                             <div class="rfc-card-sub" th:text="${scorecard.rfcSummaries.get('7643').activeRequirements + '/' + scorecard.rfcSummaries.get('7643').totalRequirements + ' active reqs'}">48 active reqs</div>
                         </div>
                         <div class="rfc-summary-card" th:if="${scorecard.rfcSummaries.containsKey('7644')}" onclick="filterMatrixByRfc('7644', this)">
                             <div class="rfc-card-title">RFC 7644: Protocol</div>
-                            <div class="rfc-card-score" th:text="${scorecard.rfcSummaries.get('7644').conformancePercent + '%'}">100%</div>
+                            <div class="rfc-card-score" th:text="${scorecard.rfcSummaries.get('7644').activeRequirements > 0 ? scorecard.rfcSummaries.get('7644').conformancePercent + '%' : 'N/A'}">100%</div>
                             <div class="rfc-card-sub" th:text="${scorecard.rfcSummaries.get('7644').activeRequirements + '/' + scorecard.rfcSummaries.get('7644').totalRequirements + ' active reqs'}">96 active reqs</div>
                         </div>
                         <div class="rfc-summary-card" th:if="${scorecard.rfcSummaries.containsKey('9865')}" onclick="filterMatrixByRfc('9865', this)">
                             <div class="rfc-card-title">RFC 9865: Cursor</div>
-                            <div class="rfc-card-score" th:text="${scorecard.rfcSummaries.get('9865').conformancePercent + '%'}">100%</div>
+                            <div class="rfc-card-score" th:text="${scorecard.rfcSummaries.get('9865').activeRequirements > 0 ? scorecard.rfcSummaries.get('9865').conformancePercent + '%' : 'N/A'}">100%</div>
                             <div class="rfc-card-sub" th:text="${scorecard.rfcSummaries.get('9865').activeRequirements + '/' + scorecard.rfcSummaries.get('9865').totalRequirements + ' active reqs'}">8 active reqs</div>
                         </div>
                         <div class="rfc-summary-card" th:if="${scorecard.rfcSummaries.containsKey('9967')}" onclick="filterMatrixByRfc('9967', this)">
                             <div class="rfc-card-title">RFC 9967: Async</div>
-                            <div class="rfc-card-score" th:text="${scorecard.rfcSummaries.get('9967').conformancePercent + '%'}">100%</div>
+                            <div class="rfc-card-score" th:text="${scorecard.rfcSummaries.get('9967').activeRequirements > 0 ? scorecard.rfcSummaries.get('9967').conformancePercent + '%' : 'N/A'}">100%</div>
                             <div class="rfc-card-sub" th:text="${scorecard.rfcSummaries.get('9967').activeRequirements + '/' + scorecard.rfcSummaries.get('9967').totalRequirements + ' active reqs'}">5 active reqs</div>
                         </div>
                     </div>
@@ -1668,7 +1668,7 @@
                                class="matrix-search-input"
                                placeholder="Filter by ID, RFC section, title, or test ID..."
                                onkeyup="filterMatrixRows()">
-                        
+
                         <div class="filter-button-group">
                             <button type="button" class="filter-btn active" onclick="filterMatrixByStatus('ALL', this)">All</button>
                             <button type="button" class="filter-btn" onclick="filterMatrixByStatus('COMPLIANT', this)">Compliant</button>
@@ -1843,7 +1843,7 @@
                 <div class="modal-sanitization-notice">
                     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><path d="m9 12 2 2 4-4"></path></svg>
                     <div>
-                        <strong style="color: #a7f3d0;">Guaranteed Report Sanitization:</strong> Only requirement scores, test IDs, and capability matrix are published. <u>Zero</u> target URLs, authorization headers, or HTTP request/response payloads are ever shared or saved to GitHub.
+                        <strong style="color: #a7f3d0;">Guaranteed Report Sanitization:</strong> Only requirement scores, test IDs, capability matrix, and the public product metadata entered below (Product Name, Vendor, Project URL, License) are published. <u>Zero</u> target URLs, authorization headers, or HTTP request/response payloads are ever shared or saved to GitHub.
                     </div>
                 </div>
 
@@ -1854,7 +1854,7 @@
                         <div class="form-group">
                             <label for="publish-product-name">Product Name <span class="required">*</span></label>
                             <input type="text" id="publish-product-name" name="productName" th:value="${publishForm != null ? publishForm.productName : ''}" required maxlength="120" placeholder="e.g. Apache Syncope, Keycloak, PingDirectory" autocomplete="off">
-                            <span class="field-hint">The public display name for your SCIM implementation.</span>
+                            <span class="field-hint">Public display name shown on the compliance leaderboard.</span>
                         </div>
 
                         <div class="form-group">
@@ -1865,7 +1865,7 @@
 
                         <div class="form-group">
                             <label for="publish-product-version">Product Version <span class="required">*</span></label>
-                            <input type="text" id="publish-product-version" name="productVersion" th:value="${publishForm != null ? publishForm.productVersion : ''}" required maxlength="60" placeholder="e.g. 3.0.0, 2026.1, v1.4-rc2" autocomplete="off">
+                            <input type="text" id="publish-product-version" name="productVersion" th:value="${publishForm != null ? publishForm.productVersion : ''}" required maxlength="60" pattern="[A-Za-z0-9][A-Za-z0-9._+-]{0,59}" placeholder="e.g. 3.0.0, 2026.1, v1.4-rc2" autocomplete="off">
                             <span class="field-hint">Specific release, branch, or build validated in this run.</span>
                         </div>
 

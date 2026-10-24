@@ -17,6 +17,7 @@ public class CompliancePublishFormData {
 
     @NotBlank(message = "Product version is required")
     @Size(max = 60, message = "Product version cannot exceed 60 characters")
+    @Pattern(regexp = "^(?!.*\\.\\.)[A-Za-z0-9][A-Za-z0-9._+-]{0,59}$", message = "Product version must start with an alphanumeric character and contain only letters, digits, dots, hyphens, underscores, or plus signs")
     private String productVersion;
 
     @Size(max = 120, message = "Vendor/organization name cannot exceed 120 characters")
@@ -28,6 +29,7 @@ public class CompliancePublishFormData {
 
     @NotBlank(message = "License type is required")
     @Size(max = 40, message = "License type cannot exceed 40 characters")
+    @Pattern(regexp = "^[A-Za-z0-9][A-Za-z0-9._+ ()/-]{0,39}$", message = "License type contains invalid characters")
     private String licenseType = "Apache-2.0";
 
     private boolean showSubmitter = false;

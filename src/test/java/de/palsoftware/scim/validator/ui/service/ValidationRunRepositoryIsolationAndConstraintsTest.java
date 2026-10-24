@@ -4,6 +4,8 @@ import de.palsoftware.scim.validator.ui.dto.ValidationRunForm;
 import de.palsoftware.scim.validator.ui.model.ValidationMgmtUser;
 import de.palsoftware.scim.validator.ui.model.ValidationRun;
 import de.palsoftware.scim.validator.ui.model.ValidationRunPublication;
+import de.palsoftware.scim.validator.ui.model.spec.CompliancePublicationResult;
+import de.palsoftware.scim.validator.ui.model.spec.CompliancePublishRequest;
 import de.palsoftware.scim.validator.ui.repo.ValidationMgmtUserRepository;
 import de.palsoftware.scim.validator.ui.repo.ValidationRunPublicationRepository;
 import de.palsoftware.scim.validator.ui.repo.ValidationRunRepository;
@@ -41,6 +43,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -74,17 +77,143 @@ public class ValidationRunRepositoryIsolationAndConstraintsTest {
         private static final Path V2_MIGRATION_PATH = Path.of(
                 "../scim-validator-db/sql/V2__add_validation_run_publication.sql");
 
+        private static String readSqlMigration(String resourcePath, Path fallbackPath) throws IOException {
+            try (var in = ValidationRunRepositoryIsolationAndConstraintsTest.class.getResourceAsStream(resourcePath)) {
+                if (in != null) {
+                    return new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                }
+            }
+            if (Files.exists(fallbackPath)) {
+                return Files.readString(fallbackPath);
+            }
+            throw new IOException("Migration SQL resource not found: " + resourcePath);
+        }
+
         @Test
-        @DisplayName("INV-1.1: V2 SQL migration contains ON DELETE RESTRICT foreign key constraint")
+        @DisplayName("INV-1.1: V2 SQL migration contains ON DELETE RESTRICT composite foreign key, check constraints, and indexes")
         void v2Migration_containsOnDeleteRestrict() throws IOException {
-            assumeTrue(Files.exists(V2_MIGRATION_PATH), "V2 migration SQL file must exist");
-            String sql = Files.readString(V2_MIGRATION_PATH);
+            String sql = readSqlMigration("/sql/V2__add_validation_run_publication.sql", V2_MIGRATION_PATH);
 
             assertThat(sql)
                     .containsIgnoringCase("CREATE TABLE validation_run_publication")
+                    .containsIgnoringCase("uk_validation_run_id_created_by_email")
                     .containsIgnoringCase("FOREIGN KEY (run_id, created_by_email) REFERENCES validation_run (id, created_by_email) ON DELETE RESTRICT")
+                    .containsIgnoringCase("chk_validation_run_publication_core_score")
+                    .containsIgnoringCase("chk_validation_run_publication_capabilities")
                     .containsIgnoringCase("idx_validation_run_publication_email")
-                    .containsIgnoringCase("(created_by_email, published_at DESC)");
+                    .containsIgnoringCase("(created_by_email, published_at DESC)")
+                    .containsIgnoringCase("idx_validation_run_publication_slug_version");
+        }
+
+        @Test
+        @DisplayName("INV-1.4: Embedded V1+V2 SQL schema verifies composite FK, admin publication, ON DELETE RESTRICT, and CHECK constraints")
+        void embeddedSqlSchema_enforcesCompositeFkAdminPublishAndOnDeleteRestrict() throws Exception {
+            String v1Sql = readSqlMigration("/sql/V1__init_validator_schema.sql",
+                    Path.of("../scim-validator-db/sql/V1__init_validator_schema.sql"));
+            String v2Sql = readSqlMigration("/sql/V2__add_validation_run_publication.sql", V2_MIGRATION_PATH);
+
+            String jdbcUrl = "jdbc:h2:mem:scim_v2_test_" + UUID.randomUUID().toString().replace("-", "")
+                    + ";MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH";
+
+            try (Connection conn = DriverManager.getConnection(jdbcUrl, "sa", "")) {
+                try (var stmt = conn.createStatement()) {
+                    stmt.execute(v1Sql);
+                    stmt.execute(v2Sql);
+                }
+
+                UUID aliceRunId = UUID.randomUUID();
+                String aliceEmail = "alice@example.com";
+                String adminEmail = "admin@example.com";
+
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "INSERT INTO validator_mgmt_users (email, last_login_at) VALUES (?, CURRENT_TIMESTAMP)")) {
+                    ps.setString(1, aliceEmail);
+                    ps.executeUpdate();
+                    ps.setString(1, adminEmail);
+                    ps.executeUpdate();
+                }
+
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "INSERT INTO validation_run (id, name, target_url, executed_at, status, created_by_email, total_tests, passed_tests, failed_tests) "
+                                + "VALUES (?, 'Alice Run', 'https://scim.example.com', CURRENT_TIMESTAMP, 'PASSED', ?, 10, 10, 0)")) {
+                    ps.setObject(1, aliceRunId);
+                    ps.setString(2, aliceEmail);
+                    ps.executeUpdate();
+                }
+
+                // 1. Raw insert with mismatched email (adminEmail instead of aliceEmail) MUST fail composite FK
+                assertThatThrownBy(() -> {
+                    try (PreparedStatement ps = conn.prepareStatement(
+                            "INSERT INTO validation_run_publication (run_id, created_by_email, product_name, product_slug, product_version, license_type, core_score, supported_capabilities, total_capabilities, report_url, badge_url, published_at) "
+                                    + "VALUES (?, ?, 'Prod', 'prod', '1.0.0', 'Apache-2.0', 95, 8, 10, 'https://scimsandbox.net/r', 'https://scimsandbox.net/b', CURRENT_TIMESTAMP)")) {
+                        ps.setObject(1, aliceRunId);
+                        ps.setString(2, adminEmail);
+                        ps.executeUpdate();
+                    }
+                }).isInstanceOf(SQLException.class);
+
+                // 2. Admin publishing Alice's run via ValidationRunService.recordPublication uses run owner's email and succeeds against composite FK
+                ValidationRun aliceRun = new ValidationRun();
+                aliceRun.setName("Alice Run");
+                aliceRun.setTargetUrl("https://scim.example.com");
+                aliceRun.setExecutedAt(OffsetDateTime.now(ZoneOffset.UTC));
+                aliceRun.setStatus("PASSED");
+                aliceRun.setCreatedByUser(new ValidationMgmtUser(aliceEmail, OffsetDateTime.now(ZoneOffset.UTC)));
+                setField(aliceRun, "id", aliceRunId);
+                ValidationRunService svc = new ValidationRunService(null, null, null, null, (ValidationRunPublicationRepository) null, null);
+                CompliancePublishRequest req = new CompliancePublishRequest(
+                        aliceRunId, "Alice SCIM", "alice-scim", "1.0.0", "Vendor", "https://example.com",
+                        "Apache-2.0", false, 98, "EMERALD", 9, 10, adminEmail, "https://scim.example.com");
+                CompliancePublicationResult res = CompliancePublicationResult.success(
+                        aliceRunId, "https://github.com/pr/1", "https://scimsandbox.net/r", "https://scimsandbox.net/b",
+                        "sha123", OffsetDateTime.now(ZoneOffset.UTC));
+                ValidationRunPublication recorded = svc.recordPublication(aliceRun, adminEmail, req, res);
+                assertThat(recorded.getCreatedByEmail()).isEqualTo(aliceEmail);
+
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "INSERT INTO validation_run_publication (run_id, created_by_email, product_name, product_slug, product_version, license_type, core_score, supported_capabilities, total_capabilities, report_url, badge_url, published_at) "
+                                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)")) {
+                    ps.setObject(1, recorded.getRunId());
+                    ps.setString(2, recorded.getCreatedByEmail());
+                    ps.setString(3, recorded.getProductName());
+                    ps.setString(4, recorded.getProductSlug());
+                    ps.setString(5, recorded.getProductVersion());
+                    ps.setString(6, recorded.getLicenseType());
+                    ps.setInt(7, recorded.getCoreScore());
+                    ps.setInt(8, recorded.getSupportedCapabilities());
+                    ps.setInt(9, recorded.getTotalCapabilities());
+                    ps.setString(10, recorded.getReportUrl());
+                    ps.setString(11, recorded.getBadgeUrl());
+                    ps.executeUpdate();
+                }
+
+                // 3. ON DELETE RESTRICT prevents deleting the published validation_run
+                assertThatThrownBy(() -> {
+                    try (PreparedStatement ps = conn.prepareStatement("DELETE FROM validation_run WHERE id = ?")) {
+                        ps.setObject(1, aliceRunId);
+                        ps.executeUpdate();
+                    }
+                }).isInstanceOf(SQLException.class);
+
+                // 4. CHECK constraint rejects core_score > 100
+                UUID secondRunId = UUID.randomUUID();
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "INSERT INTO validation_run (id, name, target_url, executed_at, status, created_by_email, total_tests, passed_tests, failed_tests) "
+                                + "VALUES (?, 'Run 2', 'https://scim.example.com', CURRENT_TIMESTAMP, 'PASSED', ?, 10, 10, 0)")) {
+                    ps.setObject(1, secondRunId);
+                    ps.setString(2, aliceEmail);
+                    ps.executeUpdate();
+                }
+                assertThatThrownBy(() -> {
+                    try (PreparedStatement ps = conn.prepareStatement(
+                            "INSERT INTO validation_run_publication (run_id, created_by_email, product_name, product_slug, product_version, license_type, core_score, supported_capabilities, total_capabilities, report_url, badge_url, published_at) "
+                                    + "VALUES (?, ?, 'Prod', 'prod', '2.0.0', 'Apache-2.0', 105, 8, 10, 'https://scimsandbox.net/r', 'https://scimsandbox.net/b', CURRENT_TIMESTAMP)")) {
+                        ps.setObject(1, secondRunId);
+                        ps.setString(2, aliceEmail);
+                        ps.executeUpdate();
+                    }
+                }).isInstanceOf(SQLException.class);
+            }
         }
 
         @Test

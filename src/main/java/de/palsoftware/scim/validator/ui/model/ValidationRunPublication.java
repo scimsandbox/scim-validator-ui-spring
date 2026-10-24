@@ -7,7 +7,11 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.MapsId;
 import jakarta.persistence.OneToOne;
+import jakarta.persistence.PostLoad;
+import jakarta.persistence.PostPersist;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
+import org.springframework.data.domain.Persistable;
 
 import java.time.OffsetDateTime;
 import java.util.Objects;
@@ -15,11 +19,14 @@ import java.util.UUID;
 
 @Entity
 @Table(name = "validation_run_publication")
-public class ValidationRunPublication {
+public class ValidationRunPublication implements Persistable<UUID> {
 
     @Id
     @Column(name = "run_id")
     private UUID runId;
+
+    @Transient
+    private boolean isNew = true;
 
     @OneToOne(fetch = FetchType.LAZY, optional = false)
     @MapsId
@@ -72,6 +79,22 @@ public class ValidationRunPublication {
     private OffsetDateTime publishedAt;
 
     public ValidationRunPublication() {
+    }
+
+    @Override
+    public UUID getId() {
+        return runId;
+    }
+
+    @Override
+    public boolean isNew() {
+        return isNew;
+    }
+
+    @PostLoad
+    @PostPersist
+    void markNotNew() {
+        this.isNew = false;
     }
 
     public UUID getRunId() {

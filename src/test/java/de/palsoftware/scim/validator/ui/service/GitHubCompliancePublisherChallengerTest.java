@@ -340,6 +340,43 @@ class GitHubCompliancePublisherChallengerTest {
     }
 
     @Test
+    @DisplayName("Fault Injection (Corrupt index.json): Fails closed instead of wiping existing catalog")
+    void testCorruptIndexJsonFailsClosedWithoutWipingCatalog() {
+        mockServer.setExistingIndexJson("{corrupt-json-payload");
+
+        UUID runId = UUID.randomUUID();
+        CompliancePublishRequest request = new CompliancePublishRequest(
+                runId, "Safe Product", "safe-product", "1.0.0",
+                "Vendor", "https://example.com", "Apache-2.0", 95, "EMERALD", 10, 10
+        );
+
+        assertThatThrownBy(() -> publisherService.publish(request))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Error reading compliance/index.json");
+
+        long treeCalls = mockServer.getRecordedRequests().stream()
+                .filter(r -> "POST".equals(r.method()) && r.path().endsWith("/git/trees"))
+                .count();
+        assertThat(treeCalls).as("Must not create tree or overwrite index.json when catalog read fails").isZero();
+    }
+
+    @Test
+    @DisplayName("Service Boundary Validation: Path traversal in productVersion is rejected before GitHub API calls")
+    void testRejectPathTraversalInProductVersionAtServiceBoundary() {
+        UUID runId = UUID.randomUUID();
+        for (String badVersion : List.of("../evil", "v1/../../etc/passwd", "1.0..0", "v1\\foo", "")) {
+            CompliancePublishRequest request = new CompliancePublishRequest(
+                    runId, "Product", "valid-slug", badVersion,
+                    "Vendor", "https://example.com", "Apache-2.0", 95, "EMERALD", 10, 10
+            );
+            assertThatThrownBy(() -> publisherService.publish(request))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("Invalid productVersion");
+        }
+        assertThat(mockServer.getRecordedRequests()).isEmpty();
+    }
+
+    @Test
     @DisplayName("Fault Injection (401): Authentication failure rejects operation without creating or leaking branches")
     void testAuthenticationFailure401RejectsOperation() {
         mockServer.setSimulateAuthFailure(true);

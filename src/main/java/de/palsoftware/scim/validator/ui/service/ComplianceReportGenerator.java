@@ -1,10 +1,12 @@
 package de.palsoftware.scim.validator.ui.service;
 
+import de.palsoftware.scim.validator.ui.model.ValidationHttpExchange;
 import de.palsoftware.scim.validator.ui.model.ValidationRun;
 import de.palsoftware.scim.validator.ui.model.ValidationRunPublication;
 import de.palsoftware.scim.validator.ui.model.ValidationTestResult;
 import de.palsoftware.scim.validator.ui.model.spec.*;
 import de.palsoftware.scim.validator.ui.model.spec.SanitizedComplianceReport.*;
+import de.palsoftware.scim.validator.ui.repo.ValidationHttpExchangeRepository;
 import de.palsoftware.scim.validator.ui.repo.ValidationRunRepository;
 import de.palsoftware.scim.validator.ui.repo.ValidationTestResultRepository;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -37,19 +39,29 @@ public class ComplianceReportGenerator {
     private final ValidationRunRepository runRepository;
     private final ValidationTestResultRepository testResultRepository;
     private final ComplianceScoreService scoreService;
+    private final ValidationHttpExchangeRepository exchangeRepository;
 
     public ComplianceReportGenerator() {
-        this(null, null, null);
+        this(null, null, null, null);
+    }
+
+    public ComplianceReportGenerator(
+            ValidationRunRepository runRepository,
+            ValidationTestResultRepository testResultRepository,
+            ComplianceScoreService scoreService) {
+        this(runRepository, testResultRepository, scoreService, null);
     }
 
     @Autowired
     public ComplianceReportGenerator(
             @Autowired(required = false) ValidationRunRepository runRepository,
             @Autowired(required = false) ValidationTestResultRepository testResultRepository,
-            @Autowired(required = false) ComplianceScoreService scoreService) {
+            @Autowired(required = false) ComplianceScoreService scoreService,
+            @Autowired(required = false) ValidationHttpExchangeRepository exchangeRepository) {
         this.runRepository = runRepository;
         this.testResultRepository = testResultRepository;
         this.scoreService = scoreService;
+        this.exchangeRepository = exchangeRepository;
     }
 
     public String getTargetUrl(java.util.UUID runId) {
@@ -67,7 +79,7 @@ public class ComplianceReportGenerator {
 
         ValidationRun run = null;
         List<ValidationTestResult> testResults = null;
-        ComplianceScorecardView scorecard = null;
+        ComplianceScorecardView scorecard = request.scorecard();
 
         if (runRepository != null && request.runId() != null) {
             run = runRepository.findById(request.runId()).orElse(null);
@@ -75,9 +87,15 @@ public class ComplianceReportGenerator {
         if (testResultRepository != null && request.runId() != null) {
             testResults = testResultRepository.findByRunIdOrderByStartedAtAsc(request.runId());
         }
-        if (run != null && scoreService != null) {
+        if (scorecard == null && run != null && scoreService != null) {
             try {
-                scorecard = scoreService.computeScorecard(run, testResults, Collections.emptyList());
+                List<ValidationHttpExchange> exchanges = (exchangeRepository != null && request.runId() != null)
+                        ? exchangeRepository.findServiceProviderConfigExchangesByRunId(request.runId())
+                        : Collections.emptyList();
+                scorecard = scoreService.computeScorecard(
+                        run,
+                        testResults,
+                        exchanges != null ? exchanges : Collections.emptyList());
             } catch (Exception ignored) {
             }
         }
@@ -349,14 +367,19 @@ public class ComplianceReportGenerator {
 
     /**
      * Programmatic security assertion ensuring ZERO target URLs or credentials leaked.
+     * Excludes the user-declared public "metadata" section when checking for target URL/host
+     * so legitimate public product/project URLs do not trigger false positives, while strictly
+     * asserting zero target URL/host presence in scorecard and testResults.
      */
     public static void assertSanitized(String json, String targetUrl) {
         if (json == null) {
             return;
         }
 
+        String sensitiveRegions = stripPublicMetadata(json);
+
         if (targetUrl != null && !targetUrl.isBlank()) {
-            if (json.contains(targetUrl)) {
+            if (sensitiveRegions.contains(targetUrl)) {
                 throw new SecurityException("Sanitization violation: targetUrl detected in report JSON!");
             }
             String host = null;
@@ -365,8 +388,7 @@ public class ComplianceReportGenerator {
                 host = uri.getHost();
             } catch (Exception ignored) {
             }
-            if (host != null && !host.isBlank() && !"localhost".equalsIgnoreCase(host) &&
-                    !"127.0.0.1".equals(host) && !host.contains("example.com") && json.contains(host)) {
+            if (host != null && !host.isBlank() && sensitiveRegions.contains(host)) {
                 throw new SecurityException("Sanitization violation: target host (" + host + ") detected in report JSON!");
             }
         }
@@ -383,5 +405,48 @@ public class ComplianceReportGenerator {
                 json.contains("\"requestHeaders\"") || json.contains("\"responseHeaders\"")) {
             throw new SecurityException("Sanitization violation: raw HTTP exchange payload detected in report JSON!");
         }
+    }
+
+    private static String stripPublicMetadata(String json) {
+        if (!json.contains("\"metadata\"") || (!json.contains("\"scorecard\"") && !json.contains("\"testResults\""))) {
+            return json;
+        }
+        int metaKeyIdx = json.indexOf("\"metadata\"");
+        if (metaKeyIdx < 0) {
+            return json;
+        }
+        int braceStart = json.indexOf('{', metaKeyIdx);
+        if (braceStart < 0) {
+            return json;
+        }
+        boolean inQuotes = false;
+        boolean escaped = false;
+        int depth = 0;
+        for (int i = braceStart; i < json.length(); i++) {
+            char c = json.charAt(i);
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (c == '\\') {
+                escaped = true;
+                continue;
+            }
+            if (c == '"') {
+                inQuotes = !inQuotes;
+                continue;
+            }
+            if (!inQuotes) {
+                if (c == '{') {
+                    depth++;
+                } else if (c == '}') {
+                    depth--;
+                    if (depth == 0) {
+                        return json.substring(0, metaKeyIdx) + json.substring(i + 1);
+                    }
+                }
+            }
+        }
+        return json;
     }
 }

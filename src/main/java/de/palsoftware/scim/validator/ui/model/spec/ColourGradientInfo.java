@@ -15,18 +15,23 @@ public record ColourGradientInfo(
             return null;
         }
         return new ColourGradientInfo(
-                gradient.getName(),
+                gradient.name(),
                 gradient.getStartColor(),
                 gradient.getEndColor(),
-                gradient.getLabel()
+                gradient.getName()
         );
     }
 
     public static ColourGradientInfo from(String gradientName, int score) {
         if (gradientName != null && !gradientName.isBlank()) {
             try {
-                return from(ColourGradient.valueOf(gradientName.toUpperCase()));
+                return from(ColourGradient.valueOf(gradientName.trim().toUpperCase()));
             } catch (Exception ignored) {
+                for (ColourGradient cg : ColourGradient.values()) {
+                    if (cg.getName().equalsIgnoreCase(gradientName.trim())) {
+                        return from(cg);
+                    }
+                }
             }
         }
         return from(ColourGradient.forScore(score));

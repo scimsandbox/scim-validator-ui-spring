@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.palsoftware.scim.validator.ui.model.ValidationRun;
 import de.palsoftware.scim.validator.ui.model.spec.*;
+import de.palsoftware.scim.validator.ui.repo.ValidationRunPublicationRepository;
 import de.palsoftware.scim.validator.ui.repo.ValidationRunRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,12 +25,16 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.regex.Pattern;
 
 @Service
 public class GitHubCompliancePublisherService {
 
     private static final Logger log = LoggerFactory.getLogger(GitHubCompliancePublisherService.class);
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMdd");
+    private static final Pattern SAFE_SLUG_PATTERN = Pattern.compile("^[a-z0-9]+(?:-[a-z0-9]+)*$");
+    private static final Pattern SAFE_VERSION_PATTERN = Pattern.compile("^(?!.*\\.\\.)[A-Za-z0-9][A-Za-z0-9._+-]{0,59}$");
+    private static final Pattern SAFE_LICENSE_PATTERN = Pattern.compile("^[A-Za-z0-9][A-Za-z0-9._+ ()/-]{0,39}$");
 
     private final GitHubAuthService authService;
     private final ComplianceReportGenerator reportGenerator;
@@ -39,17 +44,11 @@ public class GitHubCompliancePublisherService {
     private final ValidationRunRepository runRepository;
     private final ReentrantLock publishLock = new ReentrantLock(true);
 
+    @Autowired(required = false)
+    private ValidationRunPublicationRepository publicationRepository;
+
     @Value("${app.github.publish.enabled:${app.github.publish-enabled:false}}")
     private boolean enabled = false;
-
-    @Value("${app.github.app-id:${app.github.app_id:}}")
-    private String appId;
-
-    @Value("${app.github.installation-id:${app.github.installation_id:}}")
-    private String installationId;
-
-    @Value("${app.github.private-key:${app.github.private_key:}}")
-    private String privateKey;
 
     @Value("${app.github.repo:scimsandbox/scim-website}")
     private String repo = "scimsandbox/scim-website";
@@ -59,6 +58,9 @@ public class GitHubCompliancePublisherService {
 
     @Value("${app.github.api-url:${app.github.api-base-url:https://api.github.com}}")
     private String apiUrl = "https://api.github.com";
+
+    @Value("${app.compliance.public-base-url:https://scimsandbox.net}")
+    private String publicBaseUrl = "https://scimsandbox.net";
 
     public static class GitHubMergeConflictException extends RuntimeException {
         public GitHubMergeConflictException(String message) {
@@ -122,15 +124,66 @@ public class GitHubCompliancePublisherService {
     }
 
     public CompliancePublicationResult publish(CompliancePublishRequest request) {
+        validatePublishRequest(request);
         if (!enabled) {
             throw new IllegalStateException("GitHub compliance publishing is disabled by configuration");
         }
 
         publishLock.lock();
         try {
+            if (isAlreadyPublished(request.runId())) {
+                throw new IllegalStateException("Validation run has already been published: " + request.runId());
+            }
             return executePublishWithRetry(request, 3);
         } finally {
             publishLock.unlock();
+        }
+    }
+
+    private boolean isAlreadyPublished(UUID runId) {
+        if (runId == null) {
+            return false;
+        }
+        try {
+            if (publicationRepository != null && publicationRepository.existsById(runId)) {
+                return true;
+            }
+            if (runRepository != null) {
+                return runRepository.findById(runId).map(ValidationRun::isPublished).orElse(false);
+            }
+        } catch (Exception e) {
+            log.warn("Could not check existing publication state for run {}: {}", runId, e.getMessage());
+        }
+        return false;
+    }
+
+    private static void validatePublishRequest(CompliancePublishRequest request) {
+        if (request == null) {
+            throw new IllegalArgumentException("Publish request must not be null");
+        }
+        if (request.runId() == null) {
+            throw new IllegalArgumentException("Publish request runId must not be null");
+        }
+        if (request.productName() == null || request.productName().isBlank() || request.productName().length() > 120) {
+            throw new IllegalArgumentException("Invalid productName: must be non-blank and at most 120 characters");
+        }
+        if (request.productSlug() == null || request.productSlug().isBlank()
+                || request.productSlug().length() > 120
+                || !SAFE_SLUG_PATTERN.matcher(request.productSlug()).matches()) {
+            throw new IllegalArgumentException("Invalid productSlug: must match lowercase kebab-case pattern");
+        }
+        if (request.productVersion() == null || request.productVersion().isBlank()
+                || request.productVersion().length() > 60
+                || request.productVersion().contains("..")
+                || request.productVersion().contains("/")
+                || request.productVersion().contains("\\")
+                || !SAFE_VERSION_PATTERN.matcher(request.productVersion()).matches()) {
+            throw new IllegalArgumentException("Invalid productVersion: contains unsafe path or disallowed characters");
+        }
+        if (request.licenseType() == null || request.licenseType().isBlank()
+                || request.licenseType().length() > 40
+                || !SAFE_LICENSE_PATTERN.matcher(request.licenseType()).matches()) {
+            throw new IllegalArgumentException("Invalid licenseType: must be non-blank and contain only allowed characters");
         }
     }
 
@@ -274,8 +327,9 @@ public class GitHubCompliancePublisherService {
                     req.productName(), req.productVersion(), pullNumber);
             String mergeCommitSha = squashMergePullRequest(token, pullNumber, mergeCommitTitle, prBody);
 
-            String reportUrl = "https://scimsandbox.net/compliance/?run=" + runId;
-            String badgeUrl = "https://scimsandbox.net/" + runBadgePath;
+            String basePublicUrl = getEffectivePublicBaseUrl();
+            String reportUrl = basePublicUrl + "/compliance/?run=" + runId;
+            String badgeUrl = basePublicUrl + "/" + runBadgePath;
 
             return CompliancePublicationResult.success(runId, prUrl, reportUrl, badgeUrl, mergeCommitSha, publishedAt);
         } finally {
@@ -288,6 +342,11 @@ public class GitHubCompliancePublisherService {
                 }
             }
         }
+    }
+
+    private String getEffectivePublicBaseUrl() {
+        String url = publicBaseUrl != null && !publicBaseUrl.isBlank() ? publicBaseUrl : "https://scimsandbox.net";
+        return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
     }
 
     private String getEffectiveApiUrl() {
@@ -347,23 +406,68 @@ public class GitHubCompliancePublisherService {
                 return new ArrayList<>();
             }
             if (response.statusCode() != 200) {
-                log.warn("Non-200 fetching index.json (HTTP {}), defaulting to empty catalog", response.statusCode());
-                return new ArrayList<>();
+                throw new IllegalStateException("Failed to fetch compliance/index.json: HTTP "
+                        + response.statusCode() + " " + response.body());
             }
             JsonNode root = objectMapper.readTree(response.body());
             String content = root.path("content").asText(null);
-            if (content == null || content.isBlank()) {
-                return new ArrayList<>();
+            String decodedStr = null;
+            if (content != null && !content.isBlank()) {
+                byte[] decoded = Base64.getMimeDecoder().decode(content);
+                decodedStr = new String(decoded, StandardCharsets.UTF_8);
+            } else {
+                // GitHub Contents API omits content for files > 1 MB; fall back to Git Blob API or download_url
+                String blobSha = root.path("sha").asText(null);
+                if (blobSha != null && !blobSha.isBlank()) {
+                    decodedStr = fetchBlobUtf8(token, blobSha);
+                } else {
+                    String downloadUrl = root.path("download_url").asText(null);
+                    if (downloadUrl != null && !downloadUrl.isBlank()) {
+                        decodedStr = fetchDownloadUrlUtf8(downloadUrl);
+                    }
+                }
             }
-            byte[] decoded = Base64.getMimeDecoder().decode(content);
-            String decodedStr = new String(decoded, StandardCharsets.UTF_8);
+            if (decodedStr == null || decodedStr.isBlank()) {
+                throw new IllegalStateException("Empty or unreadable content in compliance/index.json response");
+            }
             List<ComplianceCatalogEntry> entries = objectMapper.readValue(decodedStr,
                     new TypeReference<List<ComplianceCatalogEntry>>() {});
             return entries != null ? new ArrayList<>(entries) : new ArrayList<>();
+        } catch (RuntimeException e) {
+            throw e;
         } catch (Exception e) {
-            log.warn("Error reading compliance/index.json: {}, starting with empty catalog", e.getMessage());
-            return new ArrayList<>();
+            throw new IllegalStateException("Error reading compliance/index.json: " + e.getMessage(), e);
         }
+    }
+
+    private String fetchBlobUtf8(String token, String blobSha) throws Exception {
+        String path = "/repos/" + repo + "/git/blobs/" + blobSha;
+        HttpRequest request = newRequestBuilder(path, token).GET().build();
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() != 200) {
+            throw new IllegalStateException("Failed to fetch index.json git blob (" + blobSha + "): HTTP " + response.statusCode());
+        }
+        JsonNode root = objectMapper.readTree(response.body());
+        String content = root.path("content").asText(null);
+        if (content == null || content.isBlank()) {
+            throw new IllegalStateException("Empty content in index.json git blob (" + blobSha + ")");
+        }
+        byte[] decoded = Base64.getMimeDecoder().decode(content);
+        return new String(decoded, StandardCharsets.UTF_8);
+    }
+
+    private String fetchDownloadUrlUtf8(String downloadUrl) throws Exception {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(downloadUrl))
+                .header("User-Agent", "scim-validator-ui")
+                .timeout(Duration.ofSeconds(15))
+                .GET()
+                .build();
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() != 200) {
+            throw new IllegalStateException("Failed to fetch index.json download_url: HTTP " + response.statusCode());
+        }
+        return response.body();
     }
 
     private void createBranchRef(String token, String branchRef, String baseSha) {

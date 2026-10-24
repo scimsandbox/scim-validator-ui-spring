@@ -314,12 +314,13 @@ public class ValidationController {
 
             if (!model.containsAttribute("publishForm")) {
                 CompliancePublishFormData publishForm = new CompliancePublishFormData();
-                if (runEntity != null) {
-                    publishForm.setProductName(runEntity.getName());
+                String candidateName = runEntity != null ? runEntity.getName() : (runView != null ? runView.name() : null);
+                if (isSafeDefaultProductName(candidateName)) {
+                    publishForm.setProductName(candidateName);
                     publishForm.setProductSlug(publishForm.resolveProductSlug());
-                } else if (runView != null) {
-                    publishForm.setProductName(runView.name());
-                    publishForm.setProductSlug(publishForm.resolveProductSlug());
+                } else {
+                    publishForm.setProductName("");
+                    publishForm.setProductSlug("");
                 }
                 model.addAttribute("publishForm", publishForm);
             }
@@ -334,6 +335,17 @@ public class ValidationController {
         model.addAttribute(ATTR_CURRENT_USER_ROLE, currentUserRole(authentication));
         model.addAttribute("serverManagerUrl", serverManagerUrl);
         return "run-detail";
+    }
+
+    private static boolean isSafeDefaultProductName(String runName) {
+        if (runName == null || runName.isBlank()) {
+            return false;
+        }
+        String lower = runName.toLowerCase();
+        if (lower.contains("://") || lower.contains("localhost") || lower.contains("/scim")) {
+            return false;
+        }
+        return !runName.matches(".*\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b.*");
     }
 
     private Map<String, TestSpecMapping> buildComprehensiveTestMappings() {
@@ -385,8 +397,11 @@ public class ValidationController {
             return "redirect:/runs/" + runId;
         }
 
+        String quotaOwnerEmail = (runEntity.getCreatedByEmail() != null && !runEntity.getCreatedByEmail().isBlank())
+                ? runEntity.getCreatedByEmail()
+                : userEmail;
         try {
-            validationRunService.validatePublishQuota(userEmail);
+            validationRunService.validatePublishQuota(quotaOwnerEmail);
         } catch (ResponseStatusException ex) {
             redirectAttributes.addFlashAttribute("errorMessage", ex.getReason());
             return "redirect:/runs/" + runId;
@@ -423,7 +438,8 @@ public class ValidationController {
                 scorecard.supportedCapabilitiesCount(),
                 scorecard.totalCapabilitiesCount(),
                 userEmail,
-                runEntity.getTargetUrl()
+                runEntity.getTargetUrl(),
+                scorecard
         );
 
         if (gitHubCompliancePublisherService == null || !gitHubCompliancePublisherService.isEnabled()) {

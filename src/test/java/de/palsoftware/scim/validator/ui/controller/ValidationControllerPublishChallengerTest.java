@@ -323,6 +323,25 @@ class ValidationControllerPublishChallengerTest {
             assertThat(violations)
                     .anyMatch(v -> "licenseType".equals(v.getPropertyPath().toString()));
         }
+
+        @ParameterizedTest
+        @ValueSource(strings = {
+                "../etc/passwd",
+                "v1/../../foo",
+                "1.0..0",
+                "-1.0.0",
+                "v1.0/beta",
+                "v1\\beta",
+                "1.0; rm -rf /"
+        })
+        void rejectAdversarialProductVersions(String badVersion) {
+            CompliancePublishFormData form = createValidForm();
+            form.setProductVersion(badVersion);
+
+            Set<ConstraintViolation<CompliancePublishFormData>> violations = validator.validate(form);
+            assertThat(violations)
+                    .anyMatch(v -> "productVersion".equals(v.getPropertyPath().toString()));
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -684,6 +703,60 @@ class ValidationControllerPublishChallengerTest {
             assertThat(sentRequest.colourGradient()).isEqualTo(ColourGradient.forScore(76).name());
             assertThat(sentRequest.targetUrl()).isEqualTo("https://scim.genuine-corp.internal");
             assertThat(sentRequest.actorEmail()).isEqualTo("developer@example.com");
+            assertThat(sentRequest.scorecard()).isSameAs(genuineScorecard);
+        }
+
+        @Test
+        void adminPublishingAnotherUsersRun_validatesQuotaForRunOwnerAndPassesScorecard() {
+            UUID runId = UUID.randomUUID();
+            ValidationRun aliceRun = createSampleRun(runId, "alice@example.com", "PASSED");
+            ComplianceScorecardView scorecard = createSampleScorecard(96, true, null);
+            CompliancePublicationResult pubResult = new CompliancePublicationResult(
+                    true, runId, "https://pr", "https://report", "https://badge", "sha", null
+            );
+
+            CompliancePublishFormData form = createValidFormData();
+            BindingResult bindingResult = new BeanPropertyBindingResult(form, "publishForm");
+            RedirectAttributes redirectAttributes = new RedirectAttributesModelMap();
+
+            when(validationRunService.getRunEntity(runId, "admin@example.com", true)).thenReturn(aliceRun);
+            when(validationRunService.getRawTestResults(runId)).thenReturn(Collections.emptyList());
+            when(validationRunService.getRawExchanges(runId)).thenReturn(Collections.emptyList());
+            when(complianceScoreService.computeScorecard(aliceRun, Collections.emptyList(), Collections.emptyList())).thenReturn(scorecard);
+            when(complianceScoreService.isEligibleForPublish(scorecard, aliceRun)).thenReturn(true);
+            when(gitHubCompliancePublisherService.isEnabled()).thenReturn(true);
+            when(gitHubCompliancePublisherService.publish(any())).thenReturn(pubResult);
+
+            Authentication adminAuth = new TestingAuthenticationToken("admin@example.com", "n/a", "ROLE_ADMIN");
+            controller.publishRun(runId, form, bindingResult, adminAuth, redirectAttributes);
+
+            verify(validationRunService).validatePublishQuota("alice@example.com");
+            verify(validationRunService).recordPublication(eq(aliceRun), eq("admin@example.com"), any(CompliancePublishRequest.class), eq(pubResult));
+        }
+
+        @Test
+        void detail_whenRunNameContainsTargetUrlOrIp_doesNotPreFillProductName() {
+            UUID runId = UUID.randomUUID();
+            ValidationRun runEntity = createSampleRun(runId, "developer@example.com", "PASSED");
+            runEntity.setName("Run against https://internal-scim.corp:8443/scim/v2");
+            ComplianceScorecardView scorecard = createSampleScorecard(95, true, null);
+            org.springframework.ui.ExtendedModelMap model = new org.springframework.ui.ExtendedModelMap();
+
+            when(validationRunService.getRun(runId, "developer@example.com", false))
+                    .thenReturn(de.palsoftware.scim.validator.ui.dto.ValidationRunView.from(runEntity));
+            when(validationRunService.getTestResults(runId, "developer@example.com", false)).thenReturn(Collections.emptyList());
+            when(validationRunService.getRunEntity(runId, "developer@example.com", false)).thenReturn(runEntity);
+            when(validationRunService.getRawTestResults(runId)).thenReturn(Collections.emptyList());
+            when(validationRunService.getRawExchanges(runId)).thenReturn(Collections.emptyList());
+            when(complianceScoreService.computeScorecard(runEntity, Collections.emptyList(), Collections.emptyList())).thenReturn(scorecard);
+            when(complianceScoreService.isEligibleForPublish(scorecard, runEntity)).thenReturn(true);
+
+            controller.detail(runId, model, userAuth);
+
+            CompliancePublishFormData publishForm = (CompliancePublishFormData) model.getAttribute("publishForm");
+            assertThat(publishForm).isNotNull();
+            assertThat(publishForm.getProductName()).isEmpty();
+            assertThat(publishForm.getProductSlug()).isEmpty();
         }
     }
 

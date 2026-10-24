@@ -1,5 +1,6 @@
 package de.palsoftware.scim.validator.ui.model.spec;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
@@ -20,7 +21,8 @@ public record CompliancePublishRequest(
         @JsonProperty("supportedCapabilities") int supportedCapabilities,
         @JsonProperty("totalCapabilities") int totalCapabilities,
         @JsonProperty("actorEmail") String actorEmail,
-        @JsonProperty("targetUrl") String targetUrl
+        @JsonProperty("targetUrl") String targetUrl,
+        @JsonIgnore ComplianceScorecardView scorecard
 ) {
     public CompliancePublishRequest(
             UUID runId,
@@ -35,9 +37,28 @@ public record CompliancePublishRequest(
             String colourGradient,
             int supportedCapabilities,
             int totalCapabilities,
+            String actorEmail,
+            String targetUrl) {
+        this(runId, productName, productSlug, productVersion, vendorName, projectUrl,
+                licenseType, showSubmitter, coreScore, colourGradient, supportedCapabilities, totalCapabilities, actorEmail, targetUrl, null);
+    }
+
+    public CompliancePublishRequest(
+            UUID runId,
+            String productName,
+            String productSlug,
+            String productVersion,
+            String vendorName,
+            String projectUrl,
+            String licenseType,
+            boolean showSubmitter,
+            int coreScore,
+            String colourGradient,
+            int supportedCapabilities,
+            int totalCapabilities,
             String actorEmail) {
         this(runId, productName, productSlug, productVersion, vendorName, projectUrl,
-                licenseType, showSubmitter, coreScore, colourGradient, supportedCapabilities, totalCapabilities, actorEmail, null);
+                licenseType, showSubmitter, coreScore, colourGradient, supportedCapabilities, totalCapabilities, actorEmail, null, null);
     }
 
     public CompliancePublishRequest(
@@ -54,7 +75,7 @@ public record CompliancePublishRequest(
             int totalCapabilities,
             String actorEmail) {
         this(runId, productName, productSlug, productVersion, vendorName, projectUrl,
-                licenseType, false, coreScore, colourGradient, supportedCapabilities, totalCapabilities, actorEmail, null);
+                licenseType, false, coreScore, colourGradient, supportedCapabilities, totalCapabilities, actorEmail, null, null);
     }
 
     public CompliancePublishRequest(
@@ -71,7 +92,7 @@ public record CompliancePublishRequest(
             int supportedCapabilities,
             int totalCapabilities) {
         this(runId, productName, productSlug, productVersion, vendorName, projectUrl,
-                licenseType, showSubmitter, coreScore, colourGradient, supportedCapabilities, totalCapabilities, null, null);
+                licenseType, showSubmitter, coreScore, colourGradient, supportedCapabilities, totalCapabilities, null, null, null);
     }
 
     public CompliancePublishRequest(
@@ -87,13 +108,20 @@ public record CompliancePublishRequest(
             int supportedCapabilities,
             int totalCapabilities) {
         this(runId, productName, productSlug, productVersion, vendorName, projectUrl,
-                licenseType, false, coreScore, colourGradient, supportedCapabilities, totalCapabilities, null, null);
+                licenseType, false, coreScore, colourGradient, supportedCapabilities, totalCapabilities, null, null, null);
     }
 
     public CompliancePublishRequest withTargetUrl(String targetUrl) {
         return new CompliancePublishRequest(
                 runId(), productName(), productSlug(), productVersion(), vendorName(),
                 projectUrl(), licenseType(), showSubmitter(), coreScore(), colourGradient(),
-                supportedCapabilities(), totalCapabilities(), actorEmail(), targetUrl);
+                supportedCapabilities(), totalCapabilities(), actorEmail(), targetUrl, scorecard());
+    }
+
+    public CompliancePublishRequest withScorecard(ComplianceScorecardView scorecard) {
+        return new CompliancePublishRequest(
+                runId(), productName(), productSlug(), productVersion(), vendorName(),
+                projectUrl(), licenseType(), showSubmitter(), coreScore(), colourGradient(),
+                supportedCapabilities(), totalCapabilities(), actorEmail(), targetUrl(), scorecard);
     }
 }

@@ -9,6 +9,7 @@ import de.palsoftware.scim.validator.ui.model.spec.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.OffsetDateTime;
@@ -21,6 +22,10 @@ public class ComplianceScoreService {
 
     private static final Logger log = LoggerFactory.getLogger(ComplianceScoreService.class);
     private static final Pattern TEST_ID_PATTERN = Pattern.compile("^([A-Z0-9_]+):\\s*.*");
+    public static final int DEFAULT_MIN_PUBLISH_SCORE = 50;
+
+    @Value("${app.compliance.min-publish-score:50}")
+    private int minPublishScore = DEFAULT_MIN_PUBLISH_SCORE;
 
     public static final List<String> OPTIONAL_CAPABILITIES = List.of(
             "patch", "filter", "sort", "etag", "bulk", "search",
@@ -93,7 +98,11 @@ public class ComplianceScoreService {
         for (ValidationTestResult tr : safeResults) {
             String testId = extractTestId(tr);
             if (testId != null) {
-                resultsByTestId.put(testId, tr);
+                ValidationTestResult previous = resultsByTestId.put(testId, tr);
+                if (previous != null) {
+                    log.warn("Duplicate test result encountered for testId={} in runId={}, overwriting previous status {}",
+                            testId, run != null ? run.getId() : null, previous.getStatus());
+                }
             }
         }
 
@@ -249,7 +258,7 @@ public class ComplianceScoreService {
         // 8. Publish Eligibility Evaluation
         String runStatus = run != null && run.getStatus() != null ? run.getStatus().toUpperCase() : "UNKNOWN";
         boolean isTerminal = "PASSED".equals(runStatus) || "FAILED".equals(runStatus);
-        boolean meetsThreshold = coreScore >= 50;
+        boolean meetsThreshold = coreScore >= minPublishScore;
         boolean publishEligible = isTerminal && meetsThreshold;
         String ineligibilityReason = null;
         if (!isTerminal) {
@@ -261,7 +270,7 @@ public class ComplianceScoreService {
                 ineligibilityReason = "Validation run status (" + runStatus + ") is not eligible for publication.";
             }
         } else if (!meetsThreshold) {
-            ineligibilityReason = "Core RFC Conformance score (" + coreScore + "%) is below the minimum 50% publishing threshold.";
+            ineligibilityReason = "Core RFC Conformance score (" + coreScore + "%) is below the minimum " + minPublishScore + "% publishing threshold.";
         }
 
         // 9. Per-RFC Summaries
@@ -297,7 +306,7 @@ public class ComplianceScoreService {
         if (scorecard == null || run == null) return false;
         String status = run.getStatus() != null ? run.getStatus().toUpperCase() : "";
         boolean isTerminal = "PASSED".equals(status) || "FAILED".equals(status);
-        return isTerminal && scorecard.coreScore() >= 50;
+        return isTerminal && scorecard.coreScore() >= minPublishScore;
     }
 
     private Map<String, CapabilityStatus> evaluateCapabilities(

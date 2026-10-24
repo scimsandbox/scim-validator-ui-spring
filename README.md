@@ -41,8 +41,8 @@ This repository contains two surfaces of the SCIM sandbox:
 
 | Area | Routes |
 | --- | --- |
-| UI | `/`, `/runs/{runId}` |
-| Run actions | `POST /runs`, `POST /runs/{runId}/delete` |
+| UI | `/`, `/runs/{runId}`, `/playground` |
+| Run actions | `POST /runs`, `POST /runs/{runId}/delete`, `POST /runs/{runId}/publish` |
 | Auth | `POST /logout` |
 | Actuator | `GET /actuator/health` with `X-API-KEY` |
 
@@ -120,6 +120,13 @@ For local development, that usually means either:
 | `APP_SECURITY_OIDC_ROLE_CLAIM` | no | Claim used to extract roles. Default: `https://scimplayground.dev/roles` |
 | `APP_SECURITY_OIDC_ADMIN_ROLE` | no | Role value mapped to `ROLE_ADMIN`. Default: `admin` |
 | `APP_SECURITY_OIDC_USER_ROLE` | no | Role value mapped to `ROLE_USER`. Default: `user` |
+| `APP_RUNS_MAX_PUBLISHED_PER_USER` | no | Maximum published compliance runs retained per user. Default: `50` |
+| `GITHUB_PUBLISH_ENABLED` | no | Enables 1-click GitHub compliance directory publishing (`app.github.publish.enabled`). Default: `false` |
+| `GITHUB_APP_ID` | no | GitHub App ID for compliance publishing (`app.github.app-id`) |
+| `GITHUB_INSTALLATION_ID` | no | GitHub App installation ID (`app.github.installation-id`) |
+| `GITHUB_APP_PRIVATE_KEY` | no | PEM-encoded RSA private key for GitHub App (`app.github.private-key`) |
+| `GITHUB_PUBLISH_REPO` | no | Target GitHub repository (`app.github.repo`). Default: `scimsandbox/scim-website` |
+| `GITHUB_PUBLISH_BRANCH` | no | Target GitHub branch (`app.github.branch`). Default: `main` |
 | `SERVER_PORT` | no | Spring Boot server port. Default: `8082` |
 
 ## Running Locally
