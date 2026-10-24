@@ -132,6 +132,7 @@ For local development, that usually means either:
 | `APP_COMPLIANCE_PUBLIC_BASE_URL` | no | Public compliance directory base URL (`app.compliance.public-base-url`). Default: `https://scimsandbox.net` |
 | `APP_COMPLIANCE_SAMPLE_RUN_IDS` | no | Comma-separated UUIDs of official sample fixture runs (`app.compliance.sample-run-ids`). |
 | `APP_COMPLIANCE_RESERVATION_TIMEOUT_SECONDS` | no | Seconds before a pending publication reservation is treated as stale and retryable (`app.compliance.reservation-timeout-seconds`). Default: `300` |
+| `APP_COMPLIANCE_RESERVATION_CLEANUP_INTERVAL_MS` | no | Milliseconds between background sweeps that purge stale pending publication reservations (`app.compliance.reservation-cleanup-interval-ms`). Default: `60000` |
 | `SERVER_PORT` | no | Spring Boot server port. Default: `8082` |
 
 ## Running Locally

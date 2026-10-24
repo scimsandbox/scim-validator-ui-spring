@@ -1402,7 +1402,7 @@
         </div>
 
         <!-- Ineligibility Banner -->
-        <div th:if="${(publication == null and (isPublished == null or !isPublished)) and (scorecard != null and !scorecard.publishEligible)}" class="card ineligibility-banner-card">
+        <div th:if="${(publication == null and (isPublished == null or !isPublished) and (isPublishing == null or !isPublishing)) and (scorecard != null and !scorecard.publishEligible)}" class="card ineligibility-banner-card">
             <div style="display: flex; align-items: flex-start; gap: 14px;">
                 <div class="ineligibility-icon-circle">
                     <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
@@ -1430,17 +1430,24 @@
                     <a th:href="@{/runs/{id}/export(id=${run.id})}" class="btn-link">↓ Export as JSON</a>
 
                     <!-- 1. Publish Button: Eligible & Unpublished -->
-                    <button th:if="${(publication == null and (isPublished == null or !isPublished)) and (scorecard != null and scorecard.publishEligible)}"
+                    <button th:if="${(publication == null and (isPublished == null or !isPublished) and (isPublishing == null or !isPublishing)) and (scorecard != null and scorecard.publishEligible)}"
                             type="button" id="open-publish-modal-btn" class="btn-publish-action">
                         <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"></path><path d="M12 12v9"></path><path d="m8 17 4 4 4-4"></path></svg>
                         <span>Publish to Directory</span>
                     </button>
 
                     <!-- 2. Publish Button: Ineligible & Unpublished (Disabled with Tooltip) -->
-                    <button th:if="${(publication == null and (isPublished == null or !isPublished)) and (scorecard != null and !scorecard.publishEligible)}"
+                    <button th:if="${(publication == null and (isPublished == null or !isPublished) and (isPublishing == null or !isPublishing)) and (scorecard != null and !scorecard.publishEligible)}"
                             type="button" class="btn-publish-disabled" disabled th:data-tooltip="${scorecard.publishIneligibilityReason}">
                         <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
                         <span>Publish to Directory</span>
+                    </button>
+
+                    <!-- 2b. Publish Button: Publishing in Progress (Disabled) -->
+                    <button th:if="${isPublishing != null and isPublishing}"
+                            type="button" class="btn-publish-disabled" disabled data-tooltip="A publication for this validation run is currently in progress.">
+                        <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"></path><path d="M12 12v9"></path><path d="m8 17 4 4 4-4"></path></svg>
+                        <span>Publishing...</span>
                     </button>
 
                     <!-- 3. Link to Public Report when already Published -->

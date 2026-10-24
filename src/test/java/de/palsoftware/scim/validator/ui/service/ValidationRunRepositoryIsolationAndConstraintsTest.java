@@ -477,7 +477,27 @@ public class ValidationRunRepositoryIsolationAndConstraintsTest {
                 em.getTransaction().commit();
                 em.clear();
 
-                // Retry after crash: stale pending reservation is reclaimed without throwing, then finalized via recordPublication
+                // Verify purgeStalePendingReservations() / cleanupStalePendingReservations() purges stale pending rows and leaves finalized rows intact
+                em.getTransaction().begin();
+                int purgedCount = jpaService.purgeStalePendingReservations();
+                em.flush();
+                em.getTransaction().commit();
+                em.clear();
+                assertThat(purgedCount).isEqualTo(1);
+                assertThat(jpaPubRepo.existsById(detachedBobRun.getId())).isFalse();
+                assertThat(jpaPubRepo.existsById(detachedAliceRun.getId())).isTrue();
+
+                // Simulate another crash + timeout expiry, then verify conditional delete does NOT delete a concurrently reclaimed row
+                em.getTransaction().begin();
+                ValidationRunPublication secondCrashed = jpaService.reservePublication(detachedBobRun, "bob@example.com", bobValidReq);
+                OffsetDateTime staleCutoff = OffsetDateTime.now(ZoneOffset.UTC).minusMinutes(5);
+                secondCrashed.setPublishedAt(staleCutoff.minusMinutes(5));
+                jpaPubRepo.save(secondCrashed);
+                em.flush();
+                em.getTransaction().commit();
+                em.clear();
+
+                // Retry after crash: stale pending reservation is reclaimed in-place (publishedAt refreshed > staleCutoff)
                 em.getTransaction().begin();
                 ValidationRunPublication reclaimedReservation = jpaService.reservePublication(detachedBobRun, "bob@example.com", bobValidReq);
                 em.flush();
@@ -485,6 +505,16 @@ public class ValidationRunRepositoryIsolationAndConstraintsTest {
                 em.clear();
                 assertThat(reclaimedReservation.isPendingReservation()).isTrue();
                 assertThat(jpaService.isStaleReservation(reclaimedReservation)).isFalse();
+
+                // Conditional delete using the earlier staleCutoff must affect 0 rows because the reservation was reclaimed
+                em.getTransaction().begin();
+                int raceDeleted = jpaPubRepo.deleteStalePendingReservationById(
+                        detachedBobRun.getId(), ValidationRunPublication.PENDING_RESERVATION_PR_URL, staleCutoff);
+                em.flush();
+                em.getTransaction().commit();
+                em.clear();
+                assertThat(raceDeleted).isZero();
+                assertThat(jpaPubRepo.existsById(detachedBobRun.getId())).isTrue();
 
                 em.getTransaction().begin();
                 ValidationRunPublication finalizedBobPub = jpaService.recordPublication(
@@ -922,9 +952,9 @@ public class ValidationRunRepositoryIsolationAndConstraintsTest {
         }
 
         @Override
-        public List<ValidationRunPublication> findStalePendingReservations(OffsetDateTime cutoff) {
+        public List<ValidationRunPublication> findStalePendingReservations(String pendingStatus, OffsetDateTime cutoff) {
             return db.values().stream()
-                    .filter(p -> p.isPendingReservation() && (p.getPublishedAt() == null || !p.getPublishedAt().isAfter(cutoff)))
+                    .filter(p -> pendingStatus.equals(p.getPrUrl()) && (p.getPublishedAt() == null || !p.getPublishedAt().isAfter(cutoff)))
                     .toList();
         }
 

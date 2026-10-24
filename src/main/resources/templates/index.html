@@ -1152,10 +1152,11 @@
                     <td>
                         <div style="display: flex; gap: 8px; align-items: center;">
                             <a th:href="@{/runs/{id}/export(id=${run.id})}" class="export-button" title="Export as JSON">Export</a>
-                            <form class="inline-form" method="post" th:action="@{/runs/{id}/delete(id=${run.id})}" onsubmit="return confirm('Delete this run and all its recorded test results?');">
+                            <form th:if="${!run.publishingInProgress}" class="inline-form" method="post" th:action="@{/runs/{id}/delete(id=${run.id})}" onsubmit="return confirm('Delete this run and all its recorded test results?');">
                                 <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
                                 <button type="submit" class="danger-button">Delete</button>
                             </form>
+                            <button th:if="${run.publishingInProgress}" type="button" class="danger-button" disabled style="opacity: 0.5; cursor: not-allowed;" title="Publishing in progress">Publishing...</button>
                         </div>
                     </td>
                 </tr>

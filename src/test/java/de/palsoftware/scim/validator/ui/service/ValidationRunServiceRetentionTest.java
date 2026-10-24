@@ -592,9 +592,9 @@ class ValidationRunServiceRetentionTest {
         }
 
         @Override
-        public List<ValidationRunPublication> findStalePendingReservations(OffsetDateTime cutoff) {
+        public List<ValidationRunPublication> findStalePendingReservations(String pendingStatus, OffsetDateTime cutoff) {
             return db.values().stream()
-                    .filter(p -> p.isPendingReservation() && (p.getPublishedAt() == null || !p.getPublishedAt().isAfter(cutoff)))
+                    .filter(p -> pendingStatus.equals(p.getPrUrl()) && (p.getPublishedAt() == null || !p.getPublishedAt().isAfter(cutoff)))
                     .toList();
         }
 

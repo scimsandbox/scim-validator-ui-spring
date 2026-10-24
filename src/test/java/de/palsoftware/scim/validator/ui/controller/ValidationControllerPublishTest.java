@@ -455,6 +455,16 @@ class ValidationControllerPublishTest {
     }
 
     @Test
+    void slugify_handlesLongHyphenRunsInLinearTime() {
+        String adversarial = "-".repeat(50_000) + "  SCIM 2.0 --- Server___Impl  " + "-".repeat(50_000);
+        CompliancePublishFormData form = new CompliancePublishFormData(adversarial, "", "1.0.0", null, null, "MIT", false);
+        assertThat(form.resolveProductSlug()).isEqualTo("scim-2-0-server-impl");
+        assertThat(CompliancePublishFormData.slugify("---!!!---")).isEmpty();
+        assertThat(new CompliancePublishFormData("---!!!---", "", "1.0.0", null, null, "MIT", false).resolveProductSlug())
+                .isEmpty();
+    }
+
+    @Test
     void publishRun_recordPublicationThrows_releasesClaimAndReservation() {
         UUID runId = UUID.randomUUID();
         ValidationRun runEntity = createSampleRun(runId, "developer@example.com", "PASSED");

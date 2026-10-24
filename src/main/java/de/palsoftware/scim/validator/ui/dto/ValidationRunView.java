@@ -14,8 +14,27 @@ public record ValidationRunView(
         String createdByEmail,
         int totalTests,
         int passedTests,
-        int failedTests) {
+        int failedTests,
+        boolean publishingInProgress) {
+
+    public ValidationRunView(
+            UUID id,
+            String name,
+            String targetUrl,
+            OffsetDateTime executedAt,
+            String status,
+            String createdByEmail,
+            int totalTests,
+            int passedTests,
+            int failedTests) {
+        this(id, name, targetUrl, executedAt, status, createdByEmail, totalTests, passedTests, failedTests, false);
+    }
+
     public static ValidationRunView from(ValidationRun run) {
+        return from(run, run.hasPendingReservation());
+    }
+
+    public static ValidationRunView from(ValidationRun run, boolean publishingInProgress) {
         return new ValidationRunView(
                 run.getId(),
                 run.getName(),
@@ -25,6 +44,7 @@ public record ValidationRunView(
                 run.getCreatedByUser().getEmail(),
                 run.getTotalTests(),
                 run.getPassedTests(),
-                run.getFailedTests());
+                run.getFailedTests(),
+                publishingInProgress);
     }
 }

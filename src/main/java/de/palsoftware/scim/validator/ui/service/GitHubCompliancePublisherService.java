@@ -163,6 +163,25 @@ public class GitHubCompliancePublisherService {
         }
     }
 
+    private void refreshReservationHeartbeat(UUID runId) {
+        if (runId == null) {
+            return;
+        }
+        claimedRunTimestamps.put(runId, System.currentTimeMillis());
+        if (publicationRepository != null) {
+            try {
+                publicationRepository.findById(runId).ifPresent(pub -> {
+                    if (pub.isPendingReservation()) {
+                        pub.setPublishedAt(OffsetDateTime.now(ZoneOffset.UTC));
+                        publicationRepository.save(pub);
+                    }
+                });
+            } catch (Exception e) {
+                log.debug("Could not refresh reservation heartbeat for runId={}: {}", runId, e.getMessage());
+            }
+        }
+    }
+
     private long getClaimTtlMillis() {
         return Duration.ofSeconds(Math.max(1L, claimTtlSeconds)).toMillis();
     }
@@ -288,9 +307,7 @@ public class GitHubCompliancePublisherService {
         int attempt = 0;
         while (attempt < maxAttempts) {
             attempt++;
-            if (request.runId() != null) {
-                claimedRunTimestamps.put(request.runId(), System.currentTimeMillis());
-            }
+            refreshReservationHeartbeat(request.runId());
             try {
                 return doPublishWorkflow(request);
             } catch (GitHubMergeConflictException e) {
@@ -416,6 +433,7 @@ public class GitHubCompliancePublisherService {
             updateBranchRef(token, branchName, newCommitSha);
 
             // Step 8: Open Pull Request
+            refreshReservationHeartbeat(runId);
             String prTitle = String.format("publish(compliance): %s %s (%s)",
                     req.productName(), req.productVersion(), shortRunId);
             String prBody = generatePrBody(req, publishedAt);
@@ -424,6 +442,7 @@ public class GitHubCompliancePublisherService {
             String prUrl = prResponse.get("html_url").asText();
 
             // Step 9: Squash-merge Pull Request
+            refreshReservationHeartbeat(runId);
             String mergeCommitTitle = String.format("publish(compliance): %s %s scorecard (#%d)",
                     req.productName(), req.productVersion(), pullNumber);
             String mergeCommitSha = squashMergePullRequest(token, pullNumber, mergeCommitTitle, prBody);

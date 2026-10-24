@@ -112,8 +112,7 @@ public record SanitizedComplianceReport(
     }
 
     private static String slugify(String text) {
-        if (text == null) return "";
-        return text.toLowerCase().replaceAll("[^a-z0-9]+", "-").replaceAll("^-+|-+$", "");
+        return de.palsoftware.scim.validator.ui.dto.CompliancePublishFormData.slugify(text);
     }
 
     @JsonInclude(JsonInclude.Include.NON_NULL)

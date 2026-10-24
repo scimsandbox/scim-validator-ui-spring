@@ -3,6 +3,7 @@ package de.palsoftware.scim.validator.ui.repo;
 import de.palsoftware.scim.validator.ui.model.ValidationRunPublication;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -57,10 +58,40 @@ public interface ValidationRunPublicationRepository extends JpaRepository<Valida
      */
     @Query("""
         select p from ValidationRunPublication p
-        where p.prUrl = 'PENDING_RESERVATION'
+        where p.prUrl = :pendingStatus
           and p.publishedAt <= :cutoff
         """)
-    List<ValidationRunPublication> findStalePendingReservations(@Param("cutoff") java.time.OffsetDateTime cutoff);
+    List<ValidationRunPublication> findStalePendingReservations(
+            @Param("pendingStatus") String pendingStatus,
+            @Param("cutoff") java.time.OffsetDateTime cutoff);
+
+    default List<ValidationRunPublication> findStalePendingReservations(java.time.OffsetDateTime cutoff) {
+        return findStalePendingReservations(ValidationRunPublication.PENDING_RESERVATION_PR_URL, cutoff);
+    }
+
+    /**
+     * Conditionally delete a pending reservation only if it is still in pending state and older than cutoff.
+     */
+    @Modifying
+    @Query("""
+        delete from ValidationRunPublication p
+        where p.runId = :runId
+          and p.prUrl = :pendingStatus
+          and p.publishedAt <= :cutoff
+        """)
+    default int deleteStalePendingReservationById(
+            @Param("runId") UUID runId,
+            @Param("pendingStatus") String pendingStatus,
+            @Param("cutoff") java.time.OffsetDateTime cutoff) {
+        Optional<ValidationRunPublication> existing = findById(runId);
+        if (existing.isPresent()
+                && pendingStatus.equals(existing.get().getPrUrl())
+                && (existing.get().getPublishedAt() == null || !existing.get().getPublishedAt().isAfter(cutoff))) {
+            deleteById(runId);
+            return 1;
+        }
+        return 0;
+    }
 
     /**
      * Find all publications for a product slug ordered by publication date descending (uses idx_validation_run_publication_slug_version).

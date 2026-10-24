@@ -400,13 +400,13 @@ public class ValidationRunService {
         }
         return runs
                 .stream()
-                .map(ValidationRunView::from)
+                .map(r -> ValidationRunView.from(r, r.hasPendingReservation() && !isStaleReservation(r.getPublication())))
                 .toList();
     }
 
     public ValidationRunView getRun(UUID runId, String actorEmail, boolean admin) {
         ValidationRun run = requireRunAccess(runId, actorEmail, admin);
-        return ValidationRunView.from(run);
+        return ValidationRunView.from(run, run.hasPendingReservation() && !isStaleReservation(run.getPublication()));
     }
 
     public List<ValidationTestResultView> getTestResults(UUID runId, String actorEmail, boolean admin) {
@@ -486,24 +486,29 @@ public class ValidationRunService {
             return 0;
         }
         OffsetDateTime cutoff = OffsetDateTime.now(ZoneOffset.UTC).minus(getReservationTimeout());
-        List<ValidationRunPublication> staleList = publicationRepository.findStalePendingReservations(cutoff);
+        List<ValidationRunPublication> staleList = publicationRepository.findStalePendingReservations(
+                PENDING_RESERVATION_PR_URL, cutoff);
         if (staleList == null || staleList.isEmpty()) {
             return 0;
         }
         int purged = 0;
         for (ValidationRunPublication stale : staleList) {
             UUID runId = stale.getRunId();
-            if (runRepository != null && runId != null) {
+            if (runId == null) {
+                continue;
+            }
+            if (runRepository != null) {
                 runRepository.findById(runId).ifPresent(r -> {
-                    if (r.hasPendingReservation()) {
+                    if (r.hasPendingReservation() && isStaleReservation(r.getPublication())) {
                         r.setPublication(null);
                         runRepository.save(r);
                     }
                 });
             }
-            if (runId != null) {
-                publicationRepository.deleteById(runId);
-                purged++;
+            int deleted = publicationRepository.deleteStalePendingReservationById(
+                    runId, PENDING_RESERVATION_PR_URL, cutoff);
+            if (deleted > 0) {
+                purged += deleted;
             }
         }
         publicationRepository.flush();

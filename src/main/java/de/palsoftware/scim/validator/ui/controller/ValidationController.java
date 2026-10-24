@@ -52,6 +52,7 @@ import java.net.URI;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 
 import java.util.Collections;
+import java.util.Locale;
 import java.util.UUID;
 import java.util.Map;
 import java.util.HashMap;
@@ -554,7 +555,7 @@ public class ValidationController {
         if (value == null || needle == null || needle.isEmpty()) {
             return false;
         }
-        return value.toLowerCase().contains(needle.toLowerCase());
+        return value.toLowerCase(Locale.ROOT).contains(needle.toLowerCase(Locale.ROOT));
     }
 
     private void safeReleaseReservation(ValidationRun runEntity) {
