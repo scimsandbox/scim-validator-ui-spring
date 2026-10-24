@@ -124,8 +124,23 @@ public record SanitizedComplianceReport(
             @JsonProperty("projectUrl") String projectUrl,
             @JsonProperty("licenseType") String licenseType,
             @JsonProperty("publishedAt") String publishedAt,
-            @JsonProperty("submitter") String submitter
-    ) {}
+            @JsonProperty("submitter") String submitter,
+            @JsonProperty("isSampleFixture") Boolean isSampleFixture
+    ) {
+        public ReportMetadata(
+                String runId,
+                String productName,
+                String productSlug,
+                String productVersion,
+                String vendorName,
+                String projectUrl,
+                String licenseType,
+                String publishedAt,
+                String submitter) {
+            this(runId, productName, productSlug, productVersion, vendorName, projectUrl,
+                    licenseType, publishedAt, submitter, null);
+        }
+    }
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record ReportScorecard(
