@@ -134,6 +134,7 @@ public class ValidationRunService {
     @Value("${app.compliance.public-base-url:https://scimsandbox.net}")
     private String publicBaseUrl = "https://scimsandbox.net";
 
+    @Value("${app.compliance.reservation-timeout-seconds:300}")
     private long reservationTimeoutSeconds = 300;
 
     public int getMaxRunsPerUser() {
@@ -157,10 +158,8 @@ public class ValidationRunService {
         return reservationTimeoutSeconds;
     }
 
-    @Value("${app.compliance.reservation-timeout-seconds:300}")
     public void setReservationTimeoutSeconds(long reservationTimeoutSeconds) {
         this.reservationTimeoutSeconds = reservationTimeoutSeconds;
-        ValidationRunPublication.setConfiguredReservationTimeout(getReservationTimeout());
     }
 
     public Duration getReservationTimeout() {
@@ -401,13 +400,13 @@ public class ValidationRunService {
         }
         return runs
                 .stream()
-                .map(r -> ValidationRunView.from(r, r.hasPendingReservation() && !isStaleReservation(r.getPublication())))
+                .map(r -> ValidationRunView.from(r, getReservationTimeout()))
                 .toList();
     }
 
     public ValidationRunView getRun(UUID runId, String actorEmail, boolean admin) {
         ValidationRun run = requireRunAccess(runId, actorEmail, admin);
-        return ValidationRunView.from(run, run.hasPendingReservation() && !isStaleReservation(run.getPublication()));
+        return ValidationRunView.from(run, getReservationTimeout());
     }
 
     public List<ValidationTestResultView> getTestResults(UUID runId, String actorEmail, boolean admin) {

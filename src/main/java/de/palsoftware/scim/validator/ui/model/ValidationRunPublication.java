@@ -26,18 +26,6 @@ public class ValidationRunPublication implements Persistable<UUID> {
     public static final String PENDING_RESERVATION_PR_URL = "PENDING_RESERVATION";
     public static final Duration DEFAULT_RESERVATION_TIMEOUT = Duration.ofSeconds(300);
 
-    private static volatile Duration configuredReservationTimeout = DEFAULT_RESERVATION_TIMEOUT;
-
-    public static Duration getConfiguredReservationTimeout() {
-        return configuredReservationTimeout;
-    }
-
-    public static void setConfiguredReservationTimeout(Duration timeout) {
-        configuredReservationTimeout = (timeout != null && !timeout.isNegative() && !timeout.isZero())
-                ? timeout
-                : DEFAULT_RESERVATION_TIMEOUT;
-    }
-
     @Transient
     private boolean isNew = true;
 
@@ -124,11 +112,6 @@ public class ValidationRunPublication implements Persistable<UUID> {
     }
 
     @Transient
-    public boolean isStalePendingReservation() {
-        return isStalePendingReservation(configuredReservationTimeout);
-    }
-
-    @Transient
     public boolean isStalePendingReservation(Duration timeout) {
         return isStalePendingReservation(OffsetDateTime.now(ZoneOffset.UTC), timeout);
     }
@@ -143,7 +126,7 @@ public class ValidationRunPublication implements Persistable<UUID> {
         }
         Duration effectiveTimeout = (timeout != null && !timeout.isNegative() && !timeout.isZero())
                 ? timeout
-                : configuredReservationTimeout;
+                : DEFAULT_RESERVATION_TIMEOUT;
         OffsetDateTime referenceNow = now != null ? now : OffsetDateTime.now(ZoneOffset.UTC);
         return !publishedAt.plus(effectiveTimeout).isAfter(referenceNow);
     }

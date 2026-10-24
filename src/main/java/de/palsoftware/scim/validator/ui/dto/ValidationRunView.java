@@ -33,7 +33,7 @@ public record ValidationRunView(
     }
 
     public static ValidationRunView from(ValidationRun run) {
-        return from(run, ValidationRunPublication.getConfiguredReservationTimeout());
+        return from(run, ValidationRunPublication.DEFAULT_RESERVATION_TIMEOUT);
     }
 
     public static ValidationRunView from(ValidationRun run, Duration reservationTimeout) {

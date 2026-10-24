@@ -217,7 +217,7 @@ public class ValidationController {
         }
 
         ValidationRunService.ExecutionResult result = validationRunService.executeRun(runForm, actorEmail(authentication));
-        ValidationRunView run = ValidationRunView.from(result.getRun());
+        ValidationRunView run = ValidationRunView.from(result.getRun(), validationRunService.getReservationTimeout());
         if (result.isOldRunDeleted()) {
             redirectAttributes.addFlashAttribute("infoMessage", 
                 "An older test suite was deleted to make room for this new one. Maximum allowed test suites per user is " + result.getMaxRuns() + ".");
