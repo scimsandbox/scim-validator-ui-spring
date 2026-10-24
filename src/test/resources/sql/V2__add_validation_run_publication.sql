@@ -9,8 +9,8 @@ ALTER TABLE validation_run
 --    and is locked to validation_run.created_by_email via the composite fk_validation_run_publication_run
 --    (which also transitively enforces fk_validation_run_created_by_user -> validator_mgmt_users).
 -- 2. ON DELETE RESTRICT on fk_validation_run_publication_run is intentional: published runs must
---    never be auto-pruned or accidentally deleted while a publication record exists (admin deletion
---    explicitly deletes the publication row before deleting the run).
+--    never be auto-pruned or deleted by regular users or admins while a publication record exists
+--    so product-slug ownership and public compliance directory links remain intact.
 -- 3. core_score is the rounded 0-100 Core RFC Conformance percentage (not a raw test count).
 -- 4. Multiple runs for the same (product_slug, product_version) are permitted (e.g. re-runs after
 --    a closed PR) and ordered by recency via idx_validation_run_publication_slug_version.
