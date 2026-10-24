@@ -188,7 +188,6 @@ public class ValidationRunService {
         }
     }
 
-    @Transactional
     public Optional<CompliancePublicationResult> tryReconcilePendingPublication(ValidationRun run) {
         if (run == null || run.getId() == null) {
             return Optional.empty();
@@ -607,7 +606,6 @@ public class ValidationRunService {
         }
     }
 
-    @Transactional
     public int purgeStalePendingReservations() {
         if (publicationRepository == null) {
             return 0;
