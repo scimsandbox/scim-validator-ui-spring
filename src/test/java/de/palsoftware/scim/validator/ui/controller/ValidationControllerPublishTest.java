@@ -501,7 +501,6 @@ class ValidationControllerPublishTest {
                 .contains("locked for reconciliation");
         verify(validationRunService, org.mockito.Mockito.times(2))
                 .recordPublication(eq(runEntity), eq("developer@example.com"), any(CompliancePublishRequest.class), eq(pubResult));
-        verify(validationRunService).markReconciliationRequired(runId);
         verify(validationRunService).markReconciliationRequired(
                 eq(runId), eq("developer@example.com"), any(CompliancePublishRequest.class), eq(pubResult));
         verify(gitHubCompliancePublisherService, never()).releaseClaim(runId);
@@ -533,6 +532,18 @@ class ValidationControllerPublishTest {
         assertThat(healedRedirectAttributes.getFlashAttributes()).containsKey("successMessage");
         assertThat(healedRedirectAttributes.getFlashAttributes().get("justPublished")).isEqualTo(true);
         verify(gitHubCompliancePublisherService, org.mockito.Mockito.times(2)).publish(any(CompliancePublishRequest.class));
+
+        // If the background reconciler already finalized the publication right before tryReconcilePendingPublication
+        // (so tryReconcilePendingPublication returns empty, but getPublication(runId) is present), redirect with successMessage
+        ValidationRunPublication finalizedPub = createSamplePublication(runId, "developer@example.com", 94);
+        when(validationRunService.tryReconcilePendingPublication(runEntity)).thenReturn(java.util.Optional.empty());
+        when(validationRunService.getPublication(runId)).thenReturn(java.util.Optional.of(finalizedPub));
+
+        RedirectAttributes raceHealedRedirectAttributes = new RedirectAttributesModelMap();
+        String raceHealedRedirect = controller.publishRun(runId, form, bindingResult, userAuth, raceHealedRedirectAttributes);
+        assertThat(raceHealedRedirect).isEqualTo("redirect:/runs/" + runId);
+        assertThat(raceHealedRedirectAttributes.getFlashAttributes()).containsKey("successMessage");
+        assertThat(raceHealedRedirectAttributes.getFlashAttributes().get("justPublished")).isEqualTo(true);
     }
 
     @Test

@@ -193,12 +193,52 @@ public class ValidationRunService {
         if (run == null || run.getId() == null) {
             return Optional.empty();
         }
-        PendingReconciliation pending = pendingReconciliations.get(run.getId());
-        if (pending == null) {
-            return Optional.empty();
+        synchronized (reservationLock) {
+            UUID runId = run.getId();
+            PendingReconciliation pending = pendingReconciliations.get(runId);
+            return executeInIsolatedTransaction(() -> {
+                ValidationRun managed = resolveManagedRun(run);
+                ValidationRunPublication existing = findExistingPublicationOrReservation(managed);
+                if (run.isPublished() || managed.isPublished()
+                        || (existing != null && !existing.isPendingReservation())) {
+                    clearReconciliationRequired(runId);
+                    if (existing != null && !existing.isPendingReservation()) {
+                        run.setPublication(existing);
+                    }
+                    if (pending != null && pending.result() != null) {
+                        return Optional.of(pending.result());
+                    }
+                    if (existing != null && !existing.isPendingReservation()) {
+                        return Optional.of(CompliancePublicationResult.succeeded(
+                                runId,
+                                existing.getPrUrl(),
+                                existing.getReportUrl(),
+                                existing.getBadgeUrl(),
+                                "reconciled",
+                                existing.getPublishedAt()
+                        ));
+                    }
+                    return Optional.empty();
+                }
+                if (pending == null) {
+                    return Optional.empty();
+                }
+                recordPublication(managed, pending.actorEmail(), pending.request(), pending.result());
+                if (managed != run && managed.getPublication() != null) {
+                    run.setPublication(managed.getPublication());
+                }
+                return Optional.of(pending.result());
+            });
         }
-        recordPublication(run, pending.actorEmail(), pending.request(), pending.result());
-        return Optional.of(pending.result());
+    }
+
+    private <T> T executeInIsolatedTransaction(java.util.function.Supplier<T> action) {
+        if (transactionManager != null) {
+            TransactionTemplate txTemplate = new TransactionTemplate(transactionManager);
+            txTemplate.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+            return txTemplate.execute(status -> action.get());
+        }
+        return action.get();
     }
 
     public int getMaxRunsPerUser() {
@@ -273,6 +313,7 @@ public class ValidationRunService {
                     }
                     releasePublicationReservation(runToDelete);
                 }
+                clearReconciliationRequired(runToDelete.getId());
                 runRepository.delete(runToDelete);
                 oldRunDeleted = true;
             }
@@ -509,6 +550,7 @@ public class ValidationRunService {
             }
             run.setPublication(null);
         }
+        clearReconciliationRequired(runId);
         runRepository.deleteById(runId);
     }
 
@@ -536,15 +578,19 @@ public class ValidationRunService {
 
     @EventListener(ApplicationReadyEvent.class)
     @Scheduled(fixedDelayString = "${app.compliance.reservation-cleanup-interval-ms:60000}")
-    @Transactional
     public void cleanupStalePendingReservations() {
         for (Map.Entry<UUID, PendingReconciliation> entry : pendingReconciliations.entrySet()) {
             UUID runId = entry.getKey();
-            PendingReconciliation pending = entry.getValue();
             try {
-                ValidationRun run = (runRepository != null) ? runRepository.findById(runId).orElse(null) : null;
-                if (run != null) {
-                    recordPublication(run, pending.actorEmail(), pending.request(), pending.result());
+                if (runRepository == null) {
+                    continue;
+                }
+                ValidationRun run = runRepository.findById(runId).orElse(null);
+                if (run == null) {
+                    clearReconciliationRequired(runId);
+                    continue;
+                }
+                if (tryReconcilePendingPublication(run).isPresent()) {
                     log.info("Successfully reconciled pending compliance publication for runId={}", runId);
                 }
             } catch (Exception ex) {
@@ -566,34 +612,36 @@ public class ValidationRunService {
         if (publicationRepository == null) {
             return 0;
         }
-        OffsetDateTime cutoff = OffsetDateTime.now(ZoneOffset.UTC).minus(getReservationTimeout());
-        List<ValidationRunPublication> staleList = publicationRepository.findStalePendingReservations(
-                PENDING_RESERVATION_PR_URL, cutoff);
-        if (staleList == null || staleList.isEmpty()) {
-            return 0;
-        }
-        int purged = 0;
-        for (ValidationRunPublication stale : staleList) {
-            UUID runId = stale.getRunId();
-            if (runId == null || reconciliationRequiredRunIds.contains(runId)) {
-                continue;
+        return executeInIsolatedTransaction(() -> {
+            OffsetDateTime cutoff = OffsetDateTime.now(ZoneOffset.UTC).minus(getReservationTimeout());
+            List<ValidationRunPublication> staleList = publicationRepository.findStalePendingReservations(
+                    PENDING_RESERVATION_PR_URL, cutoff);
+            if (staleList == null || staleList.isEmpty()) {
+                return 0;
             }
-            int deleted = publicationRepository.deleteStalePendingReservationById(
-                    runId, PENDING_RESERVATION_PR_URL, cutoff);
-            if (deleted > 0) {
-                purged += deleted;
-                if (runRepository != null) {
-                    runRepository.findById(runId).ifPresent(r -> {
-                        if (r.hasPendingReservation()) {
-                            r.setPublication(null);
-                            runRepository.save(r);
-                        }
-                    });
+            int purged = 0;
+            for (ValidationRunPublication stale : staleList) {
+                UUID runId = stale.getRunId();
+                if (runId == null || reconciliationRequiredRunIds.contains(runId)) {
+                    continue;
+                }
+                int deleted = publicationRepository.deleteStalePendingReservationById(
+                        runId, PENDING_RESERVATION_PR_URL, cutoff);
+                if (deleted > 0) {
+                    purged += deleted;
+                    if (runRepository != null) {
+                        runRepository.findById(runId).ifPresent(r -> {
+                            if (r.hasPendingReservation()) {
+                                r.setPublication(null);
+                                runRepository.save(r);
+                            }
+                        });
+                    }
                 }
             }
-        }
-        publicationRepository.flush();
-        return purged;
+            publicationRepository.flush();
+            return purged;
+        });
     }
 
     private final Object reservationLock = new Object();
@@ -818,7 +866,7 @@ public class ValidationRunService {
         ValidationRunPublication publication = new ValidationRunPublication();
         populatePublicationMetadata(publication, managedRun, ownerEmail, request);
         if (result != null && result.reconciledCatalogEntry() != null) {
-            applyReconciledCatalogMetadata(publication, result.reconciledCatalogEntry(), false);
+            applyReconciledCatalogMetadata(publication, result.reconciledCatalogEntry(), request.showSubmitter());
         }
         publication.setReportUrl(result.reportUrl());
         publication.setBadgeUrl(result.badgeUrl());

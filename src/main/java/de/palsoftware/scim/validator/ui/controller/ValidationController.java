@@ -408,6 +408,16 @@ public class ValidationController {
                     redirectAttributes.addFlashAttribute("justPublished", true);
                     return "redirect:/runs/" + runId;
                 }
+                var existingPub = validationRunService.getPublication(runId);
+                if (runEntity.isPublished() || (existingPub != null && existingPub.isPresent())) {
+                    String reportUrl = (existingPub != null && existingPub.isPresent())
+                            ? existingPub.get().getReportUrl()
+                            : (runEntity.getPublication() != null ? runEntity.getPublication().getReportUrl() : "");
+                    redirectAttributes.addFlashAttribute("successMessage",
+                            "Compliance report successfully published! View live report at " + reportUrl);
+                    redirectAttributes.addFlashAttribute("justPublished", true);
+                    return "redirect:/runs/" + runId;
+                }
             } catch (Exception ex) {
                 log.error("Failed to reconcile pending validation publication for runId={}", runId, ex);
                 String safeReason = sanitizeFlashErrorMessage(ex.getMessage(), "database error");
@@ -578,7 +588,6 @@ public class ValidationController {
                 validationRunService.recordPublication(runEntity, userEmail, publishRequest, result);
             } catch (Exception ex) {
                 // Keep reservation and in-memory claim locked so a retry does not open a duplicate PR on GitHub
-                validationRunService.markReconciliationRequired(runId);
                 validationRunService.markReconciliationRequired(runId, userEmail, publishRequest, result);
                 log.error("Failed to persist validation publication to database for runId={} after GitHub merge ({})",
                         runId, result.prUrl(), ex);

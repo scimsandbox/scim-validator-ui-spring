@@ -563,6 +563,22 @@ public class ValidationRunRepositoryIsolationAndConstraintsTest {
                 assertThat(jpaRunRepo.findOwnedRuns("bob@example.com", Sort.unsorted())).isEmpty();
                 assertThat(jpaPubRepo.countOwnedPublications("bob@example.com")).isEqualTo(1L);
 
+                // Concurrent/already-completed reconciliation in tryReconcilePendingPublication returns the succeeded result
+                // without throwing "already been published", and deleted runs in pendingReconciliations are evicted on cleanup
+                jpaService.markReconciliationRequired(
+                        detachedBobRun.getId(), "bob@example.com", bobValidReq, bobRes);
+                Optional<CompliancePublicationResult> concurrentReconciled =
+                        jpaService.tryReconcilePendingPublication(detachedBobRun);
+                assertThat(concurrentReconciled).isPresent().contains(bobRes);
+                assertThat(jpaService.isReconciliationRequired(detachedBobRun.getId())).isFalse();
+
+                UUID deletedGhostRunId = UUID.randomUUID();
+                jpaService.markReconciliationRequired(
+                        deletedGhostRunId, "bob@example.com", bobValidReq, bobRes);
+                assertThat(jpaService.isReconciliationRequired(deletedGhostRunId)).isTrue();
+                jpaService.cleanupStalePendingReservations();
+                assertThat(jpaService.isReconciliationRequired(deletedGhostRunId)).isFalse();
+
                 // Verify idempotent index.json reconciliation preserves canonical GitHub catalog metadata over altered retry form fields
                 em.getTransaction().begin();
                 ValidationRun carolRun = new ValidationRun();
@@ -654,6 +670,75 @@ public class ValidationRunRepositoryIsolationAndConstraintsTest {
                 assertThat(reconciledPub.getProjectUrl()).isEqualTo("https://canonical.example.com");
                 assertThat(reconciledPub.getLicenseType()).isEqualTo("Apache-2.0");
                 assertThat(reconciledPub.isShowSubmitter()).isTrue();
+
+                // Verify post-restart reconcile creating a new ValidationRunPublication row (no prior reservation row)
+                // preserves request.showSubmitter() alongside canonical catalog metadata
+                em.getTransaction().begin();
+                ValidationRun daveRun = new ValidationRun();
+                daveRun.setName("Dave Run");
+                daveRun.setTargetUrl("https://dave.example.com/scim/v2");
+                daveRun.setExecutedAt(OffsetDateTime.now(ZoneOffset.UTC).minusMinutes(1));
+                daveRun.setStatus("PASSED");
+                daveRun.setCreatedByUser(bob);
+                jpaRunRepo.save(daveRun);
+                em.flush();
+                em.getTransaction().commit();
+                em.clear();
+
+                ValidationRun detachedDave = jpaRunRepo.findById(daveRun.getId()).orElseThrow();
+                de.palsoftware.scim.validator.ui.model.spec.ComplianceCatalogEntry daveCanonicalEntry =
+                        new de.palsoftware.scim.validator.ui.model.spec.ComplianceCatalogEntry(
+                                daveRun.getId(),
+                                "Canonical Product",
+                                "canonical-product",
+                                "1.1.0",
+                                "Canonical Vendor",
+                                "https://canonical.example.com",
+                                "Apache-2.0",
+                                96,
+                                de.palsoftware.scim.validator.ui.model.spec.ColourGradientInfo.from("EMERALD", 96),
+                                9,
+                                10,
+                                "compliance/reports/canonical-product/1.1.0-20261024-" + daveRun.getId() + ".json",
+                                "compliance/badges/canonical-product.svg",
+                                "2026-10-24T12:30:00Z"
+                        );
+                CompliancePublicationResult daveReconciledRes = CompliancePublicationResult.reconciled(
+                        daveRun.getId(),
+                        "https://github.com/scimsandbox/scim-website/blob/main/" + daveCanonicalEntry.reportPath(),
+                        "https://scimsandbox.net/compliance/?run=" + daveRun.getId(),
+                        "https://scimsandbox.net/compliance/badges/" + daveRun.getId() + ".svg",
+                        "reconciled",
+                        OffsetDateTime.parse("2026-10-24T12:30:00Z"),
+                        daveCanonicalEntry
+                );
+                CompliancePublishRequest davePostRestartReq = new CompliancePublishRequest(
+                        daveRun.getId(),
+                        "Altered Dave Product",
+                        "altered-dave",
+                        "9.9.9",
+                        "Altered Vendor",
+                        "https://altered.example.com",
+                        "MIT",
+                        true,
+                        96,
+                        "EMERALD",
+                        9,
+                        10,
+                        "bob@example.com"
+                );
+
+                em.getTransaction().begin();
+                ValidationRunPublication daveReconciledPub = jpaService.recordPublication(
+                        detachedDave, "bob@example.com", davePostRestartReq, daveReconciledRes);
+                em.flush();
+                em.getTransaction().commit();
+                em.clear();
+
+                assertThat(daveReconciledPub.getProductName()).isEqualTo("Canonical Product");
+                assertThat(daveReconciledPub.getProductSlug()).isEqualTo("canonical-product");
+                assertThat(daveReconciledPub.getProductVersion()).isEqualTo("1.1.0");
+                assertThat(daveReconciledPub.isShowSubmitter()).isTrue();
             } finally {
                 emf.close();
             }
