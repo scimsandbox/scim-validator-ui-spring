@@ -423,6 +423,45 @@ public class ValidationRunRepositoryIsolationAndConstraintsTest {
                         .isInstanceOf(ResponseStatusException.class)
                         .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode()).isEqualTo(HttpStatus.CONFLICT));
                 em.getTransaction().rollback();
+                em.clear();
+
+                // Transaction 5: Pre-GitHub reservePublication -> releasePublicationReservation rollback -> reservePublication -> recordPublication finalization
+                CompliancePublishRequest bobValidReq = new CompliancePublishRequest(
+                        detachedBobRun.getId(), "Bob SCIM Server", "bob-scim", "2.0.0",
+                        "Bob Corp", "https://bob.example.com", "MIT", false,
+                        95, "EMERALD", 8, 10, "bob@example.com", "https://scim.bob.internal/v2");
+
+                em.getTransaction().begin();
+                ValidationRunPublication reservation = jpaService.reservePublication(detachedBobRun, "bob@example.com", bobValidReq);
+                em.flush();
+                em.getTransaction().commit();
+                em.clear();
+                assertThat(reservation.getPrUrl()).isEqualTo(ValidationRunService.PENDING_RESERVATION_PR_URL);
+                assertThat(jpaPubRepo.existsById(detachedBobRun.getId())).isTrue();
+
+                // Simulate GitHub failure releasing the reservation so Bob can retry
+                em.getTransaction().begin();
+                jpaService.releasePublicationReservation(detachedBobRun);
+                em.flush();
+                em.getTransaction().commit();
+                em.clear();
+                assertThat(jpaPubRepo.existsById(detachedBobRun.getId())).isFalse();
+
+                // Retry: reservePublication then finalize with recordPublication
+                em.getTransaction().begin();
+                jpaService.reservePublication(detachedBobRun, "bob@example.com", bobValidReq);
+                em.flush();
+                em.getTransaction().commit();
+                em.clear();
+
+                em.getTransaction().begin();
+                ValidationRunPublication finalizedBobPub = jpaService.recordPublication(
+                        detachedBobRun, "bob@example.com", bobValidReq, bobRes);
+                em.flush();
+                em.getTransaction().commit();
+                em.clear();
+                assertThat(finalizedBobPub.getPrUrl()).isEqualTo("https://github.com/scimsandbox/scim-website/pull/11");
+                assertThat(finalizedBobPub.getProductSlug()).isEqualTo("bob-scim");
             } finally {
                 emf.close();
             }

@@ -48,6 +48,7 @@ import org.springframework.http.MediaType;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.ByteArrayResource;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.net.URI;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 
 import java.util.Collections;
@@ -422,6 +423,19 @@ public class ValidationController {
                         "Validation error: Product metadata and Project URL must not contain the validation target URL.");
                 return "redirect:/runs/" + runId;
             }
+            String targetHost = null;
+            try {
+                targetHost = URI.create(trimmedTarget).getHost();
+            } catch (Exception ignored) {
+            }
+            if (targetHost != null && !targetHost.isBlank()) {
+                if ((publishForm.getProductName() != null && publishForm.getProductName().contains(targetHost))
+                        || (publishForm.getVendorName() != null && publishForm.getVendorName().contains(targetHost))) {
+                    redirectAttributes.addFlashAttribute("errorMessage",
+                            "Validation error: Product Name and Vendor Name must not contain the validation target host (" + targetHost + ").");
+                    return "redirect:/runs/" + runId;
+                }
+            }
         }
 
         List<ValidationTestResult> rawTests = validationRunService.getRawTestResults(runId);
@@ -464,10 +478,26 @@ public class ValidationController {
             return "redirect:/runs/" + runId;
         }
 
+        try {
+            validationRunService.reservePublication(runEntity, userEmail, publishRequest);
+        } catch (ResponseStatusException ex) {
+            redirectAttributes.addFlashAttribute("errorMessage", ex.getReason());
+            return "redirect:/runs/" + runId;
+        } catch (IllegalStateException ex) {
+            redirectAttributes.addFlashAttribute("errorMessage", ex.getMessage());
+            return "redirect:/runs/" + runId;
+        } catch (Exception ex) {
+            log.error("Failed to reserve validation publication in database for runId={}", runId, ex);
+            redirectAttributes.addFlashAttribute("errorMessage", "Could not reserve publication slot: " + ex.getMessage());
+            return "redirect:/runs/" + runId;
+        }
+
         CompliancePublicationResult result;
         try {
             result = gitHubCompliancePublisherService.publish(publishRequest);
         } catch (Exception ex) {
+            gitHubCompliancePublisherService.releaseClaim(runId);
+            safeReleaseReservation(runEntity);
             log.error("Failed to publish compliance report for runId={}", runId, ex);
             String message = ex.getMessage() != null ? ex.getMessage() : "Unknown GitHub publisher error";
             redirectAttributes.addFlashAttribute("errorMessage", "GitHub publishing failed: " + message);
@@ -475,6 +505,8 @@ public class ValidationController {
         }
 
         if (result == null || !result.success()) {
+            gitHubCompliancePublisherService.releaseClaim(runId);
+            safeReleaseReservation(runEntity);
             String failureReason = result != null && result.errorMessage() != null
                     ? result.errorMessage() : "GitHub publishing operation did not succeed";
             redirectAttributes.addFlashAttribute("errorMessage", "Publication failed: " + failureReason);
@@ -484,6 +516,8 @@ public class ValidationController {
         try {
             validationRunService.recordPublication(runEntity, userEmail, publishRequest, result);
         } catch (Exception ex) {
+            gitHubCompliancePublisherService.releaseClaim(runId);
+            safeReleaseReservation(runEntity);
             log.error("Failed to persist validation publication to database for runId={}", runId, ex);
             redirectAttributes.addFlashAttribute("errorMessage", "Publication merged to GitHub but failed to update local database: " + ex.getMessage());
             return "redirect:/runs/" + runId;
@@ -494,6 +528,15 @@ public class ValidationController {
         redirectAttributes.addFlashAttribute("justPublished", true);
 
         return "redirect:/runs/" + runId;
+    }
+
+    private void safeReleaseReservation(ValidationRun runEntity) {
+        try {
+            validationRunService.releasePublicationReservation(runEntity);
+        } catch (Exception releaseEx) {
+            log.warn("Failed to release publication reservation for runId={}: {}",
+                    runEntity != null ? runEntity.getId() : null, releaseEx.getMessage());
+        }
     }
 
     @PostMapping("/runs/{runId}/delete")

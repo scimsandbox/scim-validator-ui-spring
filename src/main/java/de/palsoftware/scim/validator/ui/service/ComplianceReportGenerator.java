@@ -13,6 +13,7 @@ import de.palsoftware.scim.validator.ui.repo.ValidationHttpExchangeRepository;
 import de.palsoftware.scim.validator.ui.repo.ValidationRunRepository;
 import de.palsoftware.scim.validator.ui.repo.ValidationTestResultRepository;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
@@ -39,6 +40,10 @@ public class ComplianceReportGenerator {
     private static final Pattern PEM_PRIVATE_KEY_BLOCK_PATTERN = Pattern.compile("(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----");
     private static final Pattern PEM_PRIVATE_KEY_HEADER_PATTERN = Pattern.compile("-----(?:BEGIN|END) [A-Z ]*PRIVATE KEY-----");
     private static final Pattern SENSITIVE_QUERY_PARAM_PATTERN = Pattern.compile("(?i)(?<=[?&])(?:api[_-]?key|token|secret|password|auth|client_secret|access_token)=[^\\s\"'>\\]\\)&]+");
+    public static final String DEFAULT_SAMPLE_RUN_IDS = "11111111-1111-1111-1111-111111111111,22222222-2222-2222-2222-222222222222";
+
+    @Value("${app.compliance.sample-run-ids:" + DEFAULT_SAMPLE_RUN_IDS + "}")
+    private String sampleRunIdsConfig = DEFAULT_SAMPLE_RUN_IDS;
 
     private final ValidationRunRepository runRepository;
     private final ValidationTestResultRepository testResultRepository;
@@ -231,6 +236,8 @@ public class ComplianceReportGenerator {
 
         String submitter = request.showSubmitter() ? request.actorEmail() : null;
 
+        boolean isSample = Boolean.TRUE.equals(request.isSampleFixture())
+                || isConfiguredSampleRun(request.runId(), sampleRunIdsConfig);
         ReportMetadata metadata = new ReportMetadata(
                 request.runId() != null ? request.runId().toString() : null,
                 request.productName(),
@@ -241,7 +248,7 @@ public class ComplianceReportGenerator {
                 request.licenseType(),
                 publishedAtIso,
                 submitter,
-                isSampleRun(request.runId()) ? Boolean.TRUE : null
+                isSample ? Boolean.TRUE : null
         );
 
         ReportScorecard scorecardDto;
@@ -415,12 +422,25 @@ public class ComplianceReportGenerator {
         }
     }
 
+    public void setSampleRunIdsConfig(String sampleRunIdsConfig) {
+        this.sampleRunIdsConfig = sampleRunIdsConfig;
+    }
+
     public static boolean isSampleRun(java.util.UUID runId) {
-        if (runId == null) {
+        return isConfiguredSampleRun(runId, DEFAULT_SAMPLE_RUN_IDS);
+    }
+
+    public static boolean isConfiguredSampleRun(java.util.UUID runId, String sampleIdsCsv) {
+        if (runId == null || sampleIdsCsv == null || sampleIdsCsv.isBlank()) {
             return false;
         }
-        String s = runId.toString();
-        return s.startsWith("11111111-") || s.startsWith("22222222-");
+        String target = runId.toString();
+        for (String token : sampleIdsCsv.split(",")) {
+            if (target.equalsIgnoreCase(token.trim())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static String stripPublicProjectAndSubmitterFromMetadata(String json) {

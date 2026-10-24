@@ -430,14 +430,14 @@ class GitHubCompliancePublisherChallengerTest {
     }
 
     @Test
-    @DisplayName("Sample Fixture End-to-End: Sample runId (11111111-...) sets isSampleFixture in index.json and generates sample SVG badges")
+    @DisplayName("Sample Fixture End-to-End: Explicit isSampleFixture flag sets catalog flag and generates sample SVG badges")
     void testSampleFixtureEndToEndWiresCatalogFlagAndSampleBadges() throws Exception {
-        UUID sampleRunId = UUID.fromString("11111111-2222-3333-4444-555555555555");
+        UUID sampleRunId = UUID.randomUUID();
         CompliancePublishRequest request = new CompliancePublishRequest(
                 sampleRunId, "SCIM Sandbox (Go)", "scim-sandbox-go", "0.1.21",
                 "SCIM Sandbox", "https://github.com/scimsandbox/scim-server-impl-go", "Apache-2.0",
                 98, "EMERALD", 9, 10
-        );
+        ).withSampleFixture(true);
 
         CompliancePublicationResult result = publisherService.publish(request);
         assertThat(result.success()).isTrue();

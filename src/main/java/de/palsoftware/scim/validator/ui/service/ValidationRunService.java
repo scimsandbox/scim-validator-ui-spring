@@ -417,6 +417,8 @@ public class ValidationRunService {
         return publicationRepository.findOwnedPublications(actorEmail, sort);
     }
 
+    public static final String PENDING_RESERVATION_PR_URL = "PENDING_RESERVATION";
+
     public void validatePublishQuota(String actorEmail) {
         long currentPublishedCount = countOwnedPublications(actorEmail);
         if (currentPublishedCount >= maxPublishedRunsPerUser) {
@@ -426,6 +428,10 @@ public class ValidationRunService {
     }
 
     public void validateProductSlugOwnership(String productSlug, String ownerEmail) {
+        validateProductSlugOwnership(productSlug, ownerEmail, null);
+    }
+
+    public void validateProductSlugOwnership(String productSlug, String ownerEmail, UUID currentRunId) {
         if (publicationRepository == null || productSlug == null || productSlug.isBlank()
                 || ownerEmail == null || ownerEmail.isBlank()) {
             return;
@@ -434,6 +440,9 @@ public class ValidationRunService {
                 .findByProductSlugIgnoreCaseOrderByPublishedAtDesc(productSlug);
         if (existing != null) {
             for (ValidationRunPublication p : existing) {
+                if (currentRunId != null && currentRunId.equals(p.getRunId())) {
+                    continue;
+                }
                 if (p.getCreatedByEmail() != null && !p.getCreatedByEmail().equalsIgnoreCase(ownerEmail)) {
                     throw new ResponseStatusException(HttpStatus.CONFLICT,
                             "Product slug '" + productSlug + "' is already owned by another publisher.");
@@ -469,11 +478,10 @@ public class ValidationRunService {
     }
 
     @Transactional
-    public ValidationRunPublication recordPublication(
+    public ValidationRunPublication reservePublication(
             ValidationRun run,
             String actorEmail,
-            CompliancePublishRequest request,
-            CompliancePublicationResult result) {
+            CompliancePublishRequest request) {
         ValidationRun managedRun = (runRepository != null && run.getId() != null)
                 ? runRepository.findById(run.getId()).orElse(run)
                 : run;
@@ -486,7 +494,115 @@ public class ValidationRunService {
                 ? managedRun.getCreatedByEmail()
                 : ((run.getCreatedByEmail() != null && !run.getCreatedByEmail().isBlank()) ? run.getCreatedByEmail() : actorEmail);
         validatePublishQuota(ownerEmail);
-        validateProductSlugOwnership(request.productSlug(), ownerEmail);
+        validateProductSlugOwnership(request.productSlug(), ownerEmail, managedRun.getId());
+
+        ValidationRunPublication reservation = new ValidationRunPublication();
+        reservation.setRun(managedRun);
+        reservation.setCreatedByEmail(ownerEmail);
+        reservation.setProductName(request.productName());
+        reservation.setProductSlug(request.productSlug());
+        reservation.setProductVersion(request.productVersion());
+        reservation.setVendorName(request.vendorName());
+        reservation.setProjectUrl(request.projectUrl());
+        reservation.setLicenseType(request.licenseType());
+        reservation.setShowSubmitter(request.showSubmitter());
+        reservation.setCoreScore(request.coreScore());
+        reservation.setSupportedCapabilities(request.supportedCapabilities());
+        reservation.setTotalCapabilities(request.totalCapabilities());
+        reservation.setReportUrl("https://scimsandbox.net/compliance/?run=" + managedRun.getId());
+        reservation.setBadgeUrl("https://scimsandbox.net/compliance/badges/" + managedRun.getId() + ".svg");
+        reservation.setPrUrl(PENDING_RESERVATION_PR_URL);
+        reservation.setPublishedAt(OffsetDateTime.now(ZoneOffset.UTC));
+
+        managedRun.setPublication(reservation);
+        if (publicationRepository != null) {
+            reservation = publicationRepository.save(reservation);
+        }
+        if (runRepository != null) {
+            runRepository.save(managedRun);
+        }
+        if (managedRun != run) {
+            run.setPublication(reservation);
+        }
+        return reservation;
+    }
+
+    @Transactional
+    public void releasePublicationReservation(ValidationRun run) {
+        if (run == null || run.getId() == null) {
+            return;
+        }
+        UUID runId = run.getId();
+        if (runRepository != null) {
+            runRepository.findById(runId).ifPresent(managedRun -> {
+                if (managedRun.getPublication() != null
+                        && PENDING_RESERVATION_PR_URL.equals(managedRun.getPublication().getPrUrl())) {
+                    managedRun.setPublication(null);
+                    runRepository.save(managedRun);
+                }
+            });
+        }
+        if (publicationRepository != null) {
+            publicationRepository.findById(runId).ifPresent(existing -> {
+                if (PENDING_RESERVATION_PR_URL.equals(existing.getPrUrl())) {
+                    publicationRepository.deleteById(runId);
+                }
+            });
+        }
+        if (run.getPublication() != null && PENDING_RESERVATION_PR_URL.equals(run.getPublication().getPrUrl())) {
+            run.setPublication(null);
+        }
+    }
+
+    @Transactional
+    public ValidationRunPublication recordPublication(
+            ValidationRun run,
+            String actorEmail,
+            CompliancePublishRequest request,
+            CompliancePublicationResult result) {
+        ValidationRun managedRun = (runRepository != null && run.getId() != null)
+                ? runRepository.findById(run.getId()).orElse(run)
+                : run;
+
+        ValidationRunPublication existingReservation = null;
+        if (publicationRepository != null && managedRun.getId() != null) {
+            ValidationRunPublication found = publicationRepository.findById(managedRun.getId()).orElse(null);
+            if (found != null && PENDING_RESERVATION_PR_URL.equals(found.getPrUrl())) {
+                existingReservation = found;
+            }
+        } else if (managedRun.getPublication() != null
+                && PENDING_RESERVATION_PR_URL.equals(managedRun.getPublication().getPrUrl())) {
+            existingReservation = managedRun.getPublication();
+        }
+
+        if (existingReservation != null) {
+            existingReservation.setReportUrl(result.reportUrl());
+            existingReservation.setBadgeUrl(result.badgeUrl());
+            existingReservation.setPrUrl(result.prUrl());
+            existingReservation.setPublishedAt(result.publishedAt() != null ? result.publishedAt() : OffsetDateTime.now(ZoneOffset.UTC));
+            managedRun.setPublication(existingReservation);
+            if (publicationRepository != null) {
+                existingReservation = publicationRepository.save(existingReservation);
+            }
+            if (runRepository != null) {
+                runRepository.save(managedRun);
+            }
+            if (managedRun != run) {
+                run.setPublication(existingReservation);
+            }
+            return existingReservation;
+        }
+
+        if (run.isPublished()
+                || managedRun.isPublished()
+                || (publicationRepository != null && managedRun.getId() != null && publicationRepository.existsById(managedRun.getId()))) {
+            throw new IllegalStateException("Validation run has already been published: " + managedRun.getId());
+        }
+        String ownerEmail = (managedRun.getCreatedByEmail() != null && !managedRun.getCreatedByEmail().isBlank())
+                ? managedRun.getCreatedByEmail()
+                : ((run.getCreatedByEmail() != null && !run.getCreatedByEmail().isBlank()) ? run.getCreatedByEmail() : actorEmail);
+        validatePublishQuota(ownerEmail);
+        validateProductSlugOwnership(request.productSlug(), ownerEmail, managedRun.getId());
 
         ValidationRunPublication publication = new ValidationRunPublication();
         publication.setRun(managedRun);

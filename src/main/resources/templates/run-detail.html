@@ -1407,8 +1407,8 @@
                         <h3 style="margin: 0; font-size: 1.05rem; font-weight: 700; color: #fca5a5;">Not Eligible for Directory Publication</h3>
                         <span class="status-badge status-ineligible">Ineligible</span>
                     </div>
-                    <p style="margin: 6px 0 0; font-size: 13.5px; color: #e2e8f0; line-height: 1.5;" th:text="${scorecard.publishIneligibilityReason}">
-                        Core RFC Conformance score is below the minimum 50% publishing threshold.
+                    <p style="margin: 6px 0 0; font-size: 13.5px; color: #e2e8f0; line-height: 1.5;" th:text="${scorecard.publishIneligibilityReason != null ? scorecard.publishIneligibilityReason : ('Core RFC Conformance score is below the minimum ' + (minPublishScore != null ? minPublishScore : 50) + '% publishing threshold.')}">
+                        Core RFC Conformance score is below the minimum publishing threshold.
                     </p>
                     <div style="margin-top: 10px; font-size: 12.5px; color: #94a3b8;">
                         <span th:text="${'Directory Publication Criteria: (1) Run status must be completed (PASSED or FAILED), and (2) Core RFC Conformance score must be ≥ ' + (minPublishScore != null ? minPublishScore : 50) + '%.'}">Directory Publication Criteria: (1) Run status must be completed (PASSED or FAILED), and (2) Core RFC Conformance score must be &ge; 50%.</span>

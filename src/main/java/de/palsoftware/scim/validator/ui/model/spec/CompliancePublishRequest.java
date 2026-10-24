@@ -22,8 +22,29 @@ public record CompliancePublishRequest(
         @JsonProperty("totalCapabilities") int totalCapabilities,
         @JsonProperty("actorEmail") String actorEmail,
         @JsonProperty("targetUrl") String targetUrl,
-        @JsonIgnore ComplianceScorecardView scorecard
+        @JsonIgnore ComplianceScorecardView scorecard,
+        @JsonProperty("isSampleFixture") Boolean isSampleFixture
 ) {
+    public CompliancePublishRequest(
+            UUID runId,
+            String productName,
+            String productSlug,
+            String productVersion,
+            String vendorName,
+            String projectUrl,
+            String licenseType,
+            boolean showSubmitter,
+            int coreScore,
+            String colourGradient,
+            int supportedCapabilities,
+            int totalCapabilities,
+            String actorEmail,
+            String targetUrl,
+            ComplianceScorecardView scorecard) {
+        this(runId, productName, productSlug, productVersion, vendorName, projectUrl,
+                licenseType, showSubmitter, coreScore, colourGradient, supportedCapabilities, totalCapabilities, actorEmail, targetUrl, scorecard, null);
+    }
+
     public CompliancePublishRequest(
             UUID runId,
             String productName,
@@ -40,7 +61,7 @@ public record CompliancePublishRequest(
             String actorEmail,
             String targetUrl) {
         this(runId, productName, productSlug, productVersion, vendorName, projectUrl,
-                licenseType, showSubmitter, coreScore, colourGradient, supportedCapabilities, totalCapabilities, actorEmail, targetUrl, null);
+                licenseType, showSubmitter, coreScore, colourGradient, supportedCapabilities, totalCapabilities, actorEmail, targetUrl, null, null);
     }
 
     public CompliancePublishRequest(
@@ -58,7 +79,7 @@ public record CompliancePublishRequest(
             int totalCapabilities,
             String actorEmail) {
         this(runId, productName, productSlug, productVersion, vendorName, projectUrl,
-                licenseType, showSubmitter, coreScore, colourGradient, supportedCapabilities, totalCapabilities, actorEmail, null, null);
+                licenseType, showSubmitter, coreScore, colourGradient, supportedCapabilities, totalCapabilities, actorEmail, null, null, null);
     }
 
     public CompliancePublishRequest(
@@ -75,7 +96,7 @@ public record CompliancePublishRequest(
             int totalCapabilities,
             String actorEmail) {
         this(runId, productName, productSlug, productVersion, vendorName, projectUrl,
-                licenseType, false, coreScore, colourGradient, supportedCapabilities, totalCapabilities, actorEmail, null, null);
+                licenseType, false, coreScore, colourGradient, supportedCapabilities, totalCapabilities, actorEmail, null, null, null);
     }
 
     public CompliancePublishRequest(
@@ -92,7 +113,7 @@ public record CompliancePublishRequest(
             int supportedCapabilities,
             int totalCapabilities) {
         this(runId, productName, productSlug, productVersion, vendorName, projectUrl,
-                licenseType, showSubmitter, coreScore, colourGradient, supportedCapabilities, totalCapabilities, null, null, null);
+                licenseType, showSubmitter, coreScore, colourGradient, supportedCapabilities, totalCapabilities, null, null, null, null);
     }
 
     public CompliancePublishRequest(
@@ -108,20 +129,27 @@ public record CompliancePublishRequest(
             int supportedCapabilities,
             int totalCapabilities) {
         this(runId, productName, productSlug, productVersion, vendorName, projectUrl,
-                licenseType, false, coreScore, colourGradient, supportedCapabilities, totalCapabilities, null, null, null);
+                licenseType, false, coreScore, colourGradient, supportedCapabilities, totalCapabilities, null, null, null, null);
     }
 
     public CompliancePublishRequest withTargetUrl(String targetUrl) {
         return new CompliancePublishRequest(
                 runId(), productName(), productSlug(), productVersion(), vendorName(),
                 projectUrl(), licenseType(), showSubmitter(), coreScore(), colourGradient(),
-                supportedCapabilities(), totalCapabilities(), actorEmail(), targetUrl, scorecard());
+                supportedCapabilities(), totalCapabilities(), actorEmail(), targetUrl, scorecard(), isSampleFixture());
     }
 
     public CompliancePublishRequest withScorecard(ComplianceScorecardView scorecard) {
         return new CompliancePublishRequest(
                 runId(), productName(), productSlug(), productVersion(), vendorName(),
                 projectUrl(), licenseType(), showSubmitter(), coreScore(), colourGradient(),
-                supportedCapabilities(), totalCapabilities(), actorEmail(), targetUrl(), scorecard);
+                supportedCapabilities(), totalCapabilities(), actorEmail(), targetUrl(), scorecard, isSampleFixture());
+    }
+
+    public CompliancePublishRequest withSampleFixture(boolean sampleFixture) {
+        return new CompliancePublishRequest(
+                runId(), productName(), productSlug(), productVersion(), vendorName(),
+                projectUrl(), licenseType(), showSubmitter(), coreScore(), colourGradient(),
+                supportedCapabilities(), totalCapabilities(), actorEmail(), targetUrl(), scorecard(), sampleFixture ? Boolean.TRUE : Boolean.FALSE);
     }
 }

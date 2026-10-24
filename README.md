@@ -25,7 +25,7 @@ This repository contains two surfaces of the SCIM sandbox:
 - the SCIM provider implementation you validate against
 - the validator spec source code or bootstrap logic
 - the database migrations for `validator_mgmt_users`, `validation_run`,
-  `validation_test_result`, or `validation_http_exchange`
+  `validation_run_publication`, `validation_test_result`, or `validation_http_exchange`
 - Docker Compose, Kubernetes manifests, or the old multi-module reactor layout
 
 ## Features
@@ -130,6 +130,7 @@ For local development, that usually means either:
 | `APP_GITHUB_API_URL` | no | GitHub API base URL (`app.github.api-url`). Default: `https://api.github.com` |
 | `APP_COMPLIANCE_MIN_PUBLISH_SCORE` | no | Minimum Core RFC Conformance percentage required to publish (`app.compliance.min-publish-score`). Default: `50` |
 | `APP_COMPLIANCE_PUBLIC_BASE_URL` | no | Public compliance directory base URL (`app.compliance.public-base-url`). Default: `https://scimsandbox.net` |
+| `APP_COMPLIANCE_SAMPLE_RUN_IDS` | no | Comma-separated UUIDs of official sample fixture runs (`app.compliance.sample-run-ids`). |
 | `SERVER_PORT` | no | Spring Boot server port. Default: `8082` |
 
 ## Running Locally

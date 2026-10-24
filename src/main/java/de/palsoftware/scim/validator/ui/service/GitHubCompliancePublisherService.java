@@ -45,7 +45,8 @@ public class GitHubCompliancePublisherService {
     private final HttpClient httpClient;
     private final ValidationRunRepository runRepository;
     private final ReentrantLock publishLock = new ReentrantLock(true);
-    private final Set<UUID> claimedRunIds = ConcurrentHashMap.newKeySet();
+    private static final long CLAIM_TTL_MILLIS = Duration.ofMinutes(5).toMillis();
+    private final Map<UUID, Long> claimedRunTimestamps = new ConcurrentHashMap<>();
 
     @Autowired(required = false)
     private ValidationRunPublicationRepository publicationRepository;
@@ -134,24 +135,40 @@ public class GitHubCompliancePublisherService {
 
         publishLock.lock();
         try {
-            if (claimedRunIds.contains(request.runId()) || isAlreadyPublished(request.runId())) {
+            if (isClaimedInMemory(request.runId()) || isAlreadyPublished(request.runId())) {
                 throw new IllegalStateException("Validation run has already been published: " + request.runId());
             }
             validateSlugOwnership(request);
-            claimedRunIds.add(request.runId());
+            claimedRunTimestamps.put(request.runId(), System.currentTimeMillis());
             try {
                 CompliancePublicationResult result = executePublishWithRetry(request, 3);
                 if (result == null || !result.success()) {
-                    claimedRunIds.remove(request.runId());
+                    releaseClaim(request.runId());
                 }
                 return result;
             } catch (RuntimeException | Error e) {
-                claimedRunIds.remove(request.runId());
+                releaseClaim(request.runId());
                 throw e;
             }
         } finally {
             publishLock.unlock();
         }
+    }
+
+    public void releaseClaim(UUID runId) {
+        if (runId != null) {
+            claimedRunTimestamps.remove(runId);
+        }
+    }
+
+    private boolean isClaimedInMemory(UUID runId) {
+        if (runId == null) {
+            return false;
+        }
+        long now = System.currentTimeMillis();
+        claimedRunTimestamps.entrySet().removeIf(entry -> (now - entry.getValue()) > CLAIM_TTL_MILLIS);
+        Long claimedAt = claimedRunTimestamps.get(runId);
+        return claimedAt != null && (now - claimedAt) <= CLAIM_TTL_MILLIS;
     }
 
     private void validateSlugOwnership(CompliancePublishRequest request) {
@@ -178,6 +195,9 @@ public class GitHubCompliancePublisherService {
                     .findByProductSlugIgnoreCaseOrderByPublishedAtDesc(request.productSlug().trim());
             if (existingForSlug != null) {
                 for (ValidationRunPublication pub : existingForSlug) {
+                    if (Objects.equals(pub.getRunId(), request.runId())) {
+                        continue;
+                    }
                     if (pub.getCreatedByEmail() != null
                             && !pub.getCreatedByEmail().trim().equalsIgnoreCase(effectiveOwner)) {
                         throw new IllegalStateException("Product slug '" + request.productSlug()
@@ -197,11 +217,21 @@ public class GitHubCompliancePublisherService {
             return false;
         }
         try {
-            if (publicationRepository != null && publicationRepository.existsById(runId)) {
-                return true;
+            if (publicationRepository != null) {
+                Optional<ValidationRunPublication> existing = publicationRepository.findById(runId);
+                if (existing.isPresent()) {
+                    return !ValidationRunService.PENDING_RESERVATION_PR_URL.equals(existing.get().getPrUrl());
+                }
+                if (publicationRepository.existsById(runId)) {
+                    return true;
+                }
             }
             if (runRepository != null) {
-                return runRepository.findById(runId).map(ValidationRun::isPublished).orElse(false);
+                Optional<ValidationRun> runOpt = runRepository.findById(runId);
+                if (runOpt.isPresent() && runOpt.get().getPublication() != null) {
+                    return !ValidationRunService.PENDING_RESERVATION_PR_URL.equals(
+                            runOpt.get().getPublication().getPrUrl());
+                }
             }
         } catch (Exception e) {
             log.warn("Could not check existing publication state for run {}: {}", runId, e.getMessage());
@@ -306,8 +336,7 @@ public class GitHubCompliancePublisherService {
                 break;
             }
         }
-        Boolean preservedSampleFlag = existingIndex >= 0 ? catalog.get(existingIndex).isSampleFixture() : null;
-        boolean isSample = Boolean.TRUE.equals(preservedSampleFlag)
+        boolean isSample = Boolean.TRUE.equals(req.isSampleFixture())
                 || (sanitizedReport.metadata() != null && Boolean.TRUE.equals(sanitizedReport.metadata().isSampleFixture()));
 
         String runBadgeSvg = badgeGenerator.generate(req.coreScore(), req.supportedCapabilities(), req.totalCapabilities(), shortRunId, isSample);

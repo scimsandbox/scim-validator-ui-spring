@@ -60,7 +60,7 @@ This repo validates an existing schema on startup. It does not create tables.
 
 Before running locally, apply the migrations from `scim-validator-db` so the
 database already contains `validator_mgmt_users`, `validation_run`,
-`validation_test_result`, and `validation_http_exchange`.
+`validation_run_publication`, `validation_test_result`, and `validation_http_exchange`.
 
 ### Validator dependency expectation
 

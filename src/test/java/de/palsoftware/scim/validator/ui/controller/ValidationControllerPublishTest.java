@@ -342,7 +342,69 @@ class ValidationControllerPublishTest {
         assertThat(redirect).isEqualTo("redirect:/runs/" + runId);
         assertThat(redirectAttributes.getFlashAttributes()).containsKey("errorMessage");
         assertThat(redirectAttributes.getFlashAttributes().get("errorMessage").toString()).contains("GitHub publishing failed");
+        verify(gitHubCompliancePublisherService).releaseClaim(runId);
+        verify(validationRunService).releasePublicationReservation(runEntity);
         verify(validationRunService, never()).recordPublication(any(), any(), any(), any());
+    }
+
+    @Test
+    void publishRun_targetHostInProductName_rejectsWithFriendlyErrorWithoutCallingPublisher() {
+        UUID runId = UUID.randomUUID();
+        ValidationRun runEntity = createSampleRun(runId, "developer@example.com", "PASSED");
+
+        CompliancePublishFormData form = new CompliancePublishFormData(
+                "Internal Server at scim.example.com", "internal-server", "1.0.0", "Vendor",
+                "https://github.com/org/repo", "Apache-2.0", false
+        );
+        BindingResult bindingResult = new BeanPropertyBindingResult(form, "publishForm");
+        RedirectAttributes redirectAttributes = new RedirectAttributesModelMap();
+
+        when(validationRunService.getRunEntity(runId, "developer@example.com", false)).thenReturn(runEntity);
+
+        String redirect = controller.publishRun(runId, form, bindingResult, userAuth, redirectAttributes);
+
+        assertThat(redirect).isEqualTo("redirect:/runs/" + runId);
+        assertThat(redirectAttributes.getFlashAttributes()).containsKey("errorMessage");
+        assertThat(redirectAttributes.getFlashAttributes().get("errorMessage").toString())
+                .contains("must not contain the validation target host (scim.example.com)");
+        verify(gitHubCompliancePublisherService, never()).publish(any());
+    }
+
+    @Test
+    void publishRun_recordPublicationThrows_releasesClaimAndReservation() {
+        UUID runId = UUID.randomUUID();
+        ValidationRun runEntity = createSampleRun(runId, "developer@example.com", "PASSED");
+        ComplianceScorecardView scorecard = createSampleScorecard(92, true, null);
+        CompliancePublicationResult pubResult = new CompliancePublicationResult(
+                true, runId,
+                "https://github.com/scimsandbox/scim-website/pull/12",
+                "https://scimsandbox.net/compliance/?run=" + runId,
+                "https://scimsandbox.net/compliance/badges/" + runId + ".svg",
+                "sha123456", null
+        );
+
+        CompliancePublishFormData form = new CompliancePublishFormData(
+                "Apache Syncope", "apache-syncope", "3.0.0", "ASF", "https://syncope.apache.org", "Apache-2.0", true
+        );
+        BindingResult bindingResult = new BeanPropertyBindingResult(form, "publishForm");
+        RedirectAttributes redirectAttributes = new RedirectAttributesModelMap();
+
+        when(validationRunService.getRunEntity(runId, "developer@example.com", false)).thenReturn(runEntity);
+        when(validationRunService.getRawTestResults(runId)).thenReturn(Collections.emptyList());
+        when(validationRunService.getRawExchanges(runId)).thenReturn(Collections.emptyList());
+        when(complianceScoreService.computeScorecard(runEntity, Collections.emptyList(), Collections.emptyList())).thenReturn(scorecard);
+        when(complianceScoreService.isEligibleForPublish(scorecard, runEntity)).thenReturn(true);
+        when(gitHubCompliancePublisherService.isEnabled()).thenReturn(true);
+        when(gitHubCompliancePublisherService.publish(any(CompliancePublishRequest.class))).thenReturn(pubResult);
+        org.mockito.Mockito.doThrow(new RuntimeException("DB connection lost"))
+                .when(validationRunService).recordPublication(eq(runEntity), eq("developer@example.com"), any(CompliancePublishRequest.class), eq(pubResult));
+
+        String redirect = controller.publishRun(runId, form, bindingResult, userAuth, redirectAttributes);
+
+        assertThat(redirect).isEqualTo("redirect:/runs/" + runId);
+        assertThat(redirectAttributes.getFlashAttributes()).containsKey("errorMessage");
+        verify(gitHubCompliancePublisherService).releaseClaim(runId);
+        verify(validationRunService).releasePublicationReservation(runEntity);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
