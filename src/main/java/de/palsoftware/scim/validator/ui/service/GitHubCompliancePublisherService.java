@@ -196,6 +196,16 @@ public class GitHubCompliancePublisherService {
         String runBadgeSvg = badgeGenerator.generate(req.coreScore(), req.supportedCapabilities(), req.totalCapabilities(), shortRunId);
         String productBadgeSvg = badgeGenerator.generate(req.coreScore(), req.supportedCapabilities(), req.totalCapabilities(), req.productSlug());
 
+        int existingIndex = -1;
+        for (int i = 0; i < catalog.size(); i++) {
+            ComplianceCatalogEntry entry = catalog.get(i);
+            if (Objects.equals(entry.runId(), runId)) {
+                existingIndex = i;
+                break;
+            }
+        }
+        Boolean preservedSampleFlag = existingIndex >= 0 ? catalog.get(existingIndex).isSampleFixture() : null;
+
         // Update catalog in-memory
         ComplianceCatalogEntry newEntry = new ComplianceCatalogEntry(
                 runId,
@@ -211,17 +221,10 @@ public class GitHubCompliancePublisherService {
                 req.totalCapabilities(),
                 reportPath,
                 productBadgePath,
-                publishedAt
+                publishedAt != null ? publishedAt.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME) : null,
+                preservedSampleFlag
         );
 
-        int existingIndex = -1;
-        for (int i = 0; i < catalog.size(); i++) {
-            ComplianceCatalogEntry entry = catalog.get(i);
-            if (Objects.equals(entry.runId(), runId)) {
-                existingIndex = i;
-                break;
-            }
-        }
         if (existingIndex >= 0) {
             catalog.set(existingIndex, newEntry);
         } else {
