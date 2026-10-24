@@ -11,7 +11,11 @@ public class ComplianceBadgeGenerator {
     }
 
     public String generate(int score, int compliantCaps, int totalCaps, String badgeId) {
-        return generateBadgeSvg(score, compliantCaps, totalCaps, badgeId);
+        return generateBadgeSvg(score, compliantCaps, totalCaps, badgeId, false);
+    }
+
+    public String generate(int score, int compliantCaps, int totalCaps, String badgeId, boolean isSample) {
+        return generateBadgeSvg(score, compliantCaps, totalCaps, badgeId, isSample);
     }
 
     /**

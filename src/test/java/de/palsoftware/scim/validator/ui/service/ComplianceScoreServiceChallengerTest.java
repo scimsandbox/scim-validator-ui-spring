@@ -270,7 +270,7 @@ public class ComplianceScoreServiceChallengerTest {
                 assertThat(scorecard.activeRequirementsCount()).isEqualTo(0);
                 assertThat(scorecard.supportedCapabilitiesCount()).isEqualTo(0);
                 assertThat(scorecard.compliantCapabilitiesCount()).isEqualTo(0);
-                assertThat(scorecard.mustBreakdown().conformancePercent()).isEqualTo(100);
+                assertThat(scorecard.mustBreakdown().conformancePercent()).isEqualTo(0);
             }).doesNotThrowAnyException();
         }
 
@@ -287,10 +287,10 @@ public class ComplianceScoreServiceChallengerTest {
             assertThat(scorecard.untestedRequirementsCount()).isGreaterThan(0);
             assertThat(scorecard.supportedCapabilitiesCount()).isEqualTo(0);
 
-            // Normative breakdowns default to 100% conformance when totalPoints is 0
+            // Normative breakdowns default to 0% conformance when totalPoints is 0
             assertThat(scorecard.mustBreakdown().totalPoints()).isEqualTo(0.0);
             assertThat(scorecard.mustBreakdown().earnedPoints()).isEqualTo(0.0);
-            assertThat(scorecard.mustBreakdown().conformancePercent()).isEqualTo(100);
+            assertThat(scorecard.mustBreakdown().conformancePercent()).isEqualTo(0);
         }
 
         @Test

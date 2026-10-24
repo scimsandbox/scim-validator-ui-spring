@@ -377,6 +377,151 @@ class GitHubCompliancePublisherChallengerTest {
     }
 
     @Test
+    @DisplayName("Duplicate Publish Race: Concurrent threads publishing the same runId allow only one PR and reject duplicates")
+    void testConcurrentDuplicateRunIdRejectedBeforeOpeningSecondGitHubPr() throws Exception {
+        UUID sameRunId = UUID.randomUUID();
+        int threads = 5;
+        ExecutorService executor = Executors.newFixedThreadPool(threads);
+        CountDownLatch startLatch = new CountDownLatch(1);
+        CountDownLatch doneLatch = new CountDownLatch(threads);
+
+        AtomicInteger successes = new AtomicInteger(0);
+        AtomicInteger duplicateRejections = new AtomicInteger(0);
+        List<Throwable> unexpectedErrors = new CopyOnWriteArrayList<>();
+
+        for (int i = 0; i < threads; i++) {
+            executor.submit(() -> {
+                try {
+                    startLatch.await();
+                    CompliancePublishRequest req = new CompliancePublishRequest(
+                            sameRunId, "Same Run Product", "same-run-product", "1.0.0",
+                            "Vendor", "https://example.com", "Apache-2.0", 95, "EMERALD", 9, 10
+                    );
+                    CompliancePublicationResult res = publisherService.publish(req);
+                    if (res.success()) {
+                        successes.incrementAndGet();
+                    }
+                } catch (IllegalStateException ex) {
+                    if (ex.getMessage() != null && ex.getMessage().contains("already been published")) {
+                        duplicateRejections.incrementAndGet();
+                    } else {
+                        unexpectedErrors.add(ex);
+                    }
+                } catch (Throwable t) {
+                    unexpectedErrors.add(t);
+                } finally {
+                    doneLatch.countDown();
+                }
+            });
+        }
+
+        startLatch.countDown();
+        assertThat(doneLatch.await(15, TimeUnit.SECONDS)).isTrue();
+        executor.shutdown();
+
+        assertThat(unexpectedErrors).isEmpty();
+        assertThat(successes.get()).isEqualTo(1);
+        assertThat(duplicateRejections.get()).isEqualTo(threads - 1);
+
+        long prsOpened = mockServer.getRecordedRequests().stream()
+                .filter(r -> "POST".equals(r.method()) && r.path().endsWith("/pulls"))
+                .count();
+        assertThat(prsOpened).as("Exactly 1 GitHub PR must be opened for the same runId").isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("Sample Fixture End-to-End: Sample runId (11111111-...) sets isSampleFixture in index.json and generates sample SVG badges")
+    void testSampleFixtureEndToEndWiresCatalogFlagAndSampleBadges() throws Exception {
+        UUID sampleRunId = UUID.fromString("11111111-2222-3333-4444-555555555555");
+        CompliancePublishRequest request = new CompliancePublishRequest(
+                sampleRunId, "SCIM Sandbox (Go)", "scim-sandbox-go", "0.1.21",
+                "SCIM Sandbox", "https://github.com/scimsandbox/scim-server-impl-go", "Apache-2.0",
+                98, "EMERALD", 9, 10
+        );
+
+        CompliancePublicationResult result = publisherService.publish(request);
+        assertThat(result.success()).isTrue();
+
+        var treeReq = mockServer.getRecordedRequests().stream()
+                .filter(r -> "POST".equals(r.method()) && r.path().endsWith("/git/trees"))
+                .findFirst().orElseThrow();
+        JsonNode treeJson = objectMapper.readTree(treeReq.body());
+
+        String indexContent = null;
+        String runBadgeSvg = null;
+        String productBadgeSvg = null;
+        for (JsonNode entry : treeJson.path("tree")) {
+            String p = entry.path("path").asText();
+            if ("compliance/index.json".equals(p)) {
+                indexContent = entry.path("content").asText();
+            } else if (("compliance/badges/" + sampleRunId + ".svg").equals(p)) {
+                runBadgeSvg = entry.path("content").asText();
+            } else if ("compliance/badges/scim-sandbox-go.svg".equals(p)) {
+                productBadgeSvg = entry.path("content").asText();
+            }
+        }
+
+        assertThat(indexContent).isNotNull();
+        List<ComplianceCatalogEntry> catalog = objectMapper.readValue(indexContent, new TypeReference<>() {});
+        assertThat(catalog).hasSize(1);
+        assertThat(catalog.get(0).isSampleFixture()).isTrue();
+
+        assertThat(runBadgeSvg).contains("SCIM 2.0 (sample)").contains("sample");
+        assertThat(productBadgeSvg).contains("SCIM 2.0 (sample)").contains("sample");
+    }
+
+    @Test
+    @DisplayName("Metadata Sanitization: assertSanitized rejects full targetUrl in metadata and host in productName/vendorName")
+    void testMetadataSanitizationCatchesTargetUrlInMetadataAndAllowsDistinctPublicProjectUrl() {
+        String targetUrl = "https://scim-internal.corp.example.com/scim/v2";
+
+        // 1. Pasting full targetUrl into projectUrl or productName must be rejected
+        String leakedInProjectUrl = """
+                {
+                  "metadata": {
+                    "productName": "Safe Name",
+                    "projectUrl": "https://scim-internal.corp.example.com/scim/v2"
+                  },
+                  "scorecard": { "coreScore": 95 },
+                  "testResults": []
+                }
+                """;
+        assertThatThrownBy(() -> ComplianceReportGenerator.assertSanitized(leakedInProjectUrl, targetUrl))
+                .isInstanceOf(SecurityException.class)
+                .hasMessageContaining("targetUrl detected");
+
+        // 2. Target host leaked in metadata.productName must be rejected even when metadata is present
+        String hostInProductName = """
+                {
+                  "metadata": {
+                    "productName": "Server at scim-internal.corp.example.com",
+                    "projectUrl": "https://github.com/org/repo"
+                  },
+                  "scorecard": { "coreScore": 95 },
+                  "testResults": []
+                }
+                """;
+        assertThatThrownBy(() -> ComplianceReportGenerator.assertSanitized(hostInProductName, targetUrl))
+                .isInstanceOf(SecurityException.class)
+                .hasMessageContaining("target host");
+
+        // 3. Distinct public projectUrl and submitter on the same domain are allowed
+        String legitimatePublicMetadata = """
+                {
+                  "metadata": {
+                    "productName": "Corp SCIM Server",
+                    "vendorName": "Corp Inc",
+                    "projectUrl": "https://scim-internal.corp.example.com/open-source/scim",
+                    "submitter": "admin@scim-internal.corp.example.com"
+                  },
+                  "scorecard": { "coreScore": 95 },
+                  "testResults": []
+                }
+                """;
+        ComplianceReportGenerator.assertSanitized(legitimatePublicMetadata, targetUrl);
+    }
+
+    @Test
     @DisplayName("Fault Injection (401): Authentication failure rejects operation without creating or leaking branches")
     void testAuthenticationFailure401RejectsOperation() {
         mockServer.setSimulateAuthFailure(true);

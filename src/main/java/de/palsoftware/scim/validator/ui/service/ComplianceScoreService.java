@@ -27,6 +27,10 @@ public class ComplianceScoreService {
     @Value("${app.compliance.min-publish-score:50}")
     private int minPublishScore = DEFAULT_MIN_PUBLISH_SCORE;
 
+    public int getMinPublishScore() {
+        return minPublishScore;
+    }
+
     public static final List<String> OPTIONAL_CAPABILITIES = List.of(
             "patch", "filter", "sort", "etag", "bulk", "search",
             "changePassword", "enterprise", "cursorPagination", "async"
@@ -431,7 +435,7 @@ public class ComplianceScoreService {
                 }
             }
 
-            int percent = totalPts > 0 ? (int) Math.round((100.0 * earned) / totalPts) : 100;
+            int percent = totalPts > 0 ? (int) Math.round((100.0 * earned) / totalPts) : 0;
             summaries.put(rfc, new RfcSectionSummary(
                     rfc, titles.getOrDefault(rfc, "RFC " + rfc), total, active, compliant, earned, totalPts, percent));
         }

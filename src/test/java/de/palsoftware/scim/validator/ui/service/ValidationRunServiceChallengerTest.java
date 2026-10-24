@@ -684,6 +684,14 @@ public class ValidationRunServiceChallengerTest {
         }
 
         @Override
+        public List<ValidationRunPublication> findByProductSlugIgnoreCaseOrderByPublishedAtDesc(String productSlug) {
+            return db.values().stream()
+                    .filter(p -> p.getProductSlug() != null && p.getProductSlug().equalsIgnoreCase(productSlug))
+                    .sorted(Comparator.comparing(ValidationRunPublication::getPublishedAt, Comparator.nullsLast(Comparator.reverseOrder())))
+                    .toList();
+        }
+
+        @Override
         public Optional<ValidationRunPublication> findByRunId(UUID runId) {
             return Optional.ofNullable(db.get(runId));
         }

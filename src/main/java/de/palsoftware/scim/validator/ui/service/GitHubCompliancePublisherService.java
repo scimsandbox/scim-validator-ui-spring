@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.palsoftware.scim.validator.ui.model.ValidationRun;
+import de.palsoftware.scim.validator.ui.model.ValidationRunPublication;
 import de.palsoftware.scim.validator.ui.model.spec.*;
 import de.palsoftware.scim.validator.ui.repo.ValidationRunPublicationRepository;
 import de.palsoftware.scim.validator.ui.repo.ValidationRunRepository;
@@ -24,6 +25,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Pattern;
 
@@ -43,6 +45,7 @@ public class GitHubCompliancePublisherService {
     private final HttpClient httpClient;
     private final ValidationRunRepository runRepository;
     private final ReentrantLock publishLock = new ReentrantLock(true);
+    private final Set<UUID> claimedRunIds = ConcurrentHashMap.newKeySet();
 
     @Autowired(required = false)
     private ValidationRunPublicationRepository publicationRepository;
@@ -131,12 +134,61 @@ public class GitHubCompliancePublisherService {
 
         publishLock.lock();
         try {
-            if (isAlreadyPublished(request.runId())) {
+            if (claimedRunIds.contains(request.runId()) || isAlreadyPublished(request.runId())) {
                 throw new IllegalStateException("Validation run has already been published: " + request.runId());
             }
-            return executePublishWithRetry(request, 3);
+            validateSlugOwnership(request);
+            claimedRunIds.add(request.runId());
+            try {
+                CompliancePublicationResult result = executePublishWithRetry(request, 3);
+                if (result == null || !result.success()) {
+                    claimedRunIds.remove(request.runId());
+                }
+                return result;
+            } catch (RuntimeException | Error e) {
+                claimedRunIds.remove(request.runId());
+                throw e;
+            }
         } finally {
             publishLock.unlock();
+        }
+    }
+
+    private void validateSlugOwnership(CompliancePublishRequest request) {
+        if (publicationRepository == null || request.productSlug() == null || request.productSlug().isBlank()) {
+            return;
+        }
+        String ownerEmail = request.actorEmail();
+        if (runRepository != null && request.runId() != null) {
+            try {
+                ownerEmail = runRepository.findById(request.runId())
+                        .map(ValidationRun::getCreatedByEmail)
+                        .filter(e -> e != null && !e.isBlank())
+                        .orElse(ownerEmail);
+            } catch (Exception e) {
+                log.warn("Could not query ValidationRun for slug ownership check (runId={}): {}", request.runId(), e.getMessage());
+            }
+        }
+        if (ownerEmail == null || ownerEmail.isBlank()) {
+            return;
+        }
+        final String effectiveOwner = ownerEmail.trim();
+        try {
+            List<ValidationRunPublication> existingForSlug = publicationRepository
+                    .findByProductSlugIgnoreCaseOrderByPublishedAtDesc(request.productSlug().trim());
+            if (existingForSlug != null) {
+                for (ValidationRunPublication pub : existingForSlug) {
+                    if (pub.getCreatedByEmail() != null
+                            && !pub.getCreatedByEmail().trim().equalsIgnoreCase(effectiveOwner)) {
+                        throw new IllegalStateException("Product slug '" + request.productSlug()
+                                + "' is already owned by another publisher. Please choose a distinct product slug.");
+                    }
+                }
+            }
+        } catch (IllegalStateException e) {
+            throw e;
+        } catch (Exception e) {
+            log.warn("Could not check existing product slug ownership for {}: {}", request.productSlug(), e.getMessage());
         }
     }
 
@@ -246,9 +298,6 @@ public class GitHubCompliancePublisherService {
         String targetUrl = resolveTargetUrl(req);
         ComplianceReportGenerator.assertSanitized(reportJson, targetUrl);
 
-        String runBadgeSvg = badgeGenerator.generate(req.coreScore(), req.supportedCapabilities(), req.totalCapabilities(), shortRunId);
-        String productBadgeSvg = badgeGenerator.generate(req.coreScore(), req.supportedCapabilities(), req.totalCapabilities(), req.productSlug());
-
         int existingIndex = -1;
         for (int i = 0; i < catalog.size(); i++) {
             ComplianceCatalogEntry entry = catalog.get(i);
@@ -258,6 +307,11 @@ public class GitHubCompliancePublisherService {
             }
         }
         Boolean preservedSampleFlag = existingIndex >= 0 ? catalog.get(existingIndex).isSampleFixture() : null;
+        boolean isSample = Boolean.TRUE.equals(preservedSampleFlag)
+                || (sanitizedReport.metadata() != null && Boolean.TRUE.equals(sanitizedReport.metadata().isSampleFixture()));
+
+        String runBadgeSvg = badgeGenerator.generate(req.coreScore(), req.supportedCapabilities(), req.totalCapabilities(), shortRunId, isSample);
+        String productBadgeSvg = badgeGenerator.generate(req.coreScore(), req.supportedCapabilities(), req.totalCapabilities(), req.productSlug(), isSample);
 
         // Update catalog in-memory
         ComplianceCatalogEntry newEntry = new ComplianceCatalogEntry(
@@ -275,7 +329,7 @@ public class GitHubCompliancePublisherService {
                 reportPath,
                 productBadgePath,
                 publishedAt != null ? publishedAt.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME) : null,
-                preservedSampleFlag
+                isSample ? Boolean.TRUE : null
         );
 
         if (existingIndex >= 0) {

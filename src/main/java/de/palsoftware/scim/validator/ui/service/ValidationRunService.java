@@ -63,21 +63,6 @@ public class ValidationRunService {
 
     private static final Logger log = LoggerFactory.getLogger(ValidationRunService.class);
 
-    private static final List<String> SPEC_CLASS_NAMES = List.of(
-            "de.palsoftware.scim.validator.specs.A1_ServiceDiscoverySpec",
-            "de.palsoftware.scim.validator.specs.A2_SchemaValidationSpec",
-            "de.palsoftware.scim.validator.specs.A3_UserCrudSpec",
-            "de.palsoftware.scim.validator.specs.A4_PatchOperationsSpec",
-            "de.palsoftware.scim.validator.specs.A5_FilteringSpec",
-            "de.palsoftware.scim.validator.specs.A5_PaginationSpec",
-            "de.palsoftware.scim.validator.specs.A5_SortingSpec",
-            "de.palsoftware.scim.validator.specs.A6_GroupLifecycleSpec",
-            "de.palsoftware.scim.validator.specs.A7_BulkOperationsSpec",
-            "de.palsoftware.scim.validator.specs.A8_SecurityAndRobustnessSpec",
-            "de.palsoftware.scim.validator.specs.A9_NegativeAndEdgeCasesSpec",
-            "de.palsoftware.scim.validator.specs.A10_CursorPaginationSpec",
-            "de.palsoftware.scim.validator.specs.A11_AsyncOperationsSpec");
-
     private final ValidationRunRepository runRepository;
     private final ValidationMgmtUserRepository mgmtUserRepository;
     private final ValidationTestResultRepository testResultRepository;
@@ -440,6 +425,23 @@ public class ValidationRunService {
         }
     }
 
+    public void validateProductSlugOwnership(String productSlug, String ownerEmail) {
+        if (publicationRepository == null || productSlug == null || productSlug.isBlank()
+                || ownerEmail == null || ownerEmail.isBlank()) {
+            return;
+        }
+        List<ValidationRunPublication> existing = publicationRepository
+                .findByProductSlugIgnoreCaseOrderByPublishedAtDesc(productSlug);
+        if (existing != null) {
+            for (ValidationRunPublication p : existing) {
+                if (p.getCreatedByEmail() != null && !p.getCreatedByEmail().equalsIgnoreCase(ownerEmail)) {
+                    throw new ResponseStatusException(HttpStatus.CONFLICT,
+                            "Product slug '" + productSlug + "' is already owned by another publisher.");
+                }
+            }
+        }
+    }
+
     public ValidationRun getRunEntity(UUID runId, String actorEmail, boolean admin) {
         return requireRunAccess(runId, actorEmail, admin);
     }
@@ -472,16 +474,22 @@ public class ValidationRunService {
             String actorEmail,
             CompliancePublishRequest request,
             CompliancePublicationResult result) {
-        if (run.isPublished() || (publicationRepository != null && run.getId() != null && publicationRepository.existsById(run.getId()))) {
-            throw new IllegalStateException("Validation run has already been published: " + run.getId());
+        ValidationRun managedRun = (runRepository != null && run.getId() != null)
+                ? runRepository.findById(run.getId()).orElse(run)
+                : run;
+        if (run.isPublished()
+                || managedRun.isPublished()
+                || (publicationRepository != null && managedRun.getId() != null && publicationRepository.existsById(managedRun.getId()))) {
+            throw new IllegalStateException("Validation run has already been published: " + managedRun.getId());
         }
-        String ownerEmail = (run.getCreatedByEmail() != null && !run.getCreatedByEmail().isBlank())
-                ? run.getCreatedByEmail()
-                : actorEmail;
+        String ownerEmail = (managedRun.getCreatedByEmail() != null && !managedRun.getCreatedByEmail().isBlank())
+                ? managedRun.getCreatedByEmail()
+                : ((run.getCreatedByEmail() != null && !run.getCreatedByEmail().isBlank()) ? run.getCreatedByEmail() : actorEmail);
         validatePublishQuota(ownerEmail);
+        validateProductSlugOwnership(request.productSlug(), ownerEmail);
 
         ValidationRunPublication publication = new ValidationRunPublication();
-        publication.setRun(run);
+        publication.setRun(managedRun);
         publication.setCreatedByEmail(ownerEmail);
         publication.setProductName(request.productName());
         publication.setProductSlug(request.productSlug());
@@ -498,12 +506,15 @@ public class ValidationRunService {
         publication.setPrUrl(result.prUrl());
         publication.setPublishedAt(result.publishedAt() != null ? result.publishedAt() : OffsetDateTime.now(ZoneOffset.UTC));
 
-        run.setPublication(publication);
+        managedRun.setPublication(publication);
         if (publicationRepository != null) {
             publication = publicationRepository.save(publication);
         }
         if (runRepository != null) {
-            runRepository.save(run);
+            runRepository.save(managedRun);
+        }
+        if (managedRun != run) {
+            run.setPublication(publication);
         }
         return publication;
     }
@@ -543,7 +554,7 @@ public class ValidationRunService {
         LauncherDiscoveryRequestBuilder builder = LauncherDiscoveryRequestBuilder.request()
                 .configurationParameter("junit.jupiter.execution.parallel.enabled", "false");
 
-        for (String className : SPEC_CLASS_NAMES) {
+        for (String className : SpecCatalogService.discoverValidatorSpecClassNames()) {
             Class<?> specClass = Class.forName(className);
             builder.selectors(selectClass(specClass));
         }

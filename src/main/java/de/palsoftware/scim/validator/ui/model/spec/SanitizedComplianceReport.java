@@ -50,7 +50,9 @@ public record SanitizedComplianceReport(
                 SCHEMA_URL,
                 CURRENT_SCHEMA_VERSION,
                 new ReportMetadata(runId, product, slugify(product), version, vendor, projectUrl, license, publishedAt, null),
-                new ReportScorecard(coreScore, colourGradient, coreScore >= 50, normativeBreakdown, capabilityBreakdown,
+                new ReportScorecard(coreScore, colourGradient,
+                        coreScore >= de.palsoftware.scim.validator.ui.service.ComplianceScoreService.DEFAULT_MIN_PUBLISH_SCORE,
+                        normativeBreakdown, capabilityBreakdown,
                         null, null, null, traceabilityMatrix),
                 testResults
         );

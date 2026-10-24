@@ -21,12 +21,12 @@ import java.util.UUID;
 @Table(name = "validation_run_publication")
 public class ValidationRunPublication implements Persistable<UUID> {
 
+    @Transient
+    private boolean isNew = true;
+
     @Id
     @Column(name = "run_id")
     private UUID runId;
-
-    @Transient
-    private boolean isNew = true;
 
     @OneToOne(fetch = FetchType.LAZY, optional = false)
     @MapsId
@@ -81,6 +81,10 @@ public class ValidationRunPublication implements Persistable<UUID> {
     public ValidationRunPublication() {
     }
 
+    public UUID getRunId() {
+        return runId;
+    }
+
     @Override
     public UUID getId() {
         return runId;
@@ -91,14 +95,10 @@ public class ValidationRunPublication implements Persistable<UUID> {
         return isNew;
     }
 
-    @PostLoad
     @PostPersist
+    @PostLoad
     void markNotNew() {
         this.isNew = false;
-    }
-
-    public UUID getRunId() {
-        return runId;
     }
 
     public void setRunId(UUID runId) {

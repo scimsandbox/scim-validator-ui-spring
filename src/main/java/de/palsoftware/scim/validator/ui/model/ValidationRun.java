@@ -142,7 +142,7 @@ public class ValidationRun {
 
     public void setPublication(ValidationRunPublication publication) {
         this.publication = publication;
-        if (publication != null && publication.getRun() != this) {
+        if (publication != null && publication.getRun() == null) {
             publication.setRun(this);
         }
     }

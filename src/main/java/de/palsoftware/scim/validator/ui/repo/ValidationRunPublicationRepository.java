@@ -51,6 +51,11 @@ public interface ValidationRunPublicationRepository extends JpaRepository<Valida
     long countOwnedPublications(@Param("actorEmail") String actorEmail);
 
     /**
+     * Find all publications for a product slug ordered by publication date descending (uses idx_validation_run_publication_slug_version).
+     */
+    List<ValidationRunPublication> findByProductSlugIgnoreCaseOrderByPublishedAtDesc(String productSlug);
+
+    /**
      * Convenience lookup by runId (delegating to findById since runId is the @Id).
      */
     default Optional<ValidationRunPublication> findByRunId(UUID runId) {

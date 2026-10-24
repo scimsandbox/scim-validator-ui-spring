@@ -295,6 +295,9 @@ public class ValidationController {
                 }
             }
             model.addAttribute("isEligibleForPublish", isEligibleForPublish);
+            model.addAttribute("minPublishScore", complianceScoreService != null
+                    ? complianceScoreService.getMinPublishScore()
+                    : ComplianceScoreService.DEFAULT_MIN_PUBLISH_SCORE);
 
             ValidationRunPublication publication = null;
             if (runEntity != null && runEntity.getPublication() != null) {
@@ -400,11 +403,25 @@ public class ValidationController {
         String quotaOwnerEmail = (runEntity.getCreatedByEmail() != null && !runEntity.getCreatedByEmail().isBlank())
                 ? runEntity.getCreatedByEmail()
                 : userEmail;
+        String resolvedSlug = publishForm.resolveProductSlug();
         try {
             validationRunService.validatePublishQuota(quotaOwnerEmail);
+            validationRunService.validateProductSlugOwnership(resolvedSlug, quotaOwnerEmail);
         } catch (ResponseStatusException ex) {
             redirectAttributes.addFlashAttribute("errorMessage", ex.getReason());
             return "redirect:/runs/" + runId;
+        }
+
+        String targetUrl = runEntity.getTargetUrl();
+        if (targetUrl != null && !targetUrl.isBlank()) {
+            String trimmedTarget = targetUrl.trim();
+            if ((publishForm.getProductName() != null && publishForm.getProductName().contains(trimmedTarget))
+                    || (publishForm.getVendorName() != null && publishForm.getVendorName().contains(trimmedTarget))
+                    || (publishForm.getProjectUrl() != null && publishForm.getProjectUrl().contains(trimmedTarget))) {
+                redirectAttributes.addFlashAttribute("errorMessage",
+                        "Validation error: Product metadata and Project URL must not contain the validation target URL.");
+                return "redirect:/runs/" + runId;
+            }
         }
 
         List<ValidationTestResult> rawTests = validationRunService.getRawTestResults(runId);
@@ -416,14 +433,14 @@ public class ValidationController {
 
         ComplianceScorecardView scorecard = complianceScoreService.computeScorecard(runEntity, rawTests, rawExchanges);
         if (!complianceScoreService.isEligibleForPublish(scorecard, runEntity)) {
+            int minScore = complianceScoreService.getMinPublishScore();
             String reason = scorecard.publishIneligibilityReason() != null
                     ? scorecard.publishIneligibilityReason()
-                    : "Run does not meet publishing eligibility criteria (Core Conformance >= 50% and terminal status).";
+                    : "Run does not meet publishing eligibility criteria (Core Conformance >= " + minScore + "% and terminal status).";
             redirectAttributes.addFlashAttribute("errorMessage", "Publication rejected: " + reason);
             return "redirect:/runs/" + runId;
         }
 
-        String resolvedSlug = publishForm.resolveProductSlug();
         CompliancePublishRequest publishRequest = new CompliancePublishRequest(
                 runEntity.getId(),
                 publishForm.getProductName().trim(),

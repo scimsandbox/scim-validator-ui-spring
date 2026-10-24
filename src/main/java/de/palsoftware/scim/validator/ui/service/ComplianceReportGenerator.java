@@ -1,5 +1,8 @@
 package de.palsoftware.scim.validator.ui.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import de.palsoftware.scim.validator.ui.model.ValidationHttpExchange;
 import de.palsoftware.scim.validator.ui.model.ValidationRun;
 import de.palsoftware.scim.validator.ui.model.ValidationRunPublication;
@@ -25,6 +28,7 @@ import java.util.regex.Pattern;
 @Service
 public class ComplianceReportGenerator {
 
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final Pattern URL_PATTERN = Pattern.compile("https?://[^\\s\"'>\\]\\)]+");
     private static final Pattern BEARER_PATTERN = Pattern.compile("(?i)bearer\\s+[A-Za-z0-9_\\-\\.~+/=]{8,}");
     private static final Pattern BASIC_PATTERN = Pattern.compile("(?i)basic\\s+[A-Za-z0-9+/=]{8,}");
@@ -165,7 +169,8 @@ public class ComplianceReportGenerator {
                 projectUrl,
                 licenseType,
                 publishedAtIso,
-                submitter
+                submitter,
+                isSampleRun(run.getId()) ? Boolean.TRUE : null
         );
 
         NormativeLevelBreakdown normative = new NormativeLevelBreakdown(
@@ -235,7 +240,8 @@ public class ComplianceReportGenerator {
                 request.projectUrl(),
                 request.licenseType(),
                 publishedAtIso,
-                submitter
+                submitter,
+                isSampleRun(request.runId()) ? Boolean.TRUE : null
         );
 
         ReportScorecard scorecardDto;
@@ -271,11 +277,12 @@ public class ComplianceReportGenerator {
                     scorecard.requirementMatrix()
             );
         } else {
+            int minScore = scoreService != null ? scoreService.getMinPublishScore() : ComplianceScoreService.DEFAULT_MIN_PUBLISH_SCORE;
             ColourGradientInfo gradInfo = ColourGradientInfo.from(request.colourGradient(), request.coreScore());
             scorecardDto = new ReportScorecard(
                     request.coreScore(),
                     gradInfo,
-                    request.coreScore() >= 50,
+                    request.coreScore() >= minScore,
                     null,
                     Collections.emptyList(),
                     new CapabilitySummary(request.supportedCapabilities(), request.supportedCapabilities(), request.totalCapabilities()),
@@ -367,19 +374,17 @@ public class ComplianceReportGenerator {
 
     /**
      * Programmatic security assertion ensuring ZERO target URLs or credentials leaked.
-     * Excludes the user-declared public "metadata" section when checking for target URL/host
-     * so legitimate public product/project URLs do not trigger false positives, while strictly
-     * asserting zero target URL/host presence in scorecard and testResults.
+     * Always forbids the full targetUrl everywhere (including metadata), and uses Jackson
+     * tree inspection to exempt only metadata.projectUrl and metadata.submitter from the
+     * host-only check when projectUrl is a distinct public URL.
      */
     public static void assertSanitized(String json, String targetUrl) {
         if (json == null) {
             return;
         }
 
-        String sensitiveRegions = stripPublicMetadata(json);
-
         if (targetUrl != null && !targetUrl.isBlank()) {
-            if (sensitiveRegions.contains(targetUrl)) {
+            if (json.contains(targetUrl)) {
                 throw new SecurityException("Sanitization violation: targetUrl detected in report JSON!");
             }
             String host = null;
@@ -388,8 +393,11 @@ public class ComplianceReportGenerator {
                 host = uri.getHost();
             } catch (Exception ignored) {
             }
-            if (host != null && !host.isBlank() && sensitiveRegions.contains(host)) {
-                throw new SecurityException("Sanitization violation: target host (" + host + ") detected in report JSON!");
+            if (host != null && !host.isBlank()) {
+                String hostCheckJson = stripPublicProjectAndSubmitterFromMetadata(json);
+                if (hostCheckJson.contains(host)) {
+                    throw new SecurityException("Sanitization violation: target host (" + host + ") detected in report JSON!");
+                }
             }
         }
 
@@ -407,45 +415,29 @@ public class ComplianceReportGenerator {
         }
     }
 
-    private static String stripPublicMetadata(String json) {
-        if (!json.contains("\"metadata\"") || (!json.contains("\"scorecard\"") && !json.contains("\"testResults\""))) {
-            return json;
+    public static boolean isSampleRun(java.util.UUID runId) {
+        if (runId == null) {
+            return false;
         }
-        int metaKeyIdx = json.indexOf("\"metadata\"");
-        if (metaKeyIdx < 0) {
-            return json;
-        }
-        int braceStart = json.indexOf('{', metaKeyIdx);
-        if (braceStart < 0) {
-            return json;
-        }
-        boolean inQuotes = false;
-        boolean escaped = false;
-        int depth = 0;
-        for (int i = braceStart; i < json.length(); i++) {
-            char c = json.charAt(i);
-            if (escaped) {
-                escaped = false;
-                continue;
-            }
-            if (c == '\\') {
-                escaped = true;
-                continue;
-            }
-            if (c == '"') {
-                inQuotes = !inQuotes;
-                continue;
-            }
-            if (!inQuotes) {
-                if (c == '{') {
-                    depth++;
-                } else if (c == '}') {
-                    depth--;
-                    if (depth == 0) {
-                        return json.substring(0, metaKeyIdx) + json.substring(i + 1);
-                    }
+        String s = runId.toString();
+        return s.startsWith("11111111-") || s.startsWith("22222222-");
+    }
+
+    private static String stripPublicProjectAndSubmitterFromMetadata(String json) {
+        try {
+            JsonNode root = OBJECT_MAPPER.readTree(json);
+            if (root != null && root.isObject()) {
+                ObjectNode rootObj = (ObjectNode) root;
+                JsonNode metaNode = rootObj.get("metadata");
+                if (metaNode != null && metaNode.isObject()) {
+                    ObjectNode metaObj = (ObjectNode) metaNode;
+                    metaObj.remove("projectUrl");
+                    metaObj.remove("submitter");
+                    return OBJECT_MAPPER.writeValueAsString(rootObj);
                 }
             }
+        } catch (Exception ignored) {
+            // Fall back to checking raw json if not a JSON object
         }
         return json;
     }

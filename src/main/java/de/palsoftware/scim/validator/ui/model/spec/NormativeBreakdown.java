@@ -20,7 +20,7 @@ public record NormativeBreakdown(
             int failedRequirements,
             double earnedPoints,
             double totalPoints) {
-        int percent = totalPoints > 0 ? (int) Math.round((100.0 * earnedPoints) / totalPoints) : 100;
+        int percent = totalPoints > 0 ? (int) Math.round((100.0 * earnedPoints) / totalPoints) : 0;
         return new NormativeBreakdown(
                 level,
                 weight,

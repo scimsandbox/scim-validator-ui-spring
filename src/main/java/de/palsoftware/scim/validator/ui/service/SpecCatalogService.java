@@ -10,6 +10,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.spockframework.runtime.model.FeatureMetadata;
 import org.springframework.core.io.Resource;
+import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import org.springframework.core.io.support.ResourcePatternResolver;
 import org.springframework.stereotype.Service;
 import org.yaml.snakeyaml.Yaml;
@@ -129,10 +130,15 @@ public class SpecCatalogService {
         return in;
     }
 
-    private Set<String> resolveSpecClassNames() {
+    public static Set<String> discoverValidatorSpecClassNames() {
+        return discoverValidatorSpecClassNames(new PathMatchingResourcePatternResolver());
+    }
+
+    public static Set<String> discoverValidatorSpecClassNames(ResourcePatternResolver resolver) {
         Set<String> classNames = new LinkedHashSet<>(SPEC_CLASS_NAMES);
         try {
-            Resource[] resources = resourceResolver.getResources("classpath*:de/palsoftware/scim/validator/specs/*Spec.class");
+            ResourcePatternResolver effectiveResolver = resolver != null ? resolver : new PathMatchingResourcePatternResolver();
+            Resource[] resources = effectiveResolver.getResources("classpath*:de/palsoftware/scim/validator/specs/*Spec.class");
             for (Resource res : resources) {
                 String filename = res.getFilename();
                 if (filename != null && filename.endsWith(".class") && !filename.contains("$")) {
@@ -146,6 +152,10 @@ public class SpecCatalogService {
             log.debug("Dynamic classpath scan for validator specs fell back to static list: {}", e.getMessage());
         }
         return classNames;
+    }
+
+    private Set<String> resolveSpecClassNames() {
+        return discoverValidatorSpecClassNames(resourceResolver);
     }
 
     private void scanSpockSpecifications() {

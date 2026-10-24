@@ -121,12 +121,15 @@ For local development, that usually means either:
 | `APP_SECURITY_OIDC_ADMIN_ROLE` | no | Role value mapped to `ROLE_ADMIN`. Default: `admin` |
 | `APP_SECURITY_OIDC_USER_ROLE` | no | Role value mapped to `ROLE_USER`. Default: `user` |
 | `APP_RUNS_MAX_PUBLISHED_PER_USER` | no | Maximum published compliance runs retained per user. Default: `50` |
-| `GITHUB_PUBLISH_ENABLED` | no | Enables 1-click GitHub compliance directory publishing (`app.github.publish.enabled`). Default: `false` |
-| `GITHUB_APP_ID` | no | GitHub App ID for compliance publishing (`app.github.app-id`) |
-| `GITHUB_INSTALLATION_ID` | no | GitHub App installation ID (`app.github.installation-id`) |
-| `GITHUB_APP_PRIVATE_KEY` | no | PEM-encoded RSA private key for GitHub App (`app.github.private-key`) |
-| `GITHUB_PUBLISH_REPO` | no | Target GitHub repository (`app.github.repo`). Default: `scimsandbox/scim-website` |
-| `GITHUB_PUBLISH_BRANCH` | no | Target GitHub branch (`app.github.branch`). Default: `main` |
+| `APP_GITHUB_PUBLISH_ENABLED` | no | Enables 1-click GitHub compliance directory publishing (`app.github.publish.enabled`). Default: `false` |
+| `APP_GITHUB_APP_ID` | no | GitHub App ID for compliance publishing (`app.github.app-id`) |
+| `APP_GITHUB_INSTALLATION_ID` | no | GitHub App installation ID (`app.github.installation-id`) |
+| `APP_GITHUB_PRIVATE_KEY` | no | PEM-encoded RSA private key for GitHub App (`app.github.private-key`) |
+| `APP_GITHUB_REPO` | no | Target GitHub repository (`app.github.repo`). Default: `scimsandbox/scim-website` |
+| `APP_GITHUB_BRANCH` | no | Target GitHub branch (`app.github.branch`). Default: `main` |
+| `APP_GITHUB_API_URL` | no | GitHub API base URL (`app.github.api-url`). Default: `https://api.github.com` |
+| `APP_COMPLIANCE_MIN_PUBLISH_SCORE` | no | Minimum Core RFC Conformance percentage required to publish (`app.compliance.min-publish-score`). Default: `50` |
+| `APP_COMPLIANCE_PUBLIC_BASE_URL` | no | Public compliance directory base URL (`app.compliance.public-base-url`). Default: `https://scimsandbox.net` |
 | `SERVER_PORT` | no | Spring Boot server port. Default: `8082` |
 
 ## Running Locally

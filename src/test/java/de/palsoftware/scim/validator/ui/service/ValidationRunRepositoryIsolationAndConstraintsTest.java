@@ -10,6 +10,8 @@ import de.palsoftware.scim.validator.ui.repo.ValidationMgmtUserRepository;
 import de.palsoftware.scim.validator.ui.repo.ValidationRunPublicationRepository;
 import de.palsoftware.scim.validator.ui.repo.ValidationRunRepository;
 import jakarta.persistence.Column;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.EntityManagerFactory;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.MapsId;
@@ -28,8 +30,12 @@ import org.springframework.data.domain.Example;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.repository.support.JpaRepositoryFactory;
 import org.springframework.data.repository.query.FluentQuery;
 import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean;
+import org.springframework.orm.jpa.vendor.HibernateJpaVendorAdapter;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
@@ -294,99 +300,148 @@ public class ValidationRunRepositoryIsolationAndConstraintsTest {
         }
 
         @Test
-        @DisplayName("INV-1.3: Live PostgreSQL empirical verification of ON DELETE RESTRICT and index")
-        void livePostgreSql_onDeleteRestrict_empiricallyVerified() {
-            assumeTrue(isPostgreSqlAvailable("localhost", 15432),
-                    "PostgreSQL container port 15432 not reachable, skipping live DB test");
+        @DisplayName("INV-1.3: Real Hibernate JPA + Spring Data repositories persist ValidationRunPublication from a detached ValidationRun (@MapsId) and enforce duplicate/slug invariants")
+        void realJpaRepositories_recordPublicationWithDetachedRun_succeedsAndEnforcesInvariants() throws Exception {
+            String v1Sql = readSqlMigration("/sql/V1__init_validator_schema.sql",
+                    Path.of("../scim-validator-db/sql/V1__init_validator_schema.sql"));
+            String v2Sql = readSqlMigration("/sql/V2__add_validation_run_publication.sql", V2_MIGRATION_PATH);
 
-            String url = "jdbc:postgresql://localhost:15432/scim_validator_test";
-            String user = "scimserver";
-            String pass = "scimserver";
+            String jdbcUrl = "jdbc:h2:mem:scim_jpa_maps_id_" + UUID.randomUUID().toString().replace("-", "")
+                    + ";DB_CLOSE_DELAY=-1;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH";
 
-            try (Connection conn = DriverManager.getConnection(url, user, pass)) {
-                // Verify index exists
-                try (PreparedStatement stmt = conn.prepareStatement(
-                        "SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'validation_run_publication' AND indexname = 'idx_validation_run_publication_email'")) {
-                    ResultSet rs = stmt.executeQuery();
-                    assertThat(rs.next()).isTrue();
-                    String indexDef = rs.getString("indexdef");
-                    assertThat(indexDef)
-                            .contains("created_by_email")
-                            .contains("published_at DESC");
-                }
+            DriverManagerDataSource dataSource = new DriverManagerDataSource(jdbcUrl, "sa", "");
+            try (Connection conn = dataSource.getConnection(); var stmt = conn.createStatement()) {
+                stmt.execute(v1Sql);
+                stmt.execute(v2Sql);
+            }
 
-                // Verify ON DELETE RESTRICT on fk_validation_run_publication_run
-                try (PreparedStatement stmt = conn.prepareStatement("""
-                        SELECT confdeltype
-                        FROM pg_constraint
-                        WHERE conname = 'fk_validation_run_publication_run'
-                        """)) {
-                    ResultSet rs = stmt.executeQuery();
-                    assertThat(rs.next()).isTrue();
-                    String deleteAction = rs.getString("confdeltype");
-                    // 'r' = RESTRICT in PostgreSQL pg_constraint
-                    assertThat(deleteAction).isEqualTo("r");
-                }
+            LocalContainerEntityManagerFactoryBean emfBean = new LocalContainerEntityManagerFactoryBean();
+            emfBean.setDataSource(dataSource);
+            emfBean.setPackagesToScan("de.palsoftware.scim.validator.ui.model");
+            HibernateJpaVendorAdapter vendorAdapter = new HibernateJpaVendorAdapter();
+            emfBean.setJpaVendorAdapter(vendorAdapter);
+            Map<String, Object> jpaProps = new HashMap<>();
+            jpaProps.put("hibernate.hbm2ddl.auto", "validate");
+            jpaProps.put("hibernate.dialect", "org.hibernate.dialect.H2Dialect");
+            jpaProps.put("hibernate.physical_naming_strategy", "org.hibernate.boot.model.naming.CamelCaseToUnderscoresNamingStrategy");
+            emfBean.setJpaPropertyMap(jpaProps);
+            emfBean.afterPropertiesSet();
 
-                // Verify empirical constraint enforcement
-                UUID testRunId = UUID.randomUUID();
-                String testEmail = "empirical-challenger@example.com";
+            EntityManagerFactory emf = emfBean.getObject();
+            assertThat(emf).isNotNull();
+            try (EntityManager em = emf.createEntityManager()) {
+                JpaRepositoryFactory repoFactory = new JpaRepositoryFactory(em);
+                ValidationMgmtUserRepository jpaUserRepo = repoFactory.getRepository(ValidationMgmtUserRepository.class);
+                ValidationRunRepository jpaRunRepo = repoFactory.getRepository(ValidationRunRepository.class);
+                ValidationRunPublicationRepository jpaPubRepo = repoFactory.getRepository(ValidationRunPublicationRepository.class);
 
-                // Ensure user exists
-                try (PreparedStatement stmt = conn.prepareStatement(
-                        "INSERT INTO validator_mgmt_users (email, last_login_at) VALUES (?, NOW()) ON CONFLICT (email) DO NOTHING")) {
-                    stmt.setString(1, testEmail);
-                    stmt.executeUpdate();
-                }
+                ValidationRunService jpaService = new ValidationRunService(
+                        jpaRunRepo, jpaUserRepo, null, null, jpaPubRepo, null);
 
-                // Insert run
-                try (PreparedStatement stmt = conn.prepareStatement(
-                        "INSERT INTO validation_run (id, name, target_url, executed_at, status, created_by_email, total_tests, passed_tests, failed_tests) VALUES (?, 'Live DB Run', 'https://scim.example.com', NOW(), 'PASSED', ?, 10, 10, 0)")) {
-                    stmt.setObject(1, testRunId);
-                    stmt.setString(2, testEmail);
-                    stmt.executeUpdate();
-                }
+                // Transaction 1: persist users and Alice's run, then detach all entities (simulating ValidationController.getRunEntity)
+                ValidationRun detachedAliceRun;
+                em.getTransaction().begin();
+                ValidationMgmtUser alice = jpaUserRepo.save(new ValidationMgmtUser("alice@example.com", OffsetDateTime.now(ZoneOffset.UTC)));
+                ValidationMgmtUser bob = jpaUserRepo.save(new ValidationMgmtUser("bob@example.com", OffsetDateTime.now(ZoneOffset.UTC)));
+                ValidationRun aliceRun = new ValidationRun();
+                aliceRun.setName("Alice Detached Run");
+                aliceRun.setTargetUrl("https://scim.alice.internal/v2");
+                aliceRun.setExecutedAt(OffsetDateTime.now(ZoneOffset.UTC));
+                aliceRun.setStatus("PASSED");
+                aliceRun.setCreatedByUser(alice);
+                aliceRun.setTotalTests(10);
+                aliceRun.setPassedTests(10);
+                aliceRun.setFailedTests(0);
+                detachedAliceRun = jpaRunRepo.save(aliceRun);
+                em.flush();
+                em.getTransaction().commit();
+                em.clear(); // detachedAliceRun is now detached!
 
-                // Insert publication
-                try (PreparedStatement stmt = conn.prepareStatement(
-                        "INSERT INTO validation_run_publication (run_id, created_by_email, product_name, product_slug, product_version, license_type, core_score, supported_capabilities, total_capabilities, report_url, badge_url, published_at) VALUES (?, ?, 'Empirical Prod', 'emp-prod', '1.0.0', 'Apache-2.0', 100, 10, 10, 'https://scimsandbox.net/rep', 'https://scimsandbox.net/badge.svg', NOW())")) {
-                    stmt.setObject(1, testRunId);
-                    stmt.setString(2, testEmail);
-                    stmt.executeUpdate();
-                }
+                // Transaction 2: call recordPublication with detachedAliceRun (simulating ValidationController.publishRun)
+                CompliancePublishRequest aliceReq = new CompliancePublishRequest(
+                        detachedAliceRun.getId(), "Alice SCIM Server", "alice-scim", "1.0.0",
+                        "Alice Corp", "https://alice.example.com", "Apache-2.0", true,
+                        98, "EMERALD", 9, 10, "admin@example.com", "https://scim.alice.internal/v2");
+                CompliancePublicationResult aliceRes = CompliancePublicationResult.success(
+                        detachedAliceRun.getId(), "https://github.com/scimsandbox/scim-website/pull/10",
+                        "https://scimsandbox.net/compliance/?run=" + detachedAliceRun.getId(),
+                        "https://scimsandbox.net/compliance/badges/" + detachedAliceRun.getId() + ".svg",
+                        "abcdef1234567890", OffsetDateTime.now(ZoneOffset.UTC));
 
-                // ATTEMPT DELETE ON validation_run: MUST FAIL with foreign key violation
-                try (PreparedStatement stmt = conn.prepareStatement("DELETE FROM validation_run WHERE id = ?")) {
-                    stmt.setObject(1, testRunId);
-                    assertThatThrownBy(stmt::executeUpdate)
-                            .isInstanceOf(SQLException.class)
-                            .hasMessageContaining("fk_validation_run_publication_run");
-                }
+                em.getTransaction().begin();
+                ValidationRunPublication savedPub = jpaService.recordPublication(
+                        detachedAliceRun, "admin@example.com", aliceReq, aliceRes);
+                em.flush();
+                em.getTransaction().commit();
+                em.clear();
 
-                // Delete publication first -> succeeds
-                try (PreparedStatement stmt = conn.prepareStatement("DELETE FROM validation_run_publication WHERE run_id = ?")) {
-                    stmt.setObject(1, testRunId);
-                    int deleted = stmt.executeUpdate();
-                    assertThat(deleted).isEqualTo(1);
-                }
+                assertThat(savedPub.getRunId()).isEqualTo(detachedAliceRun.getId());
+                assertThat(savedPub.getCreatedByEmail()).isEqualTo("alice@example.com");
+                assertThat(jpaPubRepo.existsById(detachedAliceRun.getId())).isTrue();
+                ValidationRun reloadedAliceRun = jpaRunRepo.findById(detachedAliceRun.getId()).orElseThrow();
+                assertThat(reloadedAliceRun.isPublished()).isTrue();
 
-                // Now delete validation_run -> succeeds
-                try (PreparedStatement stmt = conn.prepareStatement("DELETE FROM validation_run WHERE id = ?")) {
-                    stmt.setObject(1, testRunId);
-                    int deleted = stmt.executeUpdate();
-                    assertThat(deleted).isEqualTo(1);
-                }
+                // Transaction 3: duplicate recordPublication on the same run must throw IllegalStateException
+                em.getTransaction().begin();
+                assertThatThrownBy(() -> jpaService.recordPublication(
+                        detachedAliceRun, "admin@example.com", aliceReq, aliceRes))
+                        .isInstanceOf(IllegalStateException.class)
+                        .hasMessageContaining("already been published");
+                em.getTransaction().rollback();
+                em.clear();
 
-            } catch (SQLException e) {
-                throw new RuntimeException("Database error during empirical constraint verification", e);
+                // Transaction 4: Bob attempting to publish under Alice's productSlug ("alice-scim") must fail with 409 CONFLICT
+                em.getTransaction().begin();
+                ValidationMgmtUser managedBob = jpaUserRepo.findById(bob.getEmail()).orElseThrow();
+                ValidationRun bobRun = new ValidationRun();
+                bobRun.setName("Bob Run");
+                bobRun.setTargetUrl("https://scim.bob.internal/v2");
+                bobRun.setExecutedAt(OffsetDateTime.now(ZoneOffset.UTC));
+                bobRun.setStatus("PASSED");
+                bobRun.setCreatedByUser(managedBob);
+                bobRun.setTotalTests(10);
+                bobRun.setPassedTests(10);
+                bobRun.setFailedTests(0);
+                ValidationRun detachedBobRun = jpaRunRepo.save(bobRun);
+                em.flush();
+                em.getTransaction().commit();
+                em.clear();
+
+                CompliancePublishRequest bobHijackReq = new CompliancePublishRequest(
+                        detachedBobRun.getId(), "Bob SCIM Server", "alice-scim", "2.0.0",
+                        "Bob Corp", "https://bob.example.com", "MIT", false,
+                        95, "EMERALD", 8, 10, "bob@example.com", "https://scim.bob.internal/v2");
+                CompliancePublicationResult bobRes = CompliancePublicationResult.success(
+                        detachedBobRun.getId(), "https://github.com/scimsandbox/scim-website/pull/11",
+                        "https://scimsandbox.net/compliance/?run=" + detachedBobRun.getId(),
+                        "https://scimsandbox.net/compliance/badges/" + detachedBobRun.getId() + ".svg",
+                        "1234567890abcdef", OffsetDateTime.now(ZoneOffset.UTC));
+
+                em.getTransaction().begin();
+                assertThatThrownBy(() -> jpaService.recordPublication(
+                        detachedBobRun, "bob@example.com", bobHijackReq, bobRes))
+                        .isInstanceOf(ResponseStatusException.class)
+                        .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode()).isEqualTo(HttpStatus.CONFLICT));
+                em.getTransaction().rollback();
+            } finally {
+                emf.close();
             }
         }
 
-        private boolean isPostgreSqlAvailable(String host, int port) {
-            try (Socket socket = new Socket(host, port)) {
-                return true;
-            } catch (Exception e) {
-                return false;
+        @Test
+        @DisplayName("INV-1.5: Test SQL migration copies in src/test/resources/sql stay in sync with ../scim-validator-db/sql")
+        void testSqlResources_stayInSyncWithValidatorDbRepoWhenPresent() throws IOException {
+            Path externalV1 = Path.of("../scim-validator-db/sql/V1__init_validator_schema.sql");
+            Path externalV2 = V2_MIGRATION_PATH;
+            if (Files.exists(externalV1)) {
+                String classpathV1 = readSqlMigration("/sql/V1__init_validator_schema.sql", externalV1).replace("\r\n", "\n").trim();
+                String diskV1 = Files.readString(externalV1).replace("\r\n", "\n").trim();
+                assertThat(classpathV1).isEqualTo(diskV1);
+            }
+            if (Files.exists(externalV2)) {
+                String classpathV2 = readSqlMigration("/sql/V2__add_validation_run_publication.sql", externalV2).replace("\r\n", "\n").trim();
+                String diskV2 = Files.readString(externalV2).replace("\r\n", "\n").trim();
+                assertThat(classpathV2).isEqualTo(diskV2);
             }
         }
     }
@@ -790,6 +845,14 @@ public class ValidationRunRepositoryIsolationAndConstraintsTest {
         @Override
         public long countOwnedPublications(String actorEmail) {
             return findOwnedPublications(actorEmail, Sort.unsorted()).size();
+        }
+
+        @Override
+        public List<ValidationRunPublication> findByProductSlugIgnoreCaseOrderByPublishedAtDesc(String productSlug) {
+            return db.values().stream()
+                    .filter(p -> p.getProductSlug() != null && p.getProductSlug().equalsIgnoreCase(productSlug))
+                    .sorted(Comparator.comparing(ValidationRunPublication::getPublishedAt, Comparator.nullsLast(Comparator.reverseOrder())))
+                    .toList();
         }
 
         @Override public Optional<ValidationRunPublication> findByRunId(UUID runId) { return Optional.ofNullable(db.get(runId)); }
