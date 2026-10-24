@@ -1,6 +1,6 @@
 package de.palsoftware.scim.validator.ui.dto;
 
-import de.palsoftware.scim.validator.ui.model.spec.SanitizedComplianceReport;
+import de.palsoftware.scim.validator.ui.util.Slugifier;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
@@ -121,9 +121,9 @@ public class CompliancePublishFormData {
     }
 
     /**
-     * Linear-time O(n) slugifier delegating to {@link SanitizedComplianceReport#slugify(String)}.
+     * Linear-time O(n) slugifier delegating to {@link Slugifier#slugify(String)}.
      */
     public static String slugify(String input) {
-        return SanitizedComplianceReport.slugify(input);
+        return Slugifier.slugify(input);
     }
 }

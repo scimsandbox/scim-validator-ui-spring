@@ -2,10 +2,10 @@ package de.palsoftware.scim.validator.ui.model.spec;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import de.palsoftware.scim.validator.ui.util.Slugifier;
 
 import java.util.Collections;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 @JsonInclude(JsonInclude.Include.NON_NULL)
@@ -50,7 +50,7 @@ public record SanitizedComplianceReport(
         this(
                 SCHEMA_URL,
                 CURRENT_SCHEMA_VERSION,
-                new ReportMetadata(runId, product, slugify(product), version, vendor, projectUrl, license, publishedAt, null),
+                new ReportMetadata(runId, product, Slugifier.slugify(product), version, vendor, projectUrl, license, publishedAt, null),
                 new ReportScorecard(coreScore, colourGradient,
                         coreScore >= de.palsoftware.scim.validator.ui.service.ComplianceScoreService.DEFAULT_MIN_PUBLISH_SCORE,
                         normativeBreakdown, capabilityBreakdown,
@@ -110,32 +110,6 @@ public record SanitizedComplianceReport(
         return scorecard != null && scorecard.requirementMatrix() != null
                 ? scorecard.requirementMatrix()
                 : Collections.emptyList();
-    }
-
-    /**
-     * Linear-time O(n) slugifier that avoids polynomial regular expressions on user input.
-     */
-    public static String slugify(String input) {
-        if (input == null || input.isBlank()) {
-            return "";
-        }
-        String lower = input.trim().toLowerCase(Locale.ROOT);
-        StringBuilder sb = new StringBuilder(lower.length());
-        boolean prevHyphen = false;
-        for (int i = 0; i < lower.length(); i++) {
-            char c = lower.charAt(i);
-            if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
-                sb.append(c);
-                prevHyphen = false;
-            } else if (!sb.isEmpty() && !prevHyphen) {
-                sb.append('-');
-                prevHyphen = true;
-            }
-        }
-        if (!sb.isEmpty() && sb.charAt(sb.length() - 1) == '-') {
-            sb.setLength(sb.length() - 1);
-        }
-        return sb.toString();
     }
 
     @JsonInclude(JsonInclude.Include.NON_NULL)

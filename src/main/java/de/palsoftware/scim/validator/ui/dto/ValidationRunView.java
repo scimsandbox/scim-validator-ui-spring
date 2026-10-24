@@ -1,6 +1,7 @@
 package de.palsoftware.scim.validator.ui.dto;
 
 import de.palsoftware.scim.validator.ui.model.ValidationRun;
+import de.palsoftware.scim.validator.ui.model.ValidationRunPublication;
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
@@ -32,8 +33,12 @@ public record ValidationRunView(
     }
 
     public static ValidationRunView from(ValidationRun run) {
+        return from(run, ValidationRunPublication.getConfiguredReservationTimeout());
+    }
+
+    public static ValidationRunView from(ValidationRun run, Duration reservationTimeout) {
         boolean activePublishing = run.hasPendingReservation()
-                && !run.getPublication().isStalePendingReservation(Duration.ofSeconds(300));
+                && !run.getPublication().isStalePendingReservation(reservationTimeout);
         return from(run, activePublishing);
     }
 

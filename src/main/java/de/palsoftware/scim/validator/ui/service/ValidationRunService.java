@@ -134,7 +134,6 @@ public class ValidationRunService {
     @Value("${app.compliance.public-base-url:https://scimsandbox.net}")
     private String publicBaseUrl = "https://scimsandbox.net";
 
-    @Value("${app.compliance.reservation-timeout-seconds:300}")
     private long reservationTimeoutSeconds = 300;
 
     public int getMaxRunsPerUser() {
@@ -158,8 +157,10 @@ public class ValidationRunService {
         return reservationTimeoutSeconds;
     }
 
+    @Value("${app.compliance.reservation-timeout-seconds:300}")
     public void setReservationTimeoutSeconds(long reservationTimeoutSeconds) {
         this.reservationTimeoutSeconds = reservationTimeoutSeconds;
+        ValidationRunPublication.setConfiguredReservationTimeout(getReservationTimeout());
     }
 
     public Duration getReservationTimeout() {

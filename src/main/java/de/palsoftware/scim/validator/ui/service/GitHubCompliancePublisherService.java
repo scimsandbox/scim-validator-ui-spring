@@ -341,6 +341,7 @@ public class GitHubCompliancePublisherService {
         String baseTreeSha = fetchCommitTreeSha(token, baseCommitSha);
 
         // Step 3: Fetch existing compliance/index.json
+        refreshReservationHeartbeat(runId);
         List<ComplianceCatalogEntry> catalog = fetchExistingCatalog(token);
 
         // Generate file paths and contents
@@ -412,10 +413,12 @@ public class GitHubCompliancePublisherService {
         boolean branchCreated = false;
         try {
             // Step 4: Create temporary branch at baseCommitSha
+            refreshReservationHeartbeat(runId);
             createBranchRef(token, branchRef, baseCommitSha);
             branchCreated = true;
 
             // Step 5: Create tree with 4 files pointing to base_tree
+            refreshReservationHeartbeat(runId);
             List<Map<String, Object>> treeEntries = List.of(
                     Map.of("path", reportPath, "mode", "100644", "type", "blob", "content", reportJson),
                     Map.of("path", runBadgePath, "mode", "100644", "type", "blob", "content", runBadgeSvg),
@@ -425,6 +428,7 @@ public class GitHubCompliancePublisherService {
             String newTreeSha = createTree(token, baseTreeSha, treeEntries);
 
             // Step 6: Create commit
+            refreshReservationHeartbeat(runId);
             String commitMsg = String.format("publish(compliance): %s %s scorecard (%s)",
                     req.productName(), req.productVersion(), runId);
             String newCommitSha = createCommit(token, commitMsg, newTreeSha, List.of(baseCommitSha));
