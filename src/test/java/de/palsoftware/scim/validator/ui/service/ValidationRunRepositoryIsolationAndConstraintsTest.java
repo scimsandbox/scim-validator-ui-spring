@@ -506,6 +506,16 @@ public class ValidationRunRepositoryIsolationAndConstraintsTest {
                 assertThat(reclaimedReservation.isPendingReservation()).isTrue();
                 assertThat(jpaService.isStaleReservation(reclaimedReservation)).isFalse();
 
+                // Concurrent cross-instance stale reclaim using the earlier staleCutoff must affect 0 rows because the first instance already claimed it
+                em.getTransaction().begin();
+                int raceClaimed = jpaPubRepo.claimStalePendingReservationById(
+                        detachedBobRun.getId(), ValidationRunPublication.PENDING_RESERVATION_PR_URL,
+                        staleCutoff, OffsetDateTime.now(ZoneOffset.UTC));
+                em.flush();
+                em.getTransaction().commit();
+                em.clear();
+                assertThat(raceClaimed).isZero();
+
                 // Conditional delete using the earlier staleCutoff must affect 0 rows because the reservation was reclaimed
                 em.getTransaction().begin();
                 int raceDeleted = jpaPubRepo.deleteStalePendingReservationById(
@@ -956,6 +966,30 @@ public class ValidationRunRepositoryIsolationAndConstraintsTest {
             return db.values().stream()
                     .filter(p -> pendingStatus.equals(p.getPrUrl()) && (p.getPublishedAt() == null || !p.getPublishedAt().isAfter(cutoff)))
                     .toList();
+        }
+
+        @Override
+        public int deleteStalePendingReservationById(UUID runId, String pendingStatus, OffsetDateTime cutoff) {
+            ValidationRunPublication existing = db.get(runId);
+            if (existing != null
+                    && pendingStatus.equals(existing.getPrUrl())
+                    && (existing.getPublishedAt() == null || !existing.getPublishedAt().isAfter(cutoff))) {
+                db.remove(runId);
+                return 1;
+            }
+            return 0;
+        }
+
+        @Override
+        public int claimStalePendingReservationById(UUID runId, String pendingStatus, OffsetDateTime cutoff, OffsetDateTime newTimestamp) {
+            ValidationRunPublication existing = db.get(runId);
+            if (existing != null
+                    && pendingStatus.equals(existing.getPrUrl())
+                    && (existing.getPublishedAt() == null || !existing.getPublishedAt().isAfter(cutoff))) {
+                existing.setPublishedAt(newTimestamp);
+                return 1;
+            }
+            return 0;
         }
 
         @Override

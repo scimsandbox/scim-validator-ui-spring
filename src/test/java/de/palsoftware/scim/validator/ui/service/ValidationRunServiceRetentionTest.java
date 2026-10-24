@@ -599,6 +599,30 @@ class ValidationRunServiceRetentionTest {
         }
 
         @Override
+        public int deleteStalePendingReservationById(UUID runId, String pendingStatus, OffsetDateTime cutoff) {
+            ValidationRunPublication existing = db.get(runId);
+            if (existing != null
+                    && pendingStatus.equals(existing.getPrUrl())
+                    && (existing.getPublishedAt() == null || !existing.getPublishedAt().isAfter(cutoff))) {
+                db.remove(runId);
+                return 1;
+            }
+            return 0;
+        }
+
+        @Override
+        public int claimStalePendingReservationById(UUID runId, String pendingStatus, OffsetDateTime cutoff, OffsetDateTime newTimestamp) {
+            ValidationRunPublication existing = db.get(runId);
+            if (existing != null
+                    && pendingStatus.equals(existing.getPrUrl())
+                    && (existing.getPublishedAt() == null || !existing.getPublishedAt().isAfter(cutoff))) {
+                existing.setPublishedAt(newTimestamp);
+                return 1;
+            }
+            return 0;
+        }
+
+        @Override
         public List<ValidationRunPublication> findByProductSlugIgnoreCaseOrderByPublishedAtDesc(String productSlug) {
             return db.values().stream()
                     .filter(p -> p.getProductSlug() != null && p.getProductSlug().equalsIgnoreCase(productSlug))

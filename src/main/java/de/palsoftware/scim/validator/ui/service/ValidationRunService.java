@@ -497,18 +497,18 @@ public class ValidationRunService {
             if (runId == null) {
                 continue;
             }
-            if (runRepository != null) {
-                runRepository.findById(runId).ifPresent(r -> {
-                    if (r.hasPendingReservation() && isStaleReservation(r.getPublication())) {
-                        r.setPublication(null);
-                        runRepository.save(r);
-                    }
-                });
-            }
             int deleted = publicationRepository.deleteStalePendingReservationById(
                     runId, PENDING_RESERVATION_PR_URL, cutoff);
             if (deleted > 0) {
                 purged += deleted;
+                if (runRepository != null) {
+                    runRepository.findById(runId).ifPresent(r -> {
+                        if (r.hasPendingReservation()) {
+                            r.setPublication(null);
+                            runRepository.save(r);
+                        }
+                    });
+                }
             }
         }
         publicationRepository.flush();
@@ -596,18 +596,35 @@ public class ValidationRunService {
         String ownerEmail = resolveOwnerEmail(managedRun, run, actorEmail);
         validateOwnerQuotaAndSlug(ownerEmail, request.productSlug(), managedRun.getId());
 
-        ValidationRunPublication reservation = existing != null ? existing : new ValidationRunPublication();
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        ValidationRunPublication reservation;
         if (existing != null) {
+            OffsetDateTime stalePublishedAt = existing.getPublishedAt();
+            if (publicationRepository != null) {
+                OffsetDateTime cutoff = now.minus(getReservationTimeout());
+                int claimed = publicationRepository.claimStalePendingReservationById(
+                        managedRun.getId(), PENDING_RESERVATION_PR_URL, cutoff, now);
+                if (claimed == 0) {
+                    throw new IllegalStateException("Validation run publication is already in progress: " + managedRun.getId());
+                }
+                managedRun = resolveManagedRun(run);
+                existing = findExistingPublicationOrReservation(managedRun);
+            }
             log.warn("Reclaiming stale pending publication reservation for runId={} (reserved at {})",
-                    managedRun.getId(), existing.getPublishedAt());
-            reservation.markNotNew();
+                    managedRun.getId(), stalePublishedAt);
+            reservation = existing != null ? existing : new ValidationRunPublication();
+            if (existing != null) {
+                reservation.markNotNew();
+            }
+        } else {
+            reservation = new ValidationRunPublication();
         }
         populatePublicationMetadata(reservation, managedRun, ownerEmail, request);
         String baseUrl = getEffectivePublicBaseUrl();
         reservation.setReportUrl(baseUrl + "/compliance/?run=" + managedRun.getId());
         reservation.setBadgeUrl(baseUrl + "/compliance/badges/" + managedRun.getId() + ".svg");
         reservation.setPrUrl(PENDING_RESERVATION_PR_URL);
-        reservation.setPublishedAt(OffsetDateTime.now(ZoneOffset.UTC));
+        reservation.setPublishedAt(now);
 
         return persistPublicationAndSyncRun(reservation, managedRun, run);
     }

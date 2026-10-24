@@ -70,28 +70,36 @@ public interface ValidationRunPublicationRepository extends JpaRepository<Valida
     }
 
     /**
-     * Conditionally delete a pending reservation only if it is still in pending state and older than cutoff.
+     * Atomically delete a pending reservation only if it is still in pending state and older than cutoff.
      */
-    @Modifying
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("""
         delete from ValidationRunPublication p
         where p.runId = :runId
           and p.prUrl = :pendingStatus
           and p.publishedAt <= :cutoff
         """)
-    default int deleteStalePendingReservationById(
+    int deleteStalePendingReservationById(
             @Param("runId") UUID runId,
             @Param("pendingStatus") String pendingStatus,
-            @Param("cutoff") java.time.OffsetDateTime cutoff) {
-        Optional<ValidationRunPublication> existing = findById(runId);
-        if (existing.isPresent()
-                && pendingStatus.equals(existing.get().getPrUrl())
-                && (existing.get().getPublishedAt() == null || !existing.get().getPublishedAt().isAfter(cutoff))) {
-            deleteById(runId);
-            return 1;
-        }
-        return 0;
-    }
+            @Param("cutoff") java.time.OffsetDateTime cutoff);
+
+    /**
+     * Atomically claim a stale pending reservation by updating its heartbeat timestamp only if it is still stale.
+     */
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("""
+        update ValidationRunPublication p
+        set p.publishedAt = :newTimestamp
+        where p.runId = :runId
+          and p.prUrl = :pendingStatus
+          and p.publishedAt <= :cutoff
+        """)
+    int claimStalePendingReservationById(
+            @Param("runId") UUID runId,
+            @Param("pendingStatus") String pendingStatus,
+            @Param("cutoff") java.time.OffsetDateTime cutoff,
+            @Param("newTimestamp") java.time.OffsetDateTime newTimestamp);
 
     /**
      * Find all publications for a product slug ordered by publication date descending (uses idx_validation_run_publication_slug_version).

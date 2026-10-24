@@ -1,5 +1,6 @@
 package de.palsoftware.scim.validator.ui.dto;
 
+import de.palsoftware.scim.validator.ui.model.spec.SanitizedComplianceReport;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
@@ -120,28 +121,9 @@ public class CompliancePublishFormData {
     }
 
     /**
-     * Linear-time O(n) slugifier that avoids polynomial regular expressions on user input.
+     * Linear-time O(n) slugifier delegating to {@link SanitizedComplianceReport#slugify(String)}.
      */
     public static String slugify(String input) {
-        if (input == null || input.isBlank()) {
-            return "";
-        }
-        String lower = input.trim().toLowerCase(Locale.ROOT);
-        StringBuilder sb = new StringBuilder(lower.length());
-        boolean prevHyphen = false;
-        for (int i = 0; i < lower.length(); i++) {
-            char c = lower.charAt(i);
-            if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
-                sb.append(c);
-                prevHyphen = false;
-            } else if (!sb.isEmpty() && !prevHyphen) {
-                sb.append('-');
-                prevHyphen = true;
-            }
-        }
-        if (!sb.isEmpty() && sb.charAt(sb.length() - 1) == '-') {
-            sb.setLength(sb.length() - 1);
-        }
-        return sb.toString();
+        return SanitizedComplianceReport.slugify(input);
     }
 }
