@@ -300,18 +300,24 @@ public class ValidationController {
                     ? complianceScoreService.getMinPublishScore()
                     : ComplianceScoreService.DEFAULT_MIN_PUBLISH_SCORE);
 
-            ValidationRunPublication publication = null;
+            ValidationRunPublication rawPublication = null;
             if (runEntity != null && runEntity.getPublication() != null) {
-                publication = runEntity.getPublication();
+                rawPublication = runEntity.getPublication();
             } else if (publicationRepository != null) {
                 try {
-                    publication = publicationRepository.findById(runId).orElse(null);
+                    rawPublication = publicationRepository.findById(runId).orElse(null);
                 } catch (Exception e) {
                     log.debug("Could not retrieve publication from repository: {}", e.getMessage());
                 }
             }
+            boolean isPendingPublish = rawPublication != null && rawPublication.isPendingReservation()
+                    && (validationRunService == null || !validationRunService.isStaleReservation(rawPublication));
+            ValidationRunPublication publication = (rawPublication != null && !rawPublication.isPendingReservation())
+                    ? rawPublication
+                    : null;
             model.addAttribute("publication", publication);
             model.addAttribute("isPublished", publication != null);
+            model.addAttribute("isPublishing", isPendingPublish);
 
             Map<String, TestSpecMapping> testSpecMappings = buildComprehensiveTestMappings();
             model.addAttribute("testSpecMappings", testSpecMappings);
@@ -392,6 +398,12 @@ public class ValidationController {
             redirectAttributes.addFlashAttribute("errorMessage", "This validation run has already been published to the Compliance Directory.");
             return "redirect:/runs/" + runId;
         }
+        if (runEntity.hasPendingReservation()
+                && validationRunService != null
+                && !validationRunService.isStaleReservation(runEntity.getPublication())) {
+            redirectAttributes.addFlashAttribute("errorMessage", "A publication for this validation run is already in progress. Please wait or try again shortly.");
+            return "redirect:/runs/" + runId;
+        }
 
         if (bindingResult.hasErrors()) {
             String errorMsg = bindingResult.getAllErrors().stream()
@@ -416,9 +428,13 @@ public class ValidationController {
         String targetUrl = runEntity.getTargetUrl();
         if (targetUrl != null && !targetUrl.isBlank()) {
             String trimmedTarget = targetUrl.trim();
-            if ((publishForm.getProductName() != null && publishForm.getProductName().contains(trimmedTarget))
-                    || (publishForm.getVendorName() != null && publishForm.getVendorName().contains(trimmedTarget))
-                    || (publishForm.getProjectUrl() != null && publishForm.getProjectUrl().contains(trimmedTarget))) {
+            if (containsIgnoreCase(publishForm.getProductName(), trimmedTarget)
+                    || containsIgnoreCase(publishForm.getProductSlug(), trimmedTarget)
+                    || containsIgnoreCase(resolvedSlug, trimmedTarget)
+                    || containsIgnoreCase(publishForm.getProductVersion(), trimmedTarget)
+                    || containsIgnoreCase(publishForm.getVendorName(), trimmedTarget)
+                    || containsIgnoreCase(publishForm.getLicenseType(), trimmedTarget)
+                    || containsIgnoreCase(publishForm.getProjectUrl(), trimmedTarget)) {
                 redirectAttributes.addFlashAttribute("errorMessage",
                         "Validation error: Product metadata and Project URL must not contain the validation target URL.");
                 return "redirect:/runs/" + runId;
@@ -429,10 +445,14 @@ public class ValidationController {
             } catch (Exception ignored) {
             }
             if (targetHost != null && !targetHost.isBlank()) {
-                if ((publishForm.getProductName() != null && publishForm.getProductName().contains(targetHost))
-                        || (publishForm.getVendorName() != null && publishForm.getVendorName().contains(targetHost))) {
+                if (containsIgnoreCase(publishForm.getProductName(), targetHost)
+                        || containsIgnoreCase(publishForm.getProductSlug(), targetHost)
+                        || containsIgnoreCase(resolvedSlug, targetHost)
+                        || containsIgnoreCase(publishForm.getProductVersion(), targetHost)
+                        || containsIgnoreCase(publishForm.getVendorName(), targetHost)
+                        || containsIgnoreCase(publishForm.getLicenseType(), targetHost)) {
                     redirectAttributes.addFlashAttribute("errorMessage",
-                            "Validation error: Product Name and Vendor Name must not contain the validation target host (" + targetHost + ").");
+                            "Validation error: Product metadata fields (Product Name, Slug, Version, Vendor, License) must not contain the validation target host (" + targetHost + ").");
                     return "redirect:/runs/" + runId;
                 }
             }
@@ -524,10 +544,17 @@ public class ValidationController {
         }
 
         redirectAttributes.addFlashAttribute("successMessage",
-                "Compliance report successfully published to scimsandbox.net! View live report at " + result.reportUrl());
+                "Compliance report successfully published! View live report at " + result.reportUrl());
         redirectAttributes.addFlashAttribute("justPublished", true);
 
         return "redirect:/runs/" + runId;
+    }
+
+    private static boolean containsIgnoreCase(String value, String needle) {
+        if (value == null || needle == null || needle.isEmpty()) {
+            return false;
+        }
+        return value.toLowerCase().contains(needle.toLowerCase());
     }
 
     private void safeReleaseReservation(ValidationRun runEntity) {

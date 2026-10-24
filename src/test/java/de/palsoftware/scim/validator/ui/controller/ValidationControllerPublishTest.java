@@ -371,6 +371,90 @@ class ValidationControllerPublishTest {
     }
 
     @Test
+    void publishRun_targetHostInProductVersionOrLicense_rejectsWithFriendlyErrorWithoutCallingPublisher() {
+        UUID runId = UUID.randomUUID();
+        ValidationRun runEntity = createSampleRun(runId, "developer@example.com", "PASSED");
+
+        CompliancePublishFormData formWithHostInVersion = new CompliancePublishFormData(
+                "Apache Syncope", "apache-syncope", "1.0-scim.example.com", "Vendor",
+                "https://github.com/org/repo", "Apache-2.0", false
+        );
+        BindingResult bindingResult1 = new BeanPropertyBindingResult(formWithHostInVersion, "publishForm");
+        RedirectAttributes redirectAttributes1 = new RedirectAttributesModelMap();
+
+        when(validationRunService.getRunEntity(runId, "developer@example.com", false)).thenReturn(runEntity);
+
+        String redirect1 = controller.publishRun(runId, formWithHostInVersion, bindingResult1, userAuth, redirectAttributes1);
+        assertThat(redirect1).isEqualTo("redirect:/runs/" + runId);
+        assertThat(redirectAttributes1.getFlashAttributes().get("errorMessage").toString())
+                .contains("must not contain the validation target host (scim.example.com)");
+
+        CompliancePublishFormData formWithHostInLicense = new CompliancePublishFormData(
+                "Apache Syncope", "apache-syncope", "1.0.0", "Vendor",
+                "https://github.com/org/repo", "scim.example.com", false
+        );
+        BindingResult bindingResult2 = new BeanPropertyBindingResult(formWithHostInLicense, "publishForm");
+        RedirectAttributes redirectAttributes2 = new RedirectAttributesModelMap();
+
+        String redirect2 = controller.publishRun(runId, formWithHostInLicense, bindingResult2, userAuth, redirectAttributes2);
+        assertThat(redirect2).isEqualTo("redirect:/runs/" + runId);
+        assertThat(redirectAttributes2.getFlashAttributes().get("errorMessage").toString())
+                .contains("must not contain the validation target host (scim.example.com)");
+        verify(validationRunService, never()).reservePublication(any(), any(), any());
+        verify(gitHubCompliancePublisherService, never()).publish(any());
+    }
+
+    @Test
+    void publishRun_pendingReservation_rejectsWhenFreshAndRetriesWhenStale() {
+        UUID runId = UUID.randomUUID();
+        ValidationRun runEntity = createSampleRun(runId, "developer@example.com", "PASSED");
+        ValidationRunPublication pending = new ValidationRunPublication();
+        pending.setRun(runEntity);
+        pending.setPrUrl(ValidationRunPublication.PENDING_RESERVATION_PR_URL);
+        pending.setPublishedAt(OffsetDateTime.now());
+        runEntity.setPublication(pending);
+
+        CompliancePublishFormData form = new CompliancePublishFormData(
+                "Apache Syncope", "apache-syncope", "3.0.0", "ASF", "https://syncope.apache.org", "Apache-2.0", true
+        );
+        BindingResult bindingResult = new BeanPropertyBindingResult(form, "publishForm");
+        RedirectAttributes freshRedirectAttrs = new RedirectAttributesModelMap();
+
+        when(validationRunService.getRunEntity(runId, "developer@example.com", false)).thenReturn(runEntity);
+        when(validationRunService.isStaleReservation(pending)).thenReturn(false);
+
+        String freshRedirect = controller.publishRun(runId, form, bindingResult, userAuth, freshRedirectAttrs);
+        assertThat(freshRedirect).isEqualTo("redirect:/runs/" + runId);
+        assertThat(freshRedirectAttrs.getFlashAttributes().get("errorMessage").toString())
+                .contains("already in progress");
+        verify(gitHubCompliancePublisherService, never()).publish(any());
+
+        // Now mark the reservation stale -> retry succeeds
+        when(validationRunService.isStaleReservation(pending)).thenReturn(true);
+        ComplianceScorecardView scorecard = createSampleScorecard(92, true, null);
+        CompliancePublicationResult pubResult = CompliancePublicationResult.success(
+                runId,
+                "https://github.com/scimsandbox/scim-website/pull/15",
+                "https://scimsandbox.net/compliance/?run=" + runId,
+                "https://scimsandbox.net/compliance/badges/" + runId + ".svg",
+                "sha999", OffsetDateTime.now()
+        );
+        when(validationRunService.getRawTestResults(runId)).thenReturn(Collections.emptyList());
+        when(validationRunService.getRawExchanges(runId)).thenReturn(Collections.emptyList());
+        when(complianceScoreService.computeScorecard(runEntity, Collections.emptyList(), Collections.emptyList())).thenReturn(scorecard);
+        when(complianceScoreService.isEligibleForPublish(scorecard, runEntity)).thenReturn(true);
+        when(gitHubCompliancePublisherService.isEnabled()).thenReturn(true);
+        when(gitHubCompliancePublisherService.publish(any())).thenReturn(pubResult);
+
+        RedirectAttributes staleRedirectAttrs = new RedirectAttributesModelMap();
+        String staleRedirect = controller.publishRun(runId, form, bindingResult, userAuth, staleRedirectAttrs);
+        assertThat(staleRedirect).isEqualTo("redirect:/runs/" + runId);
+        assertThat(staleRedirectAttrs.getFlashAttributes()).containsKey("successMessage");
+        verify(validationRunService).reservePublication(eq(runEntity), eq("developer@example.com"), any());
+        verify(validationRunService).recordPublication(eq(runEntity), eq("developer@example.com"), any(), eq(pubResult));
+    }
+
+    @Test
     void publishRun_recordPublicationThrows_releasesClaimAndReservation() {
         UUID runId = UUID.randomUUID();
         ValidationRun runEntity = createSampleRun(runId, "developer@example.com", "PASSED");

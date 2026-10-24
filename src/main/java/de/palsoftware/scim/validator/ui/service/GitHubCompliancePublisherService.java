@@ -45,8 +45,10 @@ public class GitHubCompliancePublisherService {
     private final HttpClient httpClient;
     private final ValidationRunRepository runRepository;
     private final ReentrantLock publishLock = new ReentrantLock(true);
-    private static final long CLAIM_TTL_MILLIS = Duration.ofMinutes(5).toMillis();
     private final Map<UUID, Long> claimedRunTimestamps = new ConcurrentHashMap<>();
+
+    @Value("${app.compliance.reservation-timeout-seconds:300}")
+    private long claimTtlSeconds = 300;
 
     @Autowired(required = false)
     private ValidationRunPublicationRepository publicationRepository;
@@ -161,14 +163,23 @@ public class GitHubCompliancePublisherService {
         }
     }
 
+    private long getClaimTtlMillis() {
+        return Duration.ofSeconds(Math.max(1L, claimTtlSeconds)).toMillis();
+    }
+
+    public void setClaimTtlSeconds(long claimTtlSeconds) {
+        this.claimTtlSeconds = claimTtlSeconds;
+    }
+
     private boolean isClaimedInMemory(UUID runId) {
         if (runId == null) {
             return false;
         }
         long now = System.currentTimeMillis();
-        claimedRunTimestamps.entrySet().removeIf(entry -> (now - entry.getValue()) > CLAIM_TTL_MILLIS);
+        long ttlMillis = getClaimTtlMillis();
+        claimedRunTimestamps.entrySet().removeIf(entry -> (now - entry.getValue()) > ttlMillis);
         Long claimedAt = claimedRunTimestamps.get(runId);
-        return claimedAt != null && (now - claimedAt) <= CLAIM_TTL_MILLIS;
+        return claimedAt != null && (now - claimedAt) <= ttlMillis;
     }
 
     private void validateSlugOwnership(CompliancePublishRequest request) {
@@ -190,12 +201,16 @@ public class GitHubCompliancePublisherService {
             return;
         }
         final String effectiveOwner = ownerEmail.trim();
+        Duration reservationTimeout = Duration.ofSeconds(Math.max(1L, claimTtlSeconds));
         try {
             List<ValidationRunPublication> existingForSlug = publicationRepository
                     .findByProductSlugIgnoreCaseOrderByPublishedAtDesc(request.productSlug().trim());
             if (existingForSlug != null) {
                 for (ValidationRunPublication pub : existingForSlug) {
                     if (Objects.equals(pub.getRunId(), request.runId())) {
+                        continue;
+                    }
+                    if (pub.isPendingReservation() && pub.isStalePendingReservation(reservationTimeout)) {
                         continue;
                     }
                     if (pub.getCreatedByEmail() != null
@@ -273,6 +288,9 @@ public class GitHubCompliancePublisherService {
         int attempt = 0;
         while (attempt < maxAttempts) {
             attempt++;
+            if (request.runId() != null) {
+                claimedRunTimestamps.put(request.runId(), System.currentTimeMillis());
+            }
             try {
                 return doPublishWorkflow(request);
             } catch (GitHubMergeConflictException e) {

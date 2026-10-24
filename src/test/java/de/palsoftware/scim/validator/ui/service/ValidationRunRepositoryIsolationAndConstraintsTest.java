@@ -425,7 +425,8 @@ public class ValidationRunRepositoryIsolationAndConstraintsTest {
                 em.getTransaction().rollback();
                 em.clear();
 
-                // Transaction 5: Pre-GitHub reservePublication -> releasePublicationReservation rollback -> reservePublication -> recordPublication finalization
+                // Transaction 5: Pre-GitHub reservePublication -> releasePublicationReservation rollback -> crash & stale recovery -> recordPublication finalization
+                jpaService.setPublicBaseUrl("https://staging.scimsandbox.net/");
                 CompliancePublishRequest bobValidReq = new CompliancePublishRequest(
                         detachedBobRun.getId(), "Bob SCIM Server", "bob-scim", "2.0.0",
                         "Bob Corp", "https://bob.example.com", "MIT", false,
@@ -437,9 +438,29 @@ public class ValidationRunRepositoryIsolationAndConstraintsTest {
                 em.getTransaction().commit();
                 em.clear();
                 assertThat(reservation.getPrUrl()).isEqualTo(ValidationRunService.PENDING_RESERVATION_PR_URL);
+                assertThat(reservation.getReportUrl()).isEqualTo("https://staging.scimsandbox.net/compliance/?run=" + detachedBobRun.getId());
+                assertThat(reservation.getBadgeUrl()).isEqualTo("https://staging.scimsandbox.net/compliance/badges/" + detachedBobRun.getId() + ".svg");
                 assertThat(jpaPubRepo.existsById(detachedBobRun.getId())).isTrue();
 
-                // Simulate GitHub failure releasing the reservation so Bob can retry
+                // While pending reservation is active, run is NOT treated as published, stays in working runs, and is excluded from published list/quota
+                ValidationRun bobWithPending = jpaRunRepo.findById(detachedBobRun.getId()).orElseThrow();
+                assertThat(bobWithPending.isPublished()).isFalse();
+                assertThat(bobWithPending.hasPendingReservation()).isTrue();
+                assertThat(jpaRunRepo.findOwnedRuns("bob@example.com", Sort.unsorted()))
+                        .extracting(ValidationRun::getId)
+                        .containsExactly(detachedBobRun.getId());
+                assertThat(jpaPubRepo.findOwnedPublications("bob@example.com", Sort.unsorted())).isEmpty();
+                assertThat(jpaPubRepo.countOwnedPublications("bob@example.com")).isZero();
+
+                // Fresh duplicate reservation (before timeout) is rejected as already in progress
+                em.getTransaction().begin();
+                assertThatThrownBy(() -> jpaService.reservePublication(detachedBobRun, "bob@example.com", bobValidReq))
+                        .isInstanceOf(IllegalStateException.class)
+                        .hasMessageContaining("already in progress");
+                em.getTransaction().rollback();
+                em.clear();
+
+                // Simulate GitHub failure releasing the reservation so Bob can retry immediately
                 em.getTransaction().begin();
                 jpaService.releasePublicationReservation(detachedBobRun);
                 em.flush();
@@ -447,12 +468,23 @@ public class ValidationRunRepositoryIsolationAndConstraintsTest {
                 em.clear();
                 assertThat(jpaPubRepo.existsById(detachedBobRun.getId())).isFalse();
 
-                // Retry: reservePublication then finalize with recordPublication
+                // Simulate mid-publish crash (reserve without release) followed by reservation timeout expiry
                 em.getTransaction().begin();
-                jpaService.reservePublication(detachedBobRun, "bob@example.com", bobValidReq);
+                ValidationRunPublication crashedReservation = jpaService.reservePublication(detachedBobRun, "bob@example.com", bobValidReq);
+                crashedReservation.setPublishedAt(OffsetDateTime.now(ZoneOffset.UTC).minusMinutes(10));
+                jpaPubRepo.save(crashedReservation);
                 em.flush();
                 em.getTransaction().commit();
                 em.clear();
+
+                // Retry after crash: stale pending reservation is reclaimed without throwing, then finalized via recordPublication
+                em.getTransaction().begin();
+                ValidationRunPublication reclaimedReservation = jpaService.reservePublication(detachedBobRun, "bob@example.com", bobValidReq);
+                em.flush();
+                em.getTransaction().commit();
+                em.clear();
+                assertThat(reclaimedReservation.isPendingReservation()).isTrue();
+                assertThat(jpaService.isStaleReservation(reclaimedReservation)).isFalse();
 
                 em.getTransaction().begin();
                 ValidationRunPublication finalizedBobPub = jpaService.recordPublication(
@@ -462,6 +494,8 @@ public class ValidationRunRepositoryIsolationAndConstraintsTest {
                 em.clear();
                 assertThat(finalizedBobPub.getPrUrl()).isEqualTo("https://github.com/scimsandbox/scim-website/pull/11");
                 assertThat(finalizedBobPub.getProductSlug()).isEqualTo("bob-scim");
+                assertThat(jpaRunRepo.findOwnedRuns("bob@example.com", Sort.unsorted())).isEmpty();
+                assertThat(jpaPubRepo.countOwnedPublications("bob@example.com")).isEqualTo(1L);
             } finally {
                 emf.close();
             }
@@ -790,7 +824,7 @@ public class ValidationRunRepositoryIsolationAndConstraintsTest {
         public List<ValidationRun> findOwnedRuns(String actorEmail, Sort sort) {
             return db.values().stream()
                     .filter(r -> r.getCreatedByUser() != null && r.getCreatedByUser().getEmail().equalsIgnoreCase(actorEmail))
-                    .filter(r -> r.getPublication() == null)
+                    .filter(r -> !r.isPublished())
                     .sorted(Comparator.comparing(ValidationRun::getExecutedAt))
                     .toList();
         }
@@ -877,6 +911,7 @@ public class ValidationRunRepositoryIsolationAndConstraintsTest {
         public List<ValidationRunPublication> findOwnedPublications(String actorEmail, Sort sort) {
             return db.values().stream()
                     .filter(p -> p.getCreatedByEmail() != null && p.getCreatedByEmail().equalsIgnoreCase(actorEmail))
+                    .filter(p -> !p.isPendingReservation())
                     .sorted(Comparator.comparing(ValidationRunPublication::getPublishedAt, Comparator.nullsLast(Comparator.reverseOrder())))
                     .toList();
         }
@@ -884,6 +919,13 @@ public class ValidationRunRepositoryIsolationAndConstraintsTest {
         @Override
         public long countOwnedPublications(String actorEmail) {
             return findOwnedPublications(actorEmail, Sort.unsorted()).size();
+        }
+
+        @Override
+        public List<ValidationRunPublication> findStalePendingReservations(OffsetDateTime cutoff) {
+            return db.values().stream()
+                    .filter(p -> p.isPendingReservation() && (p.getPublishedAt() == null || !p.getPublishedAt().isAfter(cutoff)))
+                    .toList();
         }
 
         @Override

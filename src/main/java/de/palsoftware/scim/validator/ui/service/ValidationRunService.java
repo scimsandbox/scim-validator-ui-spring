@@ -34,8 +34,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -44,6 +47,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -127,12 +131,43 @@ public class ValidationRunService {
     @Value("${app.runs.max-published-per-user:50}")
     private int maxPublishedRunsPerUser = 50;
 
+    @Value("${app.compliance.public-base-url:https://scimsandbox.net}")
+    private String publicBaseUrl = "https://scimsandbox.net";
+
+    @Value("${app.compliance.reservation-timeout-seconds:300}")
+    private long reservationTimeoutSeconds = 300;
+
     public int getMaxRunsPerUser() {
         return maxRunsPerUser;
     }
 
     public int getMaxPublishedRunsPerUser() {
         return maxPublishedRunsPerUser;
+    }
+
+    public String getEffectivePublicBaseUrl() {
+        String url = (publicBaseUrl != null && !publicBaseUrl.isBlank()) ? publicBaseUrl.trim() : "https://scimsandbox.net";
+        return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
+    }
+
+    public void setPublicBaseUrl(String publicBaseUrl) {
+        this.publicBaseUrl = publicBaseUrl;
+    }
+
+    public long getReservationTimeoutSeconds() {
+        return reservationTimeoutSeconds;
+    }
+
+    public void setReservationTimeoutSeconds(long reservationTimeoutSeconds) {
+        this.reservationTimeoutSeconds = reservationTimeoutSeconds;
+    }
+
+    public Duration getReservationTimeout() {
+        return Duration.ofSeconds(Math.max(1L, reservationTimeoutSeconds));
+    }
+
+    public boolean isStaleReservation(ValidationRunPublication publication) {
+        return publication != null && publication.isStalePendingReservation(getReservationTimeout());
     }
 
     public static class ExecutionResult {
@@ -162,6 +197,13 @@ public class ValidationRunService {
                 if (runToDelete.isPublished()) {
                     log.warn("Skipping deletion of published run {} during auto-pruning", runToDelete.getId());
                     continue;
+                }
+                if (runToDelete.hasPendingReservation()) {
+                    if (!isStaleReservation(runToDelete.getPublication())) {
+                        log.warn("Skipping deletion of run {} with active publication reservation during auto-pruning", runToDelete.getId());
+                        continue;
+                    }
+                    releasePublicationReservation(runToDelete);
                 }
                 runRepository.delete(runToDelete);
                 oldRunDeleted = true;
@@ -388,7 +430,10 @@ public class ValidationRunService {
         if (!admin && run.isPublished()) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Published runs cannot be deleted");
         }
-        if (run.isPublished() && publicationRepository != null) {
+        if (!admin && run.hasPendingReservation() && !isStaleReservation(run.getPublication())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Run publication is currently in progress");
+        }
+        if (publicationRepository != null && (run.getPublication() != null || publicationRepository.existsById(runId))) {
             if (run.getPublication() != null) {
                 publicationRepository.delete(run.getPublication());
             } else {
@@ -411,13 +456,59 @@ public class ValidationRunService {
             return List.of();
         }
         Sort sort = Sort.by(Sort.Direction.DESC, "publishedAt");
-        if (admin) {
-            return publicationRepository.findAll(sort);
-        }
-        return publicationRepository.findOwnedPublications(actorEmail, sort);
+        List<ValidationRunPublication> raw = admin
+                ? publicationRepository.findAll(sort)
+                : publicationRepository.findOwnedPublications(actorEmail, sort);
+        return raw.stream()
+                .filter(p -> !p.isPendingReservation())
+                .toList();
     }
 
-    public static final String PENDING_RESERVATION_PR_URL = "PENDING_RESERVATION";
+    public static final String PENDING_RESERVATION_PR_URL = ValidationRunPublication.PENDING_RESERVATION_PR_URL;
+
+    @EventListener(ApplicationReadyEvent.class)
+    @Scheduled(fixedDelayString = "${app.compliance.reservation-cleanup-interval-ms:60000}")
+    @Transactional
+    public void cleanupStalePendingReservations() {
+        try {
+            int purged = purgeStalePendingReservations();
+            if (purged > 0) {
+                log.info("Purged {} stale pending compliance publication reservation(s)", purged);
+            }
+        } catch (Exception ex) {
+            log.debug("Could not purge stale pending compliance publication reservations: {}", ex.getMessage());
+        }
+    }
+
+    @Transactional
+    public int purgeStalePendingReservations() {
+        if (publicationRepository == null) {
+            return 0;
+        }
+        OffsetDateTime cutoff = OffsetDateTime.now(ZoneOffset.UTC).minus(getReservationTimeout());
+        List<ValidationRunPublication> staleList = publicationRepository.findStalePendingReservations(cutoff);
+        if (staleList == null || staleList.isEmpty()) {
+            return 0;
+        }
+        int purged = 0;
+        for (ValidationRunPublication stale : staleList) {
+            UUID runId = stale.getRunId();
+            if (runRepository != null && runId != null) {
+                runRepository.findById(runId).ifPresent(r -> {
+                    if (r.hasPendingReservation()) {
+                        r.setPublication(null);
+                        runRepository.save(r);
+                    }
+                });
+            }
+            if (runId != null) {
+                publicationRepository.deleteById(runId);
+                purged++;
+            }
+        }
+        publicationRepository.flush();
+        return purged;
+    }
 
     public void validatePublishQuota(String actorEmail) {
         long currentPublishedCount = countOwnedPublications(actorEmail);
@@ -441,6 +532,9 @@ public class ValidationRunService {
         if (existing != null) {
             for (ValidationRunPublication p : existing) {
                 if (currentRunId != null && currentRunId.equals(p.getRunId())) {
+                    continue;
+                }
+                if (p.isPendingReservation() && isStaleReservation(p)) {
                     continue;
                 }
                 if (p.getCreatedByEmail() != null && !p.getCreatedByEmail().equalsIgnoreCase(ownerEmail)) {
@@ -474,7 +568,8 @@ public class ValidationRunService {
         if (publicationRepository == null) {
             return Optional.empty();
         }
-        return publicationRepository.findById(runId);
+        return publicationRepository.findById(runId)
+                .filter(p -> !p.isPendingReservation());
     }
 
     @Transactional
@@ -482,49 +577,34 @@ public class ValidationRunService {
             ValidationRun run,
             String actorEmail,
             CompliancePublishRequest request) {
-        ValidationRun managedRun = (runRepository != null && run.getId() != null)
-                ? runRepository.findById(run.getId()).orElse(run)
-                : run;
-        if (run.isPublished()
-                || managedRun.isPublished()
-                || (publicationRepository != null && managedRun.getId() != null && publicationRepository.existsById(managedRun.getId()))) {
+        ValidationRun managedRun = resolveManagedRun(run);
+        ValidationRunPublication existing = findExistingPublicationOrReservation(managedRun);
+
+        if (run.isPublished() || managedRun.isPublished()
+                || (existing != null && !existing.isPendingReservation())) {
             throw new IllegalStateException("Validation run has already been published: " + managedRun.getId());
         }
-        String ownerEmail = (managedRun.getCreatedByEmail() != null && !managedRun.getCreatedByEmail().isBlank())
-                ? managedRun.getCreatedByEmail()
-                : ((run.getCreatedByEmail() != null && !run.getCreatedByEmail().isBlank()) ? run.getCreatedByEmail() : actorEmail);
-        validatePublishQuota(ownerEmail);
-        validateProductSlugOwnership(request.productSlug(), ownerEmail, managedRun.getId());
+        if (existing != null && existing.isPendingReservation() && !isStaleReservation(existing)) {
+            throw new IllegalStateException("Validation run publication is already in progress: " + managedRun.getId());
+        }
 
-        ValidationRunPublication reservation = new ValidationRunPublication();
-        reservation.setRun(managedRun);
-        reservation.setCreatedByEmail(ownerEmail);
-        reservation.setProductName(request.productName());
-        reservation.setProductSlug(request.productSlug());
-        reservation.setProductVersion(request.productVersion());
-        reservation.setVendorName(request.vendorName());
-        reservation.setProjectUrl(request.projectUrl());
-        reservation.setLicenseType(request.licenseType());
-        reservation.setShowSubmitter(request.showSubmitter());
-        reservation.setCoreScore(request.coreScore());
-        reservation.setSupportedCapabilities(request.supportedCapabilities());
-        reservation.setTotalCapabilities(request.totalCapabilities());
-        reservation.setReportUrl("https://scimsandbox.net/compliance/?run=" + managedRun.getId());
-        reservation.setBadgeUrl("https://scimsandbox.net/compliance/badges/" + managedRun.getId() + ".svg");
+        String ownerEmail = resolveOwnerEmail(managedRun, run, actorEmail);
+        validateOwnerQuotaAndSlug(ownerEmail, request.productSlug(), managedRun.getId());
+
+        ValidationRunPublication reservation = existing != null ? existing : new ValidationRunPublication();
+        if (existing != null) {
+            log.warn("Reclaiming stale pending publication reservation for runId={} (reserved at {})",
+                    managedRun.getId(), existing.getPublishedAt());
+            reservation.markNotNew();
+        }
+        populatePublicationMetadata(reservation, managedRun, ownerEmail, request);
+        String baseUrl = getEffectivePublicBaseUrl();
+        reservation.setReportUrl(baseUrl + "/compliance/?run=" + managedRun.getId());
+        reservation.setBadgeUrl(baseUrl + "/compliance/badges/" + managedRun.getId() + ".svg");
         reservation.setPrUrl(PENDING_RESERVATION_PR_URL);
         reservation.setPublishedAt(OffsetDateTime.now(ZoneOffset.UTC));
 
-        managedRun.setPublication(reservation);
-        if (publicationRepository != null) {
-            reservation = publicationRepository.save(reservation);
-        }
-        if (runRepository != null) {
-            runRepository.save(managedRun);
-        }
-        if (managedRun != run) {
-            run.setPublication(reservation);
-        }
-        return reservation;
+        return persistPublicationAndSyncRun(reservation, managedRun, run);
     }
 
     @Transactional
@@ -535,8 +615,7 @@ public class ValidationRunService {
         UUID runId = run.getId();
         if (runRepository != null) {
             runRepository.findById(runId).ifPresent(managedRun -> {
-                if (managedRun.getPublication() != null
-                        && PENDING_RESERVATION_PR_URL.equals(managedRun.getPublication().getPrUrl())) {
+                if (managedRun.hasPendingReservation()) {
                     managedRun.setPublication(null);
                     runRepository.save(managedRun);
                 }
@@ -544,12 +623,12 @@ public class ValidationRunService {
         }
         if (publicationRepository != null) {
             publicationRepository.findById(runId).ifPresent(existing -> {
-                if (PENDING_RESERVATION_PR_URL.equals(existing.getPrUrl())) {
+                if (existing.isPendingReservation()) {
                     publicationRepository.deleteById(runId);
                 }
             });
         }
-        if (run.getPublication() != null && PENDING_RESERVATION_PR_URL.equals(run.getPublication().getPrUrl())) {
+        if (run.hasPendingReservation()) {
             run.setPublication(null);
         }
     }
@@ -560,68 +639,85 @@ public class ValidationRunService {
             String actorEmail,
             CompliancePublishRequest request,
             CompliancePublicationResult result) {
-        ValidationRun managedRun = (runRepository != null && run.getId() != null)
-                ? runRepository.findById(run.getId()).orElse(run)
-                : run;
+        ValidationRun managedRun = resolveManagedRun(run);
+        ValidationRunPublication existing = findExistingPublicationOrReservation(managedRun);
 
-        ValidationRunPublication existingReservation = null;
-        if (publicationRepository != null && managedRun.getId() != null) {
-            ValidationRunPublication found = publicationRepository.findById(managedRun.getId()).orElse(null);
-            if (found != null && PENDING_RESERVATION_PR_URL.equals(found.getPrUrl())) {
-                existingReservation = found;
-            }
-        } else if (managedRun.getPublication() != null
-                && PENDING_RESERVATION_PR_URL.equals(managedRun.getPublication().getPrUrl())) {
-            existingReservation = managedRun.getPublication();
+        if (existing != null && existing.isPendingReservation()) {
+            existing.markNotNew();
+            existing.setReportUrl(result.reportUrl());
+            existing.setBadgeUrl(result.badgeUrl());
+            existing.setPrUrl(result.prUrl());
+            existing.setPublishedAt(result.publishedAt() != null ? result.publishedAt() : OffsetDateTime.now(ZoneOffset.UTC));
+            return persistPublicationAndSyncRun(existing, managedRun, run);
         }
 
-        if (existingReservation != null) {
-            existingReservation.setReportUrl(result.reportUrl());
-            existingReservation.setBadgeUrl(result.badgeUrl());
-            existingReservation.setPrUrl(result.prUrl());
-            existingReservation.setPublishedAt(result.publishedAt() != null ? result.publishedAt() : OffsetDateTime.now(ZoneOffset.UTC));
-            managedRun.setPublication(existingReservation);
-            if (publicationRepository != null) {
-                existingReservation = publicationRepository.save(existingReservation);
-            }
-            if (runRepository != null) {
-                runRepository.save(managedRun);
-            }
-            if (managedRun != run) {
-                run.setPublication(existingReservation);
-            }
-            return existingReservation;
-        }
-
-        if (run.isPublished()
-                || managedRun.isPublished()
-                || (publicationRepository != null && managedRun.getId() != null && publicationRepository.existsById(managedRun.getId()))) {
+        if (run.isPublished() || managedRun.isPublished() || existing != null) {
             throw new IllegalStateException("Validation run has already been published: " + managedRun.getId());
         }
-        String ownerEmail = (managedRun.getCreatedByEmail() != null && !managedRun.getCreatedByEmail().isBlank())
-                ? managedRun.getCreatedByEmail()
-                : ((run.getCreatedByEmail() != null && !run.getCreatedByEmail().isBlank()) ? run.getCreatedByEmail() : actorEmail);
-        validatePublishQuota(ownerEmail);
-        validateProductSlugOwnership(request.productSlug(), ownerEmail, managedRun.getId());
+        String ownerEmail = resolveOwnerEmail(managedRun, run, actorEmail);
+        validateOwnerQuotaAndSlug(ownerEmail, request.productSlug(), managedRun.getId());
 
         ValidationRunPublication publication = new ValidationRunPublication();
-        publication.setRun(managedRun);
-        publication.setCreatedByEmail(ownerEmail);
-        publication.setProductName(request.productName());
-        publication.setProductSlug(request.productSlug());
-        publication.setProductVersion(request.productVersion());
-        publication.setVendorName(request.vendorName());
-        publication.setProjectUrl(request.projectUrl());
-        publication.setLicenseType(request.licenseType());
-        publication.setShowSubmitter(request.showSubmitter());
-        publication.setCoreScore(request.coreScore());
-        publication.setSupportedCapabilities(request.supportedCapabilities());
-        publication.setTotalCapabilities(request.totalCapabilities());
+        populatePublicationMetadata(publication, managedRun, ownerEmail, request);
         publication.setReportUrl(result.reportUrl());
         publication.setBadgeUrl(result.badgeUrl());
         publication.setPrUrl(result.prUrl());
         publication.setPublishedAt(result.publishedAt() != null ? result.publishedAt() : OffsetDateTime.now(ZoneOffset.UTC));
 
+        return persistPublicationAndSyncRun(publication, managedRun, run);
+    }
+
+    private ValidationRun resolveManagedRun(ValidationRun run) {
+        return (runRepository != null && run.getId() != null)
+                ? runRepository.findById(run.getId()).orElse(run)
+                : run;
+    }
+
+    private ValidationRunPublication findExistingPublicationOrReservation(ValidationRun managedRun) {
+        if (publicationRepository != null && managedRun.getId() != null) {
+            return publicationRepository.findById(managedRun.getId()).orElse(null);
+        }
+        return managedRun.getPublication();
+    }
+
+    private String resolveOwnerEmail(ValidationRun managedRun, ValidationRun detachedRun, String actorEmail) {
+        if (managedRun.getCreatedByEmail() != null && !managedRun.getCreatedByEmail().isBlank()) {
+            return managedRun.getCreatedByEmail();
+        }
+        if (detachedRun.getCreatedByEmail() != null && !detachedRun.getCreatedByEmail().isBlank()) {
+            return detachedRun.getCreatedByEmail();
+        }
+        return actorEmail;
+    }
+
+    private void validateOwnerQuotaAndSlug(String ownerEmail, String productSlug, UUID runId) {
+        validatePublishQuota(ownerEmail);
+        validateProductSlugOwnership(productSlug, ownerEmail, runId);
+    }
+
+    private void populatePublicationMetadata(
+            ValidationRunPublication target,
+            ValidationRun managedRun,
+            String ownerEmail,
+            CompliancePublishRequest request) {
+        target.setRun(managedRun);
+        target.setCreatedByEmail(ownerEmail);
+        target.setProductName(request.productName());
+        target.setProductSlug(request.productSlug());
+        target.setProductVersion(request.productVersion());
+        target.setVendorName(request.vendorName());
+        target.setProjectUrl(request.projectUrl());
+        target.setLicenseType(request.licenseType());
+        target.setShowSubmitter(request.showSubmitter());
+        target.setCoreScore(request.coreScore());
+        target.setSupportedCapabilities(request.supportedCapabilities());
+        target.setTotalCapabilities(request.totalCapabilities());
+    }
+
+    private ValidationRunPublication persistPublicationAndSyncRun(
+            ValidationRunPublication publication,
+            ValidationRun managedRun,
+            ValidationRun callerRun) {
         managedRun.setPublication(publication);
         if (publicationRepository != null) {
             publication = publicationRepository.save(publication);
@@ -629,8 +725,8 @@ public class ValidationRunService {
         if (runRepository != null) {
             runRepository.save(managedRun);
         }
-        if (managedRun != run) {
-            run.setPublication(publication);
+        if (managedRun != callerRun) {
+            callerRun.setPublication(publication);
         }
         return publication;
     }

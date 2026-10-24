@@ -131,6 +131,7 @@ For local development, that usually means either:
 | `APP_COMPLIANCE_MIN_PUBLISH_SCORE` | no | Minimum Core RFC Conformance percentage required to publish (`app.compliance.min-publish-score`). Default: `50` |
 | `APP_COMPLIANCE_PUBLIC_BASE_URL` | no | Public compliance directory base URL (`app.compliance.public-base-url`). Default: `https://scimsandbox.net` |
 | `APP_COMPLIANCE_SAMPLE_RUN_IDS` | no | Comma-separated UUIDs of official sample fixture runs (`app.compliance.sample-run-ids`). |
+| `APP_COMPLIANCE_RESERVATION_TIMEOUT_SECONDS` | no | Seconds before a pending publication reservation is treated as stale and retryable (`app.compliance.reservation-timeout-seconds`). Default: `300` |
 | `SERVER_PORT` | no | Spring Boot server port. Default: `8082` |
 
 ## Running Locally

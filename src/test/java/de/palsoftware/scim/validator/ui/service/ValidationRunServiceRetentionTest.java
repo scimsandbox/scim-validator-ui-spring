@@ -581,6 +581,7 @@ class ValidationRunServiceRetentionTest {
         public List<ValidationRunPublication> findOwnedPublications(String actorEmail, Sort sort) {
             return db.values().stream()
                     .filter(p -> p.getCreatedByEmail() != null && p.getCreatedByEmail().equalsIgnoreCase(actorEmail))
+                    .filter(p -> !p.isPendingReservation())
                     .sorted(Comparator.comparing(ValidationRunPublication::getPublishedAt, Comparator.nullsLast(Comparator.reverseOrder())))
                     .toList();
         }
@@ -588,6 +589,13 @@ class ValidationRunServiceRetentionTest {
         @Override
         public long countOwnedPublications(String actorEmail) {
             return findOwnedPublications(actorEmail, Sort.unsorted()).size();
+        }
+
+        @Override
+        public List<ValidationRunPublication> findStalePendingReservations(OffsetDateTime cutoff) {
+            return db.values().stream()
+                    .filter(p -> p.isPendingReservation() && (p.getPublishedAt() == null || !p.getPublishedAt().isAfter(cutoff)))
+                    .toList();
         }
 
         @Override

@@ -13,13 +13,17 @@ import jakarta.persistence.Table;
 import jakarta.persistence.Transient;
 import org.springframework.data.domain.Persistable;
 
+import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.Objects;
 import java.util.UUID;
 
 @Entity
 @Table(name = "validation_run_publication")
 public class ValidationRunPublication implements Persistable<UUID> {
+
+    public static final String PENDING_RESERVATION_PR_URL = "PENDING_RESERVATION";
 
     @Transient
     private boolean isNew = true;
@@ -97,8 +101,33 @@ public class ValidationRunPublication implements Persistable<UUID> {
 
     @PostPersist
     @PostLoad
-    void markNotNew() {
+    public void markNotNew() {
         this.isNew = false;
+    }
+
+    @Transient
+    public boolean isPendingReservation() {
+        return PENDING_RESERVATION_PR_URL.equals(prUrl);
+    }
+
+    @Transient
+    public boolean isStalePendingReservation(Duration timeout) {
+        return isStalePendingReservation(OffsetDateTime.now(ZoneOffset.UTC), timeout);
+    }
+
+    @Transient
+    public boolean isStalePendingReservation(OffsetDateTime now, Duration timeout) {
+        if (!isPendingReservation()) {
+            return false;
+        }
+        if (publishedAt == null) {
+            return true;
+        }
+        Duration effectiveTimeout = (timeout != null && !timeout.isNegative() && !timeout.isZero())
+                ? timeout
+                : Duration.ofSeconds(300);
+        OffsetDateTime referenceNow = now != null ? now : OffsetDateTime.now(ZoneOffset.UTC);
+        return !publishedAt.plus(effectiveTimeout).isAfter(referenceNow);
     }
 
     public void setRunId(UUID runId) {

@@ -148,6 +148,10 @@ public class ValidationRun {
     }
 
     public boolean isPublished() {
-        return publication != null;
+        return publication != null && !publication.isPendingReservation();
+    }
+
+    public boolean hasPendingReservation() {
+        return publication != null && publication.isPendingReservation();
     }
 }

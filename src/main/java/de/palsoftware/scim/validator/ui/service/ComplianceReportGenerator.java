@@ -119,21 +119,37 @@ public class ComplianceReportGenerator {
     }
 
     /**
-     * Builds a sanitized report from existing validation run models.
+     * Builds a sanitized report from existing validation run models using the configured
+     * {@code app.compliance.sample-run-ids} list.
      */
     public SanitizedComplianceReport generate(
             ValidationRun run,
             ValidationRunPublication publication,
             ComplianceScorecardView scorecard,
             List<ValidationTestResult> testResults) {
-        return buildSanitizedReport(run, publication, scorecard, testResults);
+        return buildSanitizedReport(run, publication, scorecard, testResults, sampleRunIdsConfig);
+    }
+
+    /**
+     * Static convenience builder using {@link #DEFAULT_SAMPLE_RUN_IDS}.
+     * Prefer the instance {@link #generate(ValidationRun, ValidationRunPublication, ComplianceScorecardView, List)}
+     * method or {@link #buildSanitizedReport(ValidationRun, ValidationRunPublication, ComplianceScorecardView, List, String)}
+     * when custom {@code app.compliance.sample-run-ids} configuration should be applied.
+     */
+    public static SanitizedComplianceReport buildSanitizedReport(
+            ValidationRun run,
+            ValidationRunPublication publication,
+            ComplianceScorecardView scorecard,
+            List<ValidationTestResult> testResults) {
+        return buildSanitizedReport(run, publication, scorecard, testResults, DEFAULT_SAMPLE_RUN_IDS);
     }
 
     public static SanitizedComplianceReport buildSanitizedReport(
             ValidationRun run,
             ValidationRunPublication publication,
             ComplianceScorecardView scorecard,
-            List<ValidationTestResult> testResults) {
+            List<ValidationTestResult> testResults,
+            String sampleIdsCsv) {
 
         Objects.requireNonNull(run, "run must not be null");
         Objects.requireNonNull(scorecard, "scorecard must not be null");
@@ -175,7 +191,7 @@ public class ComplianceReportGenerator {
                 licenseType,
                 publishedAtIso,
                 submitter,
-                isSampleRun(run.getId()) ? Boolean.TRUE : null
+                isConfiguredSampleRun(run.getId(), sampleIdsCsv) ? Boolean.TRUE : null
         );
 
         NormativeLevelBreakdown normative = new NormativeLevelBreakdown(
