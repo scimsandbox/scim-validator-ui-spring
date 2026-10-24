@@ -38,9 +38,12 @@ public class ComplianceReportGenerator {
     private static final Pattern AUTH_HEADER_PATTERN = Pattern.compile("(?i)authorization:\\s*[^;\\r\\n]+");
     private static final Pattern IPV4_PATTERN = Pattern.compile("\\b(?:\\d{1,3}\\.){3}\\d{1,3}(?::\\d+)?\\b");
     private static final Pattern IPV6_PATTERN = Pattern.compile(
-            "(?i)\\[(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}\\](?::\\d+)?"
+            "(?i)\\[(?:[0-9a-f]{0,4}:){2,7}[0-9a-f.]{0,15}\\](?::\\d+)?"
             + "|\\b(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}\\b"
+            + "|(?<![a-z0-9_:])::ffff:(?:0:)?\\d{1,3}(?:\\.\\d{1,3}){3}\\b"
             + "|\\b(?:[0-9a-f]{1,4}:){1,6}:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,5}\\b"
+            + "|\\b(?:[0-9a-f]{1,4}:){2,7}:(?![0-9a-f:])"
+            + "|\\b(?:fe80|fc00|fd[0-9a-f]{2}|ff[0-9a-f]{2})::(?![0-9a-f:])"
             + "|(?<![a-z0-9_:])::1\\b");
     private static final Pattern TARGET_URL_RESIDUAL_PATTERN = Pattern.compile("\\[TARGET_URL\\][^\\s\"'>\\]\\)]*");
     private static final Pattern TARGET_HOST_RESIDUAL_PATTERN = Pattern.compile("\\[TARGET_HOST\\][^\\s\"'>\\]\\)]*");
@@ -402,9 +405,9 @@ public class ComplianceReportGenerator {
         sanitized = AUTH_HEADER_PATTERN.matcher(sanitized).replaceAll("Authorization: [REDACTED]");
         sanitized = BEARER_PATTERN.matcher(sanitized).replaceAll("Bearer [REDACTED_TOKEN]");
         sanitized = BASIC_PATTERN.matcher(sanitized).replaceAll("Basic [REDACTED_AUTH]");
-        // Scrub IPv4 and IPv6 addresses
-        sanitized = IPV4_PATTERN.matcher(sanitized).replaceAll("[REDACTED_IP]");
+        // Scrub IPv6 and IPv4 addresses (IPv6 first so IPv4-mapped IPv6 literals are redacted as a single unit)
         sanitized = IPV6_PATTERN.matcher(sanitized).replaceAll("[REDACTED_IP]");
+        sanitized = IPV4_PATTERN.matcher(sanitized).replaceAll("[REDACTED_IP]");
         // Scrub sensitive query parameters
         sanitized = SENSITIVE_QUERY_PARAM_PATTERN.matcher(sanitized).replaceAll("[REDACTED_PARAM]");
 

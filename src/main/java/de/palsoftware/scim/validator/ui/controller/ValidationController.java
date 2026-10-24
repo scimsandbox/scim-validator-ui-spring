@@ -399,6 +399,24 @@ public class ValidationController {
             redirectAttributes.addFlashAttribute("errorMessage", "This validation run has already been published to the Compliance Directory.");
             return "redirect:/runs/" + runId;
         }
+        if (validationRunService != null && validationRunService.isReconciliationRequired(runId)) {
+            try {
+                var reconciled = validationRunService.tryReconcilePendingPublication(runEntity);
+                if (reconciled != null && reconciled.isPresent()) {
+                    redirectAttributes.addFlashAttribute("successMessage",
+                            "Compliance report successfully published! View live report at " + reconciled.get().reportUrl());
+                    redirectAttributes.addFlashAttribute("justPublished", true);
+                    return "redirect:/runs/" + runId;
+                }
+            } catch (Exception ex) {
+                log.error("Failed to reconcile pending validation publication for runId={}", runId, ex);
+                String safeReason = sanitizeFlashErrorMessage(ex.getMessage(), "database error");
+                redirectAttributes.addFlashAttribute("errorMessage",
+                        "Publication merged to GitHub but failed to update local database: " + safeReason
+                                + ". The run remains locked for reconciliation.");
+                return "redirect:/runs/" + runId;
+            }
+        }
         if (runEntity.hasPendingReservation()
                 && validationRunService != null
                 && !validationRunService.isStaleReservation(runEntity.getPublication())) {
@@ -561,6 +579,7 @@ public class ValidationController {
             } catch (Exception ex) {
                 // Keep reservation and in-memory claim locked so a retry does not open a duplicate PR on GitHub
                 validationRunService.markReconciliationRequired(runId);
+                validationRunService.markReconciliationRequired(runId, userEmail, publishRequest, result);
                 log.error("Failed to persist validation publication to database for runId={} after GitHub merge ({})",
                         runId, result.prUrl(), ex);
                 String safeReason = sanitizeFlashErrorMessage(ex.getMessage(), "database error");

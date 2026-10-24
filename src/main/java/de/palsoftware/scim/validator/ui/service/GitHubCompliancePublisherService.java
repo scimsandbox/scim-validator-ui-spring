@@ -385,8 +385,8 @@ public class GitHubCompliancePublisherService {
                     } catch (Exception ignored) {
                     }
                 }
-                return CompliancePublicationResult.succeeded(
-                        runId, existingPrUrl, reportUrl, badgeUrl, baseCommitSha, existingPublishedAt);
+                return CompliancePublicationResult.reconciled(
+                        runId, existingPrUrl, reportUrl, badgeUrl, baseCommitSha, existingPublishedAt, existingEntry);
             }
         }
 

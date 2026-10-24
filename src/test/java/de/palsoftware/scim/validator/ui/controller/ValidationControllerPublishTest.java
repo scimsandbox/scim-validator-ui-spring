@@ -502,11 +502,15 @@ class ValidationControllerPublishTest {
         verify(validationRunService, org.mockito.Mockito.times(2))
                 .recordPublication(eq(runEntity), eq("developer@example.com"), any(CompliancePublishRequest.class), eq(pubResult));
         verify(validationRunService).markReconciliationRequired(runId);
+        verify(validationRunService).markReconciliationRequired(
+                eq(runId), eq("developer@example.com"), any(CompliancePublishRequest.class), eq(pubResult));
         verify(gitHubCompliancePublisherService, never()).releaseClaim(runId);
         verify(validationRunService, never()).releasePublicationReservation(runEntity);
 
-        // Subsequent publishRun failure on a reconciliation-locked run must NOT release the claim or reservation
+        // If the DB is still unavailable on retry (tryReconcilePendingPublication returns empty) and publish throws,
+        // a reconciliation-locked run must NOT release the claim or reservation
         when(validationRunService.isReconciliationRequired(runId)).thenReturn(true);
+        when(validationRunService.tryReconcilePendingPublication(runEntity)).thenReturn(java.util.Optional.empty());
         when(gitHubCompliancePublisherService.publish(any(CompliancePublishRequest.class)))
                 .thenThrow(new IllegalStateException("Validation run has already been published: " + runId));
 
@@ -515,6 +519,20 @@ class ValidationControllerPublishTest {
         assertThat(retryRedirect).isEqualTo("redirect:/runs/" + runId);
         verify(gitHubCompliancePublisherService, never()).releaseClaim(runId);
         verify(validationRunService, never()).releasePublicationReservation(runEntity);
+
+        // Once the DB recovers, retrying publishRun while the PENDING reservation is still present auto-heals
+        // via tryReconcilePendingPublication without calling GitHub again or returning "already in progress"
+        ValidationRunPublication pendingPub = createSamplePublication(runId, "developer@example.com", 94);
+        pendingPub.setPrUrl(ValidationRunPublication.PENDING_RESERVATION_PR_URL);
+        runEntity.setPublication(pendingPub);
+        when(validationRunService.tryReconcilePendingPublication(runEntity)).thenReturn(java.util.Optional.of(pubResult));
+
+        RedirectAttributes healedRedirectAttributes = new RedirectAttributesModelMap();
+        String healedRedirect = controller.publishRun(runId, form, bindingResult, userAuth, healedRedirectAttributes);
+        assertThat(healedRedirect).isEqualTo("redirect:/runs/" + runId);
+        assertThat(healedRedirectAttributes.getFlashAttributes()).containsKey("successMessage");
+        assertThat(healedRedirectAttributes.getFlashAttributes().get("justPublished")).isEqualTo(true);
+        verify(gitHubCompliancePublisherService, org.mockito.Mockito.times(2)).publish(any(CompliancePublishRequest.class));
     }
 
     @Test

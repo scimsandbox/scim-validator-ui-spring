@@ -535,7 +535,8 @@ public class ValidationRunRepositoryIsolationAndConstraintsTest {
                 em.getTransaction().commit();
                 em.clear();
 
-                jpaService.markReconciliationRequired(detachedBobRun.getId());
+                jpaService.markReconciliationRequired(
+                        detachedBobRun.getId(), "bob@example.com", bobValidReq, bobRes);
                 assertThat(jpaService.isReconciliationRequired(detachedBobRun.getId())).isTrue();
                 ValidationRunPublication reloadedPending = jpaPubRepo.findById(detachedBobRun.getId()).orElseThrow();
                 assertThat(jpaService.isStaleReservation(reloadedPending)).isFalse();
@@ -549,17 +550,110 @@ public class ValidationRunRepositoryIsolationAndConstraintsTest {
                 assertThat(purgedWhileReconciling).isZero();
                 assertThat(jpaPubRepo.existsById(detachedBobRun.getId())).isTrue();
 
+                // Background cleanupStalePendingReservations() auto-heals a reconciliation-locked run once DB is reachable
                 em.getTransaction().begin();
-                ValidationRunPublication finalizedBobPub = jpaService.recordPublication(
-                        detachedBobRun, "bob@example.com", bobValidReq, bobRes);
+                jpaService.cleanupStalePendingReservations();
                 em.flush();
                 em.getTransaction().commit();
                 em.clear();
                 assertThat(jpaService.isReconciliationRequired(detachedBobRun.getId())).isFalse();
-                assertThat(finalizedBobPub.getPrUrl()).isEqualTo("https://github.com/scimsandbox/scim-website/pull/11");
-                assertThat(finalizedBobPub.getProductSlug()).isEqualTo("bob-scim");
+                ValidationRunPublication healedBobPub = jpaPubRepo.findById(detachedBobRun.getId()).orElseThrow();
+                assertThat(healedBobPub.getPrUrl()).isEqualTo("https://github.com/scimsandbox/scim-website/pull/11");
+                assertThat(healedBobPub.getProductSlug()).isEqualTo("bob-scim");
                 assertThat(jpaRunRepo.findOwnedRuns("bob@example.com", Sort.unsorted())).isEmpty();
                 assertThat(jpaPubRepo.countOwnedPublications("bob@example.com")).isEqualTo(1L);
+
+                // Verify idempotent index.json reconciliation preserves canonical GitHub catalog metadata over altered retry form fields
+                em.getTransaction().begin();
+                ValidationRun carolRun = new ValidationRun();
+                carolRun.setName("Carol Run");
+                carolRun.setTargetUrl("https://carol.example.com/scim/v2");
+                carolRun.setExecutedAt(OffsetDateTime.now(ZoneOffset.UTC).minusMinutes(2));
+                carolRun.setStatus("PASSED");
+                carolRun.setCreatedByUser(bob);
+                jpaRunRepo.save(carolRun);
+                em.flush();
+                em.getTransaction().commit();
+                em.clear();
+
+                CompliancePublishRequest carolInitialReq = new CompliancePublishRequest(
+                        carolRun.getId(),
+                        "Canonical Product",
+                        "canonical-product",
+                        "1.0.0",
+                        "Canonical Vendor",
+                        "https://canonical.example.com",
+                        "Apache-2.0",
+                        true,
+                        95,
+                        "EMERALD",
+                        9,
+                        10,
+                        "bob@example.com"
+                );
+                em.getTransaction().begin();
+                ValidationRun detachedCarol = jpaRunRepo.findById(carolRun.getId()).orElseThrow();
+                jpaService.reservePublication(detachedCarol, "bob@example.com", carolInitialReq);
+                em.flush();
+                em.getTransaction().commit();
+                em.clear();
+
+                de.palsoftware.scim.validator.ui.model.spec.ComplianceCatalogEntry canonicalEntry =
+                        new de.palsoftware.scim.validator.ui.model.spec.ComplianceCatalogEntry(
+                                carolRun.getId(),
+                                "Canonical Product",
+                                "canonical-product",
+                                "1.0.0",
+                                "Canonical Vendor",
+                                "https://canonical.example.com",
+                                "Apache-2.0",
+                                95,
+                                de.palsoftware.scim.validator.ui.model.spec.ColourGradientInfo.from("EMERALD", 95),
+                                9,
+                                10,
+                                "compliance/reports/canonical-product/1.0.0-20261024-" + carolRun.getId() + ".json",
+                                "compliance/badges/canonical-product.svg",
+                                "2026-10-24T12:00:00Z"
+                        );
+                CompliancePublicationResult reconciledRes = CompliancePublicationResult.reconciled(
+                        carolRun.getId(),
+                        "https://github.com/scimsandbox/scim-website/blob/main/" + canonicalEntry.reportPath(),
+                        "https://scimsandbox.net/compliance/?run=" + carolRun.getId(),
+                        "https://scimsandbox.net/compliance/badges/" + carolRun.getId() + ".svg",
+                        "reconciled",
+                        OffsetDateTime.parse("2026-10-24T12:00:00Z"),
+                        canonicalEntry
+                );
+                CompliancePublishRequest alteredRetryReq = new CompliancePublishRequest(
+                        carolRun.getId(),
+                        "Altered Product",
+                        "altered-product",
+                        "9.9.9",
+                        "Altered Vendor",
+                        "https://altered.example.com",
+                        "MIT",
+                        false,
+                        95,
+                        "EMERALD",
+                        9,
+                        10,
+                        "bob@example.com"
+                );
+
+                em.getTransaction().begin();
+                ValidationRunPublication reconciledPub = jpaService.recordPublication(
+                        detachedCarol, "bob@example.com", alteredRetryReq, reconciledRes);
+                em.flush();
+                em.getTransaction().commit();
+                em.clear();
+
+                assertThat(reconciledPub.getProductName()).isEqualTo("Canonical Product");
+                assertThat(reconciledPub.getProductSlug()).isEqualTo("canonical-product");
+                assertThat(reconciledPub.getProductVersion()).isEqualTo("1.0.0");
+                assertThat(reconciledPub.getVendorName()).isEqualTo("Canonical Vendor");
+                assertThat(reconciledPub.getProjectUrl()).isEqualTo("https://canonical.example.com");
+                assertThat(reconciledPub.getLicenseType()).isEqualTo("Apache-2.0");
+                assertThat(reconciledPub.isShowSubmitter()).isTrue();
             } finally {
                 emf.close();
             }

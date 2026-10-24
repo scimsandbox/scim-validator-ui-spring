@@ -644,6 +644,7 @@ class GitHubCompliancePublisherServiceTest {
         assertThat(result.reportUrl()).isEqualTo("https://scimsandbox.net/compliance/?run=" + runId);
         assertThat(result.badgeUrl()).isEqualTo("https://scimsandbox.net/compliance/badges/" + runId + ".svg");
         assertThat(result.publishedAt()).isEqualTo(originalPublishedAt);
+        assertThat(result.reconciledCatalogEntry()).isEqualTo(existingEntry);
         assertThat(publisherService.isMergedInMemory(runId)).isTrue();
 
         // Verify no branch, tree, commit, or PR was created

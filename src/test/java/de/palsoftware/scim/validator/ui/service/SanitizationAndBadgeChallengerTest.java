@@ -323,16 +323,22 @@ class SanitizationAndBadgeChallengerTest {
             assertThatCode(() -> ComplianceReportGenerator.assertSanitized(json, targetUrl))
                     .doesNotThrowAnyException();
 
-            // Meanwhile, genuine compressed/loopback IPv6 literals are still caught
-            assertThat(ComplianceReportGenerator.sanitizeErrorMessage("Connect to fe80::1 or ::1 failed", targetUrl))
+            // Meanwhile, genuine compressed/loopback/trailing/IPv4-mapped IPv6 literals are still caught
+            assertThat(ComplianceReportGenerator.sanitizeErrorMessage(
+                    "Connect to fe80::1 or ::1 or 2001:db8:: or fe80:: or ::ffff:192.0.2.1 or [::ffff:192.0.2.1]:8080 failed",
+                    targetUrl))
                     .doesNotContain("fe80::1")
-                    .doesNotContain("::1");
-            assertThatThrownBy(() ->
-                    ComplianceReportGenerator.assertSanitized("{\"err\":\"Connect to fe80::1\"}", targetUrl)
-            ).isInstanceOf(SecurityException.class);
-            assertThatThrownBy(() ->
-                    ComplianceReportGenerator.assertSanitized("{\"err\":\"Connect to ::1\"}", targetUrl)
-            ).isInstanceOf(SecurityException.class);
+                    .doesNotContain("::1")
+                    .doesNotContain("2001:db8::")
+                    .doesNotContain("fe80::")
+                    .doesNotContain("::ffff:192.0.2.1")
+                    .doesNotContain("192.0.2.1");
+            for (String leakedIpv6 : List.of("fe80::1", "::1", "2001:db8::", "fe80::", "::ffff:192.0.2.1", "[::ffff:192.0.2.1]:8080")) {
+                assertThatThrownBy(() ->
+                        ComplianceReportGenerator.assertSanitized("{\"err\":\"Connect to " + leakedIpv6 + " failed\"}", targetUrl)
+                ).as("Should reject leaked IPv6 literal: %s", leakedIpv6)
+                        .isInstanceOf(SecurityException.class);
+            }
         }
     }
 

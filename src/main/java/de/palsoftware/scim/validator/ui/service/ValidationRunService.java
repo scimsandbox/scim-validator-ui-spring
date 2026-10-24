@@ -145,7 +145,14 @@ public class ValidationRunService {
     @Autowired(required = false)
     private PlatformTransactionManager transactionManager;
 
+    public record PendingReconciliation(
+            String actorEmail,
+            CompliancePublishRequest request,
+            CompliancePublicationResult result
+    ) {}
+
     private final Set<UUID> reconciliationRequiredRunIds = ConcurrentHashMap.newKeySet();
+    private final Map<UUID, PendingReconciliation> pendingReconciliations = new ConcurrentHashMap<>();
 
     public void setTransactionManager(PlatformTransactionManager transactionManager) {
         this.transactionManager = transactionManager;
@@ -157,6 +164,19 @@ public class ValidationRunService {
         }
     }
 
+    public void markReconciliationRequired(
+            UUID runId,
+            String actorEmail,
+            CompliancePublishRequest request,
+            CompliancePublicationResult result) {
+        if (runId != null) {
+            reconciliationRequiredRunIds.add(runId);
+            if (request != null && result != null) {
+                pendingReconciliations.put(runId, new PendingReconciliation(actorEmail, request, result));
+            }
+        }
+    }
+
     public boolean isReconciliationRequired(UUID runId) {
         return runId != null && reconciliationRequiredRunIds.contains(runId);
     }
@@ -164,7 +184,21 @@ public class ValidationRunService {
     public void clearReconciliationRequired(UUID runId) {
         if (runId != null) {
             reconciliationRequiredRunIds.remove(runId);
+            pendingReconciliations.remove(runId);
         }
+    }
+
+    @Transactional
+    public Optional<CompliancePublicationResult> tryReconcilePendingPublication(ValidationRun run) {
+        if (run == null || run.getId() == null) {
+            return Optional.empty();
+        }
+        PendingReconciliation pending = pendingReconciliations.get(run.getId());
+        if (pending == null) {
+            return Optional.empty();
+        }
+        recordPublication(run, pending.actorEmail(), pending.request(), pending.result());
+        return Optional.of(pending.result());
     }
 
     public int getMaxRunsPerUser() {
@@ -504,6 +538,19 @@ public class ValidationRunService {
     @Scheduled(fixedDelayString = "${app.compliance.reservation-cleanup-interval-ms:60000}")
     @Transactional
     public void cleanupStalePendingReservations() {
+        for (Map.Entry<UUID, PendingReconciliation> entry : pendingReconciliations.entrySet()) {
+            UUID runId = entry.getKey();
+            PendingReconciliation pending = entry.getValue();
+            try {
+                ValidationRun run = (runRepository != null) ? runRepository.findById(runId).orElse(null) : null;
+                if (run != null) {
+                    recordPublication(run, pending.actorEmail(), pending.request(), pending.result());
+                    log.info("Successfully reconciled pending compliance publication for runId={}", runId);
+                }
+            } catch (Exception ex) {
+                log.debug("Background reconciliation attempt for runId={} did not succeed yet: {}", runId, ex.getMessage());
+            }
+        }
         try {
             int purged = purgeStalePendingReservations();
             if (purged > 0) {
@@ -741,8 +788,14 @@ public class ValidationRunService {
             CompliancePublicationResult result) {
         ValidationRun managedRun = resolveManagedRun(run);
         ValidationRunPublication existing = findExistingPublicationOrReservation(managedRun);
+        String ownerEmail = resolveOwnerEmail(managedRun, run, actorEmail);
 
         if (existing != null && existing.isPendingReservation()) {
+            boolean originalShowSubmitter = existing.isShowSubmitter();
+            populatePublicationMetadata(existing, managedRun, ownerEmail, request);
+            if (result != null && result.reconciledCatalogEntry() != null) {
+                applyReconciledCatalogMetadata(existing, result.reconciledCatalogEntry(), originalShowSubmitter);
+            }
             existing.markNotNew();
             existing.setReportUrl(result.reportUrl());
             existing.setBadgeUrl(result.badgeUrl());
@@ -756,11 +809,17 @@ public class ValidationRunService {
         if (run.isPublished() || managedRun.isPublished() || existing != null) {
             throw new IllegalStateException("Validation run has already been published: " + managedRun.getId());
         }
-        String ownerEmail = resolveOwnerEmail(managedRun, run, actorEmail);
-        validateOwnerQuotaAndSlug(ownerEmail, request.productSlug(), managedRun.getId());
+        String effectiveSlug = (result != null && result.reconciledCatalogEntry() != null
+                && result.reconciledCatalogEntry().productSlug() != null)
+                ? result.reconciledCatalogEntry().productSlug()
+                : request.productSlug();
+        validateOwnerQuotaAndSlug(ownerEmail, effectiveSlug, managedRun.getId());
 
         ValidationRunPublication publication = new ValidationRunPublication();
         populatePublicationMetadata(publication, managedRun, ownerEmail, request);
+        if (result != null && result.reconciledCatalogEntry() != null) {
+            applyReconciledCatalogMetadata(publication, result.reconciledCatalogEntry(), false);
+        }
         publication.setReportUrl(result.reportUrl());
         publication.setBadgeUrl(result.badgeUrl());
         publication.setPrUrl(result.prUrl());
@@ -769,6 +828,30 @@ public class ValidationRunService {
         ValidationRunPublication saved = persistPublicationAndSyncRun(publication, managedRun, run);
         clearReconciliationRequired(managedRun.getId());
         return saved;
+    }
+
+    private void applyReconciledCatalogMetadata(
+            ValidationRunPublication target,
+            de.palsoftware.scim.validator.ui.model.spec.ComplianceCatalogEntry entry,
+            boolean fallbackShowSubmitter) {
+        if (entry.productName() != null) {
+            target.setProductName(entry.productName());
+        }
+        if (entry.productSlug() != null) {
+            target.setProductSlug(entry.productSlug());
+        }
+        if (entry.productVersion() != null) {
+            target.setProductVersion(entry.productVersion());
+        }
+        target.setVendorName(entry.vendorName());
+        target.setProjectUrl(entry.projectUrl());
+        if (entry.licenseType() != null) {
+            target.setLicenseType(entry.licenseType());
+        }
+        target.setShowSubmitter(fallbackShowSubmitter);
+        target.setCoreScore(entry.coreScore());
+        target.setSupportedCapabilities(entry.supportedCapabilities());
+        target.setTotalCapabilities(entry.totalCapabilities());
     }
 
     private ValidationRun resolveManagedRun(ValidationRun run) {
