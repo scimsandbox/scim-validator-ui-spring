@@ -14,12 +14,14 @@ public interface ValidationRunRepository extends JpaRepository<ValidationRun, UU
     @Query("""
         select run from ValidationRun run
         where lower(run.createdByUser.email) = lower(:actorEmail)
+          and run.publication is null
         """)
     List<ValidationRun> findOwnedRuns(@Param("actorEmail") String actorEmail, Sort sort);
 
     @Query("""
         select count(run) from ValidationRun run
         where lower(run.createdByUser.email) = lower(:actorEmail)
+          and run.publication is null
         """)
     long countOwnedRuns(@Param("actorEmail") String actorEmail);
 

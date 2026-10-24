@@ -11,9 +11,13 @@ import de.palsoftware.scim.validator.ui.dto.ValidationTestResultView;
 import de.palsoftware.scim.validator.ui.model.ValidationMgmtUser;
 import de.palsoftware.scim.validator.ui.model.ValidationHttpExchange;
 import de.palsoftware.scim.validator.ui.model.ValidationRun;
+import de.palsoftware.scim.validator.ui.model.ValidationRunPublication;
 import de.palsoftware.scim.validator.ui.model.ValidationTestResult;
+import de.palsoftware.scim.validator.ui.model.spec.CompliancePublicationResult;
+import de.palsoftware.scim.validator.ui.model.spec.CompliancePublishRequest;
 import de.palsoftware.scim.validator.ui.repo.ValidationMgmtUserRepository;
 import de.palsoftware.scim.validator.ui.repo.ValidationHttpExchangeRepository;
+import de.palsoftware.scim.validator.ui.repo.ValidationRunPublicationRepository;
 import de.palsoftware.scim.validator.ui.repo.ValidationRunRepository;
 import de.palsoftware.scim.validator.ui.repo.ValidationTestResultRepository;
 import de.palsoftware.scim.validator.ui.security.TargetUrlPolicy;
@@ -41,10 +45,12 @@ import org.springframework.web.server.ResponseStatusException;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -76,6 +82,7 @@ public class ValidationRunService {
     private final ValidationMgmtUserRepository mgmtUserRepository;
     private final ValidationTestResultRepository testResultRepository;
     private final ValidationHttpExchangeRepository exchangeRepository;
+    private final ValidationRunPublicationRepository publicationRepository;
     private final ValidationProgressTracker progressTracker;
     private final ExecutorService executorService;
 
@@ -83,16 +90,15 @@ public class ValidationRunService {
             ValidationMgmtUserRepository mgmtUserRepository,
             ValidationTestResultRepository testResultRepository,
             ValidationHttpExchangeRepository exchangeRepository) {
-        this(runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, new ValidationProgressTracker(), Executors.newCachedThreadPool());
+        this(runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, null, new ValidationProgressTracker(), Executors.newCachedThreadPool());
     }
 
-    @Autowired
     public ValidationRunService(ValidationRunRepository runRepository,
             ValidationMgmtUserRepository mgmtUserRepository,
             ValidationTestResultRepository testResultRepository,
             ValidationHttpExchangeRepository exchangeRepository,
             ValidationProgressTracker progressTracker) {
-        this(runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, progressTracker, Executors.newCachedThreadPool());
+        this(runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, null, progressTracker, Executors.newCachedThreadPool());
     }
 
     public ValidationRunService(ValidationRunRepository runRepository,
@@ -101,10 +107,31 @@ public class ValidationRunService {
             ValidationHttpExchangeRepository exchangeRepository,
             ValidationProgressTracker progressTracker,
             ExecutorService executorService) {
+        this(runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, null, progressTracker, executorService);
+    }
+
+    @Autowired
+    public ValidationRunService(ValidationRunRepository runRepository,
+            ValidationMgmtUserRepository mgmtUserRepository,
+            ValidationTestResultRepository testResultRepository,
+            ValidationHttpExchangeRepository exchangeRepository,
+            ValidationRunPublicationRepository publicationRepository,
+            ValidationProgressTracker progressTracker) {
+        this(runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, publicationRepository, progressTracker, Executors.newCachedThreadPool());
+    }
+
+    public ValidationRunService(ValidationRunRepository runRepository,
+            ValidationMgmtUserRepository mgmtUserRepository,
+            ValidationTestResultRepository testResultRepository,
+            ValidationHttpExchangeRepository exchangeRepository,
+            ValidationRunPublicationRepository publicationRepository,
+            ValidationProgressTracker progressTracker,
+            ExecutorService executorService) {
         this.runRepository = runRepository;
         this.mgmtUserRepository = mgmtUserRepository;
         this.testResultRepository = testResultRepository;
         this.exchangeRepository = exchangeRepository;
+        this.publicationRepository = publicationRepository;
         this.progressTracker = progressTracker != null ? progressTracker : new ValidationProgressTracker();
         this.executorService = executorService != null ? executorService : Executors.newCachedThreadPool();
     }
@@ -112,8 +139,15 @@ public class ValidationRunService {
     @Value("${app.runs.max-per-user:10}")
     private int maxRunsPerUser = 10;
 
+    @Value("${app.runs.max-published-per-user:50}")
+    private int maxPublishedRunsPerUser = 50;
+
     public int getMaxRunsPerUser() {
         return maxRunsPerUser;
+    }
+
+    public int getMaxPublishedRunsPerUser() {
+        return maxPublishedRunsPerUser;
     }
 
     public static class ExecutionResult {
@@ -132,19 +166,29 @@ public class ValidationRunService {
         public int getMaxRuns() { return maxRuns; }
     }
 
-    @Transactional
-    public ExecutionResult executeRun(ValidationRunForm form, String actorEmail) {
-        TargetUrlPolicy.validate(form.baseUrl());
+    private boolean pruneOldUnpublishedRuns(String actorEmail) {
         List<ValidationRun> userRuns = runRepository.findOwnedRuns(actorEmail, Sort.by(Sort.Direction.ASC, "executedAt"));
         boolean oldRunDeleted = false;
-        
+
         if (userRuns.size() >= maxRunsPerUser) {
             int toDelete = userRuns.size() - maxRunsPerUser + 1;
             for (int i = 0; i < toDelete; i++) {
-                runRepository.delete(userRuns.get(i));
+                ValidationRun runToDelete = userRuns.get(i);
+                if (runToDelete.isPublished()) {
+                    log.warn("Skipping deletion of published run {} during auto-pruning", runToDelete.getId());
+                    continue;
+                }
+                runRepository.delete(runToDelete);
                 oldRunDeleted = true;
             }
         }
+        return oldRunDeleted;
+    }
+
+    @Transactional
+    public ExecutionResult executeRun(ValidationRunForm form, String actorEmail) {
+        TargetUrlPolicy.validate(form.baseUrl());
+        boolean oldRunDeleted = pruneOldUnpublishedRuns(actorEmail);
 
         int plannedTotal = discoverTestCount(form.baseUrl(), form.authToken());
 
@@ -177,8 +221,7 @@ public class ValidationRunService {
             listener = new ValidationExecutionListener(run, plannedTotal, progressTracker, testResultRepository,
                     exchangeRepository);
             Launcher launcher = LauncherFactory.create();
-            launcher.registerTestExecutionListeners(listener);
-            launcher.execute(buildRequest());
+            executeLauncher(launcher, buildRequest(), listener);
 
             run.setTotalTests(listener.total);
             run.setPassedTests(listener.passed);
@@ -213,16 +256,7 @@ public class ValidationRunService {
     @Transactional
     public ExecutionResult executeRunAsync(ValidationRunForm form, String actorEmail) {
         TargetUrlPolicy.validate(form.baseUrl());
-        List<ValidationRun> userRuns = runRepository.findOwnedRuns(actorEmail, Sort.by(Sort.Direction.ASC, "executedAt"));
-        boolean oldRunDeleted = false;
-        
-        if (userRuns.size() >= maxRunsPerUser) {
-            int toDelete = userRuns.size() - maxRunsPerUser + 1;
-            for (int i = 0; i < toDelete; i++) {
-                runRepository.delete(userRuns.get(i));
-                oldRunDeleted = true;
-            }
-        }
+        boolean oldRunDeleted = pruneOldUnpublishedRuns(actorEmail);
 
         int plannedTotal = discoverTestCount(form.baseUrl(), form.authToken());
 
@@ -293,8 +327,7 @@ public class ValidationRunService {
             );
 
             Launcher launcher = LauncherFactory.create();
-            launcher.registerTestExecutionListeners(listener);
-            launcher.execute(buildRequest());
+            executeLauncher(launcher, buildRequest(), listener);
 
             run.setTotalTests(listener.total);
             run.setPassedTests(listener.passed);
@@ -366,8 +399,107 @@ public class ValidationRunService {
 
     @Transactional
     public void deleteRun(UUID runId, String actorEmail, boolean admin) {
-        requireRunAccess(runId, actorEmail, admin);
+        ValidationRun run = requireRunAccess(runId, actorEmail, admin);
+        if (!admin && run.isPublished()) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Published runs cannot be deleted");
+        }
+        if (run.isPublished() && publicationRepository != null) {
+            if (run.getPublication() != null) {
+                publicationRepository.delete(run.getPublication());
+            } else {
+                publicationRepository.deleteById(runId);
+            }
+            run.setPublication(null);
+        }
         runRepository.deleteById(runId);
+    }
+
+    public long countOwnedPublications(String actorEmail) {
+        if (actorEmail == null || publicationRepository == null) {
+            return 0;
+        }
+        return publicationRepository.countOwnedPublications(actorEmail);
+    }
+
+    public List<ValidationRunPublication> listPublishedRuns(String actorEmail, boolean admin) {
+        if (publicationRepository == null) {
+            return List.of();
+        }
+        Sort sort = Sort.by(Sort.Direction.DESC, "publishedAt");
+        if (admin) {
+            return publicationRepository.findAll(sort);
+        }
+        return publicationRepository.findOwnedPublications(actorEmail, sort);
+    }
+
+    public void validatePublishQuota(String actorEmail) {
+        long currentPublishedCount = countOwnedPublications(actorEmail);
+        if (currentPublishedCount >= maxPublishedRunsPerUser) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "User has reached maximum published compliance runs cap (" + maxPublishedRunsPerUser + ").");
+        }
+    }
+
+    public ValidationRun getRunEntity(UUID runId, String actorEmail, boolean admin) {
+        return requireRunAccess(runId, actorEmail, admin);
+    }
+
+    public List<ValidationTestResult> getRawTestResults(UUID runId) {
+        if (testResultRepository == null) {
+            return List.of();
+        }
+        return testResultRepository.findByRunIdOrderByStartedAtAsc(runId);
+    }
+
+    public List<ValidationHttpExchange> getRawExchanges(UUID runId) {
+        if (testResultRepository == null || exchangeRepository == null) {
+            return List.of();
+        }
+        List<ValidationTestResult> testResults = testResultRepository.findByRunIdOrderByStartedAtAsc(runId);
+        return testResults.stream()
+                .flatMap(tr -> exchangeRepository.findByTestResultIdOrderBySequenceNumberAsc(tr.getId()).stream())
+                .toList();
+    }
+
+    public Optional<ValidationRunPublication> getPublication(UUID runId) {
+        if (publicationRepository == null) {
+            return Optional.empty();
+        }
+        return publicationRepository.findById(runId);
+    }
+
+    @Transactional
+    public ValidationRunPublication recordPublication(
+            ValidationRun run,
+            String actorEmail,
+            CompliancePublishRequest request,
+            CompliancePublicationResult result) {
+        ValidationRunPublication publication = new ValidationRunPublication();
+        publication.setRun(run);
+        publication.setCreatedByEmail(actorEmail);
+        publication.setProductName(request.productName());
+        publication.setProductSlug(request.productSlug());
+        publication.setProductVersion(request.productVersion());
+        publication.setVendorName(request.vendorName());
+        publication.setProjectUrl(request.projectUrl());
+        publication.setLicenseType(request.licenseType());
+        publication.setShowSubmitter(request.showSubmitter());
+        publication.setCoreScore(request.coreScore());
+        publication.setSupportedCapabilities(request.supportedCapabilities());
+        publication.setTotalCapabilities(request.totalCapabilities());
+        publication.setReportUrl(result.reportUrl());
+        publication.setBadgeUrl(result.badgeUrl());
+        publication.setPrUrl(result.prUrl());
+        publication.setPublishedAt(result.publishedAt() != null ? result.publishedAt() : OffsetDateTime.now(ZoneOffset.UTC));
+
+        run.setPublication(publication);
+        if (publicationRepository != null) {
+            publication = publicationRepository.save(publication);
+        }
+        if (runRepository != null) {
+            runRepository.save(run);
+        }
+        return publication;
     }
 
     private ValidationRun requireRunAccess(UUID runId, String actorEmail, boolean admin) {
@@ -411,6 +543,11 @@ public class ValidationRunService {
         }
 
         return builder.build();
+    }
+
+    void executeLauncher(Launcher launcher, LauncherDiscoveryRequest request, TestExecutionListener listener) {
+        launcher.registerTestExecutionListeners(listener);
+        launcher.execute(request);
     }
 
     static class ValidationExecutionListener implements TestExecutionListener {

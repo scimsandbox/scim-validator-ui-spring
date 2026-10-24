@@ -1,15 +1,33 @@
 package de.palsoftware.scim.validator.ui.controller;
 
+import de.palsoftware.scim.validator.ui.dto.CompliancePublishFormData;
 import de.palsoftware.scim.validator.ui.dto.ValidationProgress;
 import de.palsoftware.scim.validator.ui.dto.ValidationRunForm;
 import de.palsoftware.scim.validator.ui.dto.ValidationRunView;
+import de.palsoftware.scim.validator.ui.dto.ValidationTestResultView;
+import de.palsoftware.scim.validator.ui.model.ValidationHttpExchange;
 import de.palsoftware.scim.validator.ui.model.ValidationRun;
+import de.palsoftware.scim.validator.ui.model.ValidationRunPublication;
+import de.palsoftware.scim.validator.ui.model.ValidationTestResult;
+import de.palsoftware.scim.validator.ui.model.spec.CompliancePublicationResult;
+import de.palsoftware.scim.validator.ui.model.spec.CompliancePublishRequest;
+import de.palsoftware.scim.validator.ui.model.spec.ComplianceScorecardView;
+import de.palsoftware.scim.validator.ui.model.spec.TestSpecMapping;
+import de.palsoftware.scim.validator.ui.repo.ValidationRunPublicationRepository;
 import de.palsoftware.scim.validator.ui.security.AuthenticatedUser;
 import de.palsoftware.scim.validator.ui.security.TargetUrlPolicy;
+import de.palsoftware.scim.validator.ui.service.ComplianceScoreService;
+import de.palsoftware.scim.validator.ui.service.GitHubCompliancePublisherService;
 import de.palsoftware.scim.validator.ui.service.MgmtUserService;
+import de.palsoftware.scim.validator.ui.service.SpecCatalogService;
 import de.palsoftware.scim.validator.ui.service.ValidationProgressTracker;
 import de.palsoftware.scim.validator.ui.service.ValidationRunService;
 import jakarta.validation.Valid;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.support.DefaultMessageSourceResolvable;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
@@ -18,6 +36,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import org.springframework.http.HttpStatus;
@@ -31,12 +50,17 @@ import org.springframework.core.io.ByteArrayResource;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 
+import java.util.Collections;
 import java.util.UUID;
 import java.util.Map;
 import java.util.HashMap;
+import java.util.List;
+import java.util.stream.Collectors;
 
 @Controller
 public class ValidationController {
+
+    private static final Logger log = LoggerFactory.getLogger(ValidationController.class);
 
     private static final String ATTR_CURRENT_USER = "currentUser";
     private static final String ATTR_CURRENT_USER_ROLE = "currentUserRole";
@@ -47,20 +71,42 @@ public class ValidationController {
     private final MgmtUserService mgmtUserService;
     private final ValidationProgressTracker validationProgressTracker;
     private final String serverManagerUrl;
+    private final ComplianceScoreService complianceScoreService;
+    private final SpecCatalogService specCatalogService;
+    private final GitHubCompliancePublisherService gitHubCompliancePublisherService;
+    private final ValidationRunPublicationRepository publicationRepository;
 
     public ValidationController(ValidationRunService validationRunService,
             MgmtUserService mgmtUserService,
             ValidationProgressTracker validationProgressTracker,
-            @org.springframework.beans.factory.annotation.Value("${app.server-manager.url}") String serverManagerUrl) {
+            @Value("${app.server-manager.url}") String serverManagerUrl) {
+        this(validationRunService, mgmtUserService, validationProgressTracker, serverManagerUrl,
+                null, null, null, null);
+    }
+
+    @Autowired
+    public ValidationController(
+            ValidationRunService validationRunService,
+            MgmtUserService mgmtUserService,
+            ValidationProgressTracker validationProgressTracker,
+            @Value("${app.server-manager.url}") String serverManagerUrl,
+            @Autowired(required = false) ComplianceScoreService complianceScoreService,
+            @Autowired(required = false) SpecCatalogService specCatalogService,
+            @Autowired(required = false) GitHubCompliancePublisherService gitHubCompliancePublisherService,
+            @Autowired(required = false) ValidationRunPublicationRepository publicationRepository) {
         this.validationRunService = validationRunService;
         this.mgmtUserService = mgmtUserService;
         this.validationProgressTracker = validationProgressTracker;
         this.serverManagerUrl = serverManagerUrl;
+        this.complianceScoreService = complianceScoreService;
+        this.specCatalogService = specCatalogService;
+        this.gitHubCompliancePublisherService = gitHubCompliancePublisherService;
+        this.publicationRepository = publicationRepository;
     }
 
     @GetMapping("/")
     public String index(
-            @org.springframework.web.bind.annotation.RequestParam(name = "showOthers", required = false) String showOthers,
+            @RequestParam(name = "showOthers", required = false) String showOthers,
             Model model,
             Authentication authentication) {
         if (!model.containsAttribute("runForm")) {
@@ -78,7 +124,32 @@ public class ValidationController {
         model.addAttribute(ATTR_CURRENT_USER_ROLE, currentUserRole(authentication));
         model.addAttribute("maxRuns", validationRunService.getMaxRunsPerUser());
         model.addAttribute("serverManagerUrl", serverManagerUrl);
+
+        populatePublishedRunsModel(model, userEmail, admin, showOthersEnabled);
         return "index";
+    }
+
+    private void populatePublishedRunsModel(Model model, String userEmail, boolean admin, boolean showOthersEnabled) {
+        boolean queryScopeAdmin = admin && showOthersEnabled;
+        List<ValidationRunPublication> publishedRuns = validationRunService != null
+                ? validationRunService.listPublishedRuns(userEmail, queryScopeAdmin)
+                : List.of();
+        long count = validationRunService != null
+                ? validationRunService.countOwnedPublications(userEmail)
+                : 0L;
+        int maxPublished = validationRunService != null
+                ? validationRunService.getMaxPublishedRunsPerUser()
+                : 50;
+        if (maxPublished <= 0) {
+            maxPublished = 50;
+        }
+
+        model.addAttribute("publishedRuns", publishedRuns);
+        model.addAttribute("publishedRunsCount", count);
+        model.addAttribute("publishedCount", count);
+        model.addAttribute("myPublishedRunsCount", count);
+        model.addAttribute("maxPublishedRuns", maxPublished);
+        model.addAttribute("publishedQuotaMax", maxPublished);
     }
 
     @PostMapping(value = "/runs", produces = MediaType.APPLICATION_JSON_VALUE)
@@ -139,6 +210,7 @@ public class ValidationController {
             model.addAttribute(ATTR_CURRENT_USER_ROLE, currentUserRole(authentication));
             model.addAttribute("maxRuns", validationRunService.getMaxRunsPerUser());
             model.addAttribute("serverManagerUrl", serverManagerUrl);
+            populatePublishedRunsModel(model, userEmail, admin, true);
             return "index";
         }
 
@@ -186,11 +258,71 @@ public class ValidationController {
 
     @GetMapping("/runs/{runId}")
     public String detail(@PathVariable UUID runId, Model model, Authentication authentication) {
+        String userEmail = actorEmail(authentication);
+        boolean admin = isAdmin(authentication);
+        ValidationRunView runView = null;
         try {
-            model.addAttribute("run",
-                    validationRunService.getRun(runId, actorEmail(authentication), isAdmin(authentication)));
-            model.addAttribute("tests",
-                    validationRunService.getTestResults(runId, actorEmail(authentication), isAdmin(authentication)));
+            runView = validationRunService.getRun(runId, userEmail, admin);
+            List<ValidationTestResultView> testViews = validationRunService.getTestResults(runId, userEmail, admin);
+            model.addAttribute("run", runView);
+            model.addAttribute("tests", testViews);
+
+            ValidationRun runEntity = null;
+            try {
+                runEntity = validationRunService.getRunEntity(runId, userEmail, admin);
+            } catch (Exception e) {
+                log.debug("Could not retrieve runEntity for runId={}: {}", runId, e.getMessage());
+            }
+
+            ComplianceScorecardView scorecard = null;
+            if (complianceScoreService != null && runEntity != null) {
+                try {
+                    List<ValidationTestResult> rawTests = validationRunService.getRawTestResults(runId);
+                    List<ValidationHttpExchange> rawExchanges = validationRunService.getRawExchanges(runId);
+                    scorecard = complianceScoreService.computeScorecard(runEntity, rawTests, rawExchanges);
+                } catch (Exception e) {
+                    log.warn("Failed to compute scorecard for runId={}: {}", runId, e.getMessage());
+                }
+            }
+            model.addAttribute("scorecard", scorecard);
+
+            boolean isEligibleForPublish = false;
+            if (complianceScoreService != null && scorecard != null && runEntity != null) {
+                try {
+                    isEligibleForPublish = complianceScoreService.isEligibleForPublish(scorecard, runEntity);
+                } catch (Exception e) {
+                    log.debug("Could not determine publish eligibility: {}", e.getMessage());
+                }
+            }
+            model.addAttribute("isEligibleForPublish", isEligibleForPublish);
+
+            ValidationRunPublication publication = null;
+            if (runEntity != null && runEntity.getPublication() != null) {
+                publication = runEntity.getPublication();
+            } else if (publicationRepository != null) {
+                try {
+                    publication = publicationRepository.findById(runId).orElse(null);
+                } catch (Exception e) {
+                    log.debug("Could not retrieve publication from repository: {}", e.getMessage());
+                }
+            }
+            model.addAttribute("publication", publication);
+            model.addAttribute("isPublished", publication != null);
+
+            Map<String, TestSpecMapping> testSpecMappings = buildComprehensiveTestMappings();
+            model.addAttribute("testSpecMappings", testSpecMappings);
+
+            if (!model.containsAttribute("publishForm")) {
+                CompliancePublishFormData publishForm = new CompliancePublishFormData();
+                if (runEntity != null) {
+                    publishForm.setProductName(runEntity.getName());
+                    publishForm.setProductSlug(publishForm.resolveProductSlug());
+                } else if (runView != null) {
+                    publishForm.setProductName(runView.name());
+                    publishForm.setProductSlug(publishForm.resolveProductSlug());
+                }
+                model.addAttribute("publishForm", publishForm);
+            }
         } catch (ResponseStatusException e) {
             if (e.getStatusCode() == HttpStatus.NOT_FOUND) {
                 model.addAttribute("runNotFound", true);
@@ -202,6 +334,133 @@ public class ValidationController {
         model.addAttribute(ATTR_CURRENT_USER_ROLE, currentUserRole(authentication));
         model.addAttribute("serverManagerUrl", serverManagerUrl);
         return "run-detail";
+    }
+
+    private Map<String, TestSpecMapping> buildComprehensiveTestMappings() {
+        if (specCatalogService == null) {
+            return Collections.emptyMap();
+        }
+        Map<String, TestSpecMapping> combined = new HashMap<>(specCatalogService.getAllTestMappings());
+        for (TestSpecMapping mapping : specCatalogService.getAllMappings()) {
+            if (mapping.displayName() != null) {
+                combined.putIfAbsent(mapping.displayName(), mapping);
+            }
+        }
+        return combined;
+    }
+
+    @PostMapping("/runs/{runId}/publish")
+    public String publishRun(
+            @PathVariable UUID runId,
+            @Valid @ModelAttribute("publishForm") CompliancePublishFormData publishForm,
+            BindingResult bindingResult,
+            Authentication authentication,
+            RedirectAttributes redirectAttributes) {
+
+        String userEmail = actorEmail(authentication);
+        if (userEmail == null || userEmail.isBlank()) {
+            redirectAttributes.addFlashAttribute("errorMessage", "Authentication required to publish compliance report.");
+            return "redirect:/runs/" + runId;
+        }
+        boolean admin = isAdmin(authentication);
+
+        ValidationRun runEntity;
+        try {
+            runEntity = validationRunService.getRunEntity(runId, userEmail, admin);
+        } catch (ResponseStatusException ex) {
+            redirectAttributes.addFlashAttribute("errorMessage", ex.getReason());
+            return "redirect:/";
+        }
+
+        if (runEntity.isPublished()) {
+            redirectAttributes.addFlashAttribute("errorMessage", "This validation run has already been published to the Compliance Directory.");
+            return "redirect:/runs/" + runId;
+        }
+
+        if (bindingResult.hasErrors()) {
+            String errorMsg = bindingResult.getAllErrors().stream()
+                    .map(DefaultMessageSourceResolvable::getDefaultMessage)
+                    .collect(Collectors.joining("; "));
+            redirectAttributes.addFlashAttribute("errorMessage", "Validation error: " + errorMsg);
+            return "redirect:/runs/" + runId;
+        }
+
+        try {
+            validationRunService.validatePublishQuota(userEmail);
+        } catch (ResponseStatusException ex) {
+            redirectAttributes.addFlashAttribute("errorMessage", ex.getReason());
+            return "redirect:/runs/" + runId;
+        }
+
+        List<ValidationTestResult> rawTests = validationRunService.getRawTestResults(runId);
+        List<ValidationHttpExchange> rawExchanges = validationRunService.getRawExchanges(runId);
+        if (complianceScoreService == null) {
+            redirectAttributes.addFlashAttribute("errorMessage", "Compliance scoring service is unavailable.");
+            return "redirect:/runs/" + runId;
+        }
+
+        ComplianceScorecardView scorecard = complianceScoreService.computeScorecard(runEntity, rawTests, rawExchanges);
+        if (!complianceScoreService.isEligibleForPublish(scorecard, runEntity)) {
+            String reason = scorecard.publishIneligibilityReason() != null
+                    ? scorecard.publishIneligibilityReason()
+                    : "Run does not meet publishing eligibility criteria (Core Conformance >= 50% and terminal status).";
+            redirectAttributes.addFlashAttribute("errorMessage", "Publication rejected: " + reason);
+            return "redirect:/runs/" + runId;
+        }
+
+        String resolvedSlug = publishForm.resolveProductSlug();
+        CompliancePublishRequest publishRequest = new CompliancePublishRequest(
+                runEntity.getId(),
+                publishForm.getProductName().trim(),
+                resolvedSlug,
+                publishForm.getProductVersion().trim(),
+                publishForm.getVendorName() != null ? publishForm.getVendorName().trim() : null,
+                publishForm.getProjectUrl() != null && !publishForm.getProjectUrl().isBlank() ? publishForm.getProjectUrl().trim() : null,
+                publishForm.getLicenseType().trim(),
+                publishForm.isShowSubmitter(),
+                scorecard.coreScore(),
+                scorecard.colourGradient().name(),
+                scorecard.supportedCapabilitiesCount(),
+                scorecard.totalCapabilitiesCount(),
+                userEmail,
+                runEntity.getTargetUrl()
+        );
+
+        if (gitHubCompliancePublisherService == null || !gitHubCompliancePublisherService.isEnabled()) {
+            redirectAttributes.addFlashAttribute("errorMessage", "GitHub compliance publisher is disabled or unavailable.");
+            return "redirect:/runs/" + runId;
+        }
+
+        CompliancePublicationResult result;
+        try {
+            result = gitHubCompliancePublisherService.publish(publishRequest);
+        } catch (Exception ex) {
+            log.error("Failed to publish compliance report for runId={}", runId, ex);
+            String message = ex.getMessage() != null ? ex.getMessage() : "Unknown GitHub publisher error";
+            redirectAttributes.addFlashAttribute("errorMessage", "GitHub publishing failed: " + message);
+            return "redirect:/runs/" + runId;
+        }
+
+        if (result == null || !result.success()) {
+            String failureReason = result != null && result.errorMessage() != null
+                    ? result.errorMessage() : "GitHub publishing operation did not succeed";
+            redirectAttributes.addFlashAttribute("errorMessage", "Publication failed: " + failureReason);
+            return "redirect:/runs/" + runId;
+        }
+
+        try {
+            validationRunService.recordPublication(runEntity, userEmail, publishRequest, result);
+        } catch (Exception ex) {
+            log.error("Failed to persist validation publication to database for runId={}", runId, ex);
+            redirectAttributes.addFlashAttribute("errorMessage", "Publication merged to GitHub but failed to update local database: " + ex.getMessage());
+            return "redirect:/runs/" + runId;
+        }
+
+        redirectAttributes.addFlashAttribute("successMessage",
+                "Compliance report successfully published to scimsandbox.net! View live report at " + result.reportUrl());
+        redirectAttributes.addFlashAttribute("justPublished", true);
+
+        return "redirect:/runs/" + runId;
     }
 
     @PostMapping("/runs/{runId}/delete")
