@@ -380,6 +380,10 @@ public class ComplianceScoreServiceChallengerTest {
             assertThat(scorecard.activeRequirementsCount()).isGreaterThan(0);
             assertThat(scorecard.coreScore()).isEqualTo(100);
             assertThat(scorecard.colourGradient()).isEqualTo(ColourGradient.EMERALD);
+            // Because < 50% of core requirements were executed, run is not eligible for publishing
+            assertThat(scorecard.publishEligible()).isFalse();
+            assertThat(scorecard.publishIneligibilityReason())
+                    .contains("Core requirement execution coverage");
             // filter AND search are both supported due to composite tests FLT_17 and FLT_40
             assertThat(scorecard.supportedCapabilitiesCount()).isEqualTo(2);
             assertThat(scorecard.compliantCapabilitiesCount()).isEqualTo(2);

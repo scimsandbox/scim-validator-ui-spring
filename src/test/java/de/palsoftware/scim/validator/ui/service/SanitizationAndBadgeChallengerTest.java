@@ -251,6 +251,32 @@ class SanitizationAndBadgeChallengerTest {
             String sanitized = ComplianceReportGenerator.sanitizeErrorMessage(rawError, null);
             assertThat(sanitized).doesNotContain("BEGIN PRIVATE KEY");
         }
+
+        @Test
+        @DisplayName("Should scrub case-variant target hosts/URLs and IPv6 addresses and fail assertSanitized on leaks")
+        void shouldScrubCaseVariantHostsAndIpv6Literals() {
+            String targetUrl = "https://SCIM.Internal.Corp:8443/scim/v2";
+            String rawError = "Connection failed to https://scim.internal.corp:8443/scim/v2/Users on host scim.internal.corp and [2001:db8::1] or [::1]";
+            String sanitized = ComplianceReportGenerator.sanitizeErrorMessage(rawError, targetUrl);
+            assertThat(sanitized).doesNotContainIgnoringCase("scim.internal.corp");
+            assertThat(sanitized).doesNotContain("2001:db8::1");
+            assertThat(sanitized).doesNotContain("[::1]");
+
+            // assertSanitized rejects case-differing host leaks and IPv6 literals
+            assertThatThrownBy(() ->
+                    ComplianceReportGenerator.assertSanitized(
+                            "{\"metadata\":{\"productName\":\"Leak scim.internal.corp\"}}",
+                            "https://SCIM.INTERNAL.CORP/v2"
+                    )
+            ).isInstanceOf(SecurityException.class);
+
+            assertThatThrownBy(() ->
+                    ComplianceReportGenerator.assertSanitized(
+                            "{\"metadata\":{\"productName\":\"IPv6 [2001:db8::1] leak\"}}",
+                            "https://example.com/v2"
+                    )
+            ).isInstanceOf(SecurityException.class);
+        }
     }
 
     // =========================================================================

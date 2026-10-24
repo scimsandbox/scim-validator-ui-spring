@@ -8,6 +8,7 @@ import de.palsoftware.scim.validator.ui.model.ValidationRunPublication;
 import de.palsoftware.scim.validator.ui.model.spec.*;
 import de.palsoftware.scim.validator.ui.repo.ValidationRunPublicationRepository;
 import de.palsoftware.scim.validator.ui.repo.ValidationRunRepository;
+import de.palsoftware.scim.validator.ui.util.Slugifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -146,6 +147,9 @@ public class GitHubCompliancePublisherService {
                 CompliancePublicationResult result = executePublishWithRetry(request, 3);
                 if (result == null || !result.success()) {
                     releaseClaim(request.runId());
+                } else {
+                    // Pin the in-memory claim so it never expires after a successful GitHub merge
+                    claimedRunTimestamps.put(request.runId(), Long.MAX_VALUE / 2);
                 }
                 return result;
             } catch (RuntimeException | Error e) {
@@ -287,6 +291,9 @@ public class GitHubCompliancePublisherService {
                 || request.productSlug().length() > 120
                 || !SAFE_SLUG_PATTERN.matcher(request.productSlug()).matches()) {
             throw new IllegalArgumentException("Invalid productSlug: must match lowercase kebab-case pattern");
+        }
+        if (Slugifier.isUuidFormatted(request.productSlug())) {
+            throw new IllegalArgumentException("Invalid productSlug: UUID-formatted slugs are reserved for run badge identifiers");
         }
         if (request.productVersion() == null || request.productVersion().isBlank()
                 || request.productVersion().length() > 60
@@ -727,7 +734,11 @@ public class GitHubCompliancePublisherService {
                     .build();
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() == 405 || response.statusCode() == 409) {
-                throw new GitHubMergeConflictException("Pull request #" + pullNumber + " cannot be merged (HTTP " + response.statusCode() + "): " + response.body());
+                String body = response.body() != null ? response.body() : "";
+                if (response.statusCode() == 405 && isNonRetryableBranchProtectionFailure(body)) {
+                    throw new IllegalStateException("Pull request #" + pullNumber + " blocked by repository branch protection (HTTP 405): " + body);
+                }
+                throw new GitHubMergeConflictException("Pull request #" + pullNumber + " cannot be merged (HTTP " + response.statusCode() + "): " + body);
             }
             if (response.statusCode() != 200) {
                 throw new IllegalStateException("Failed to squash merge PR #" + pullNumber + ": HTTP " + response.statusCode() + " " + response.body());
@@ -760,7 +771,34 @@ public class GitHubCompliancePublisherService {
         }
     }
 
-    private String generatePrBody(CompliancePublishRequest req, OffsetDateTime publishedAt) {
+    private static boolean isNonRetryableBranchProtectionFailure(String responseBody) {
+        if (responseBody == null || responseBody.isBlank()) {
+            return false;
+        }
+        String lower = responseBody.toLowerCase(Locale.ROOT);
+        return lower.contains("protected branch")
+                || lower.contains("branch protection")
+                || lower.contains("required status check")
+                || lower.contains("review is required");
+    }
+
+    static String escapeMarkdownCell(String value) {
+        if (value == null || value.isBlank()) {
+            return "N/A";
+        }
+        return value
+                .replace('\r', ' ')
+                .replace('\n', ' ')
+                .replace("\\", "\\\\")
+                .replace("|", "\\|")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("@", "@\u200B")
+                .replace("#", "#\u200B")
+                .trim();
+    }
+
+    String generatePrBody(CompliancePublishRequest req, OffsetDateTime publishedAt) {
         String publishedAtStr = publishedAt.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
         return String.format("""
 ## SCIM 2.0 Compliance Publication
@@ -777,11 +815,11 @@ public class GitHubCompliancePublisherService {
 
 *Automated publication by SCIM Compliance Validator (`val.scimsandbox.net`).*
 """,
-                req.productName() != null ? req.productName() : "N/A",
-                req.productVersion() != null ? req.productVersion() : "N/A",
-                req.vendorName() != null ? req.vendorName() : "N/A",
+                escapeMarkdownCell(req.productName()),
+                escapeMarkdownCell(req.productVersion()),
+                escapeMarkdownCell(req.vendorName()),
                 req.coreScore(),
-                req.colourGradient() != null ? req.colourGradient() : "N/A",
+                escapeMarkdownCell(req.colourGradient()),
                 req.supportedCapabilities(),
                 req.totalCapabilities(),
                 req.runId(),

@@ -59,6 +59,12 @@
       "description": "Minimum Core RFC Conformance percentage required to publish a validation run."
     },
     {
+      "name": "app.compliance.min-core-coverage-percent",
+      "type": "java.lang.Integer",
+      "defaultValue": 50,
+      "description": "Minimum percentage of testable core RFC requirements that must be executed to publish a validation run."
+    },
+    {
       "name": "app.compliance.public-base-url",
       "type": "java.lang.String",
       "defaultValue": "https://scimsandbox.net",

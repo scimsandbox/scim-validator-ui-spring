@@ -23,12 +23,24 @@ public class ComplianceScoreService {
     private static final Logger log = LoggerFactory.getLogger(ComplianceScoreService.class);
     private static final Pattern TEST_ID_PATTERN = Pattern.compile("^([A-Z0-9_]+):\\s*.*");
     public static final int DEFAULT_MIN_PUBLISH_SCORE = 50;
+    public static final int DEFAULT_MIN_CORE_COVERAGE_PERCENT = 50;
 
     @Value("${app.compliance.min-publish-score:50}")
     private int minPublishScore = DEFAULT_MIN_PUBLISH_SCORE;
 
+    @Value("${app.compliance.min-core-coverage-percent:50}")
+    private int minCoreCoveragePercent = DEFAULT_MIN_CORE_COVERAGE_PERCENT;
+
     public int getMinPublishScore() {
         return minPublishScore;
+    }
+
+    public int getMinCoreCoveragePercent() {
+        return minCoreCoveragePercent;
+    }
+
+    public void setMinCoreCoveragePercent(int minCoreCoveragePercent) {
+        this.minCoreCoveragePercent = minCoreCoveragePercent;
     }
 
     public static final List<String> OPTIONAL_CAPABILITIES = List.of(
@@ -104,7 +116,7 @@ public class ComplianceScoreService {
             if (testId != null) {
                 ValidationTestResult previous = resultsByTestId.put(testId, tr);
                 if (previous != null) {
-                    log.warn("Duplicate test result encountered for testId={} in runId={}, overwriting previous status {}",
+                    log.debug("Duplicate test result encountered for testId={} in runId={}, overwriting previous status {}",
                             testId, run != null ? run.getId() : null, previous.getStatus());
                 }
             }
@@ -143,6 +155,8 @@ public class ComplianceScoreService {
         int activeCount = 0;
         int excludedCount = 0;
         int untestedCount = 0;
+        int testableCoreReqs = 0;
+        int executedCoreReqs = 0;
 
         for (SpecRequirement req : catalog.values()) {
             String cap = req.capability() != null ? req.capability().trim() : "none";
@@ -172,6 +186,13 @@ public class ComplianceScoreService {
                         }
                         case "ABORTED" -> abortedTestsForReq++;
                     }
+                }
+            }
+
+            if (isCore && totalTestsForReq > 0) {
+                testableCoreReqs++;
+                if (executedTestsForReq > 0) {
+                    executedCoreReqs++;
                 }
             }
 
@@ -260,10 +281,14 @@ public class ComplianceScoreService {
         }
 
         // 8. Publish Eligibility Evaluation
-        String runStatus = run != null && run.getStatus() != null ? run.getStatus().toUpperCase() : "UNKNOWN";
+        String runStatus = run != null && run.getStatus() != null ? run.getStatus().toUpperCase(Locale.ROOT) : "UNKNOWN";
         boolean isTerminal = "PASSED".equals(runStatus) || "FAILED".equals(runStatus);
         boolean meetsThreshold = coreScore >= minPublishScore;
-        boolean publishEligible = isTerminal && meetsThreshold;
+        int coreCoveragePercent = testableCoreReqs > 0
+                ? (int) Math.round((100.0 * executedCoreReqs) / testableCoreReqs)
+                : (activeCount > 0 ? 100 : 0);
+        boolean meetsCoverage = activeCount > 0 && coreCoveragePercent >= minCoreCoveragePercent;
+        boolean publishEligible = isTerminal && meetsThreshold && meetsCoverage;
         String ineligibilityReason = null;
         if (!isTerminal) {
             if ("RUNNING".equals(runStatus)) {
@@ -275,6 +300,9 @@ public class ComplianceScoreService {
             }
         } else if (!meetsThreshold) {
             ineligibilityReason = "Core RFC Conformance score (" + coreScore + "%) is below the minimum " + minPublishScore + "% publishing threshold.";
+        } else if (!meetsCoverage) {
+            ineligibilityReason = "Core requirement execution coverage (" + coreCoveragePercent + "%) is below the minimum "
+                    + minCoreCoveragePercent + "% publishing threshold (" + executedCoreReqs + "/" + testableCoreReqs + " testable core requirements executed).";
         }
 
         // 9. Per-RFC Summaries
@@ -308,9 +336,32 @@ public class ComplianceScoreService {
 
     public boolean isEligibleForPublish(ComplianceScorecardView scorecard, ValidationRun run) {
         if (scorecard == null || run == null) return false;
-        String status = run.getStatus() != null ? run.getStatus().toUpperCase() : "";
+        String status = run.getStatus() != null ? run.getStatus().toUpperCase(Locale.ROOT) : "";
         boolean isTerminal = "PASSED".equals(status) || "FAILED".equals(status);
-        return isTerminal && scorecard.coreScore() >= minPublishScore;
+        return isTerminal && scorecard.coreScore() >= minPublishScore && meetsMinimumCoverage(scorecard);
+    }
+
+    private boolean meetsMinimumCoverage(ComplianceScorecardView scorecard) {
+        List<RequirementTraceResult> matrix = scorecard.requirementMatrix();
+        if (matrix != null && !matrix.isEmpty()) {
+            int testableCore = 0;
+            int executedCore = 0;
+            for (RequirementTraceResult r : matrix) {
+                String cap = r.capability() != null ? r.capability().trim() : "none";
+                boolean isCore = "none".equalsIgnoreCase(cap) || cap.isEmpty();
+                if (isCore && r.totalTests() > 0) {
+                    testableCore++;
+                    if (r.executedTests() > 0) {
+                        executedCore++;
+                    }
+                }
+            }
+            int coveragePercent = testableCore > 0
+                    ? (int) Math.round((100.0 * executedCore) / testableCore)
+                    : (scorecard.activeRequirementsCount() > 0 ? 100 : 0);
+            return scorecard.activeRequirementsCount() > 0 && coveragePercent >= minCoreCoveragePercent;
+        }
+        return scorecard.activeRequirementsCount() > 0 || scorecard.catalogRequirementsTotal() == 0;
     }
 
     private Map<String, CapabilityStatus> evaluateCapabilities(

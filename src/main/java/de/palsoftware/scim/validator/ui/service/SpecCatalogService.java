@@ -130,8 +130,17 @@ public class SpecCatalogService {
         return in;
     }
 
+    private static volatile Set<String> cachedDefaultSpecClassNames;
+
     public static Set<String> discoverValidatorSpecClassNames() {
-        return discoverValidatorSpecClassNames(new PathMatchingResourcePatternResolver());
+        Set<String> cached = cachedDefaultSpecClassNames;
+        if (cached != null) {
+            return cached;
+        }
+        Set<String> discovered = Collections.unmodifiableSet(
+                discoverValidatorSpecClassNames(new PathMatchingResourcePatternResolver()));
+        cachedDefaultSpecClassNames = discovered;
+        return discovered;
     }
 
     public static Set<String> discoverValidatorSpecClassNames(ResourcePatternResolver resolver) {
@@ -210,8 +219,13 @@ public class SpecCatalogService {
                     if (refs != null) {
                         for (SpecRef ref : refs) {
                             String refId = ref.value().trim();
-                            refIds.add(refId);
-                            requirementToTests.computeIfAbsent(refId, k -> new ArrayList<>()).add(testId);
+                            if (!refIds.contains(refId)) {
+                                refIds.add(refId);
+                                List<String> tests = requirementToTests.computeIfAbsent(refId, k -> new ArrayList<>());
+                                if (!tests.contains(testId)) {
+                                    tests.add(testId);
+                                }
+                            }
                         }
                     }
 
@@ -229,7 +243,10 @@ public class SpecCatalogService {
                     allMappings.add(mapping);
 
                     for (String cap : requiredCaps) {
-                        testsByCapability.computeIfAbsent(cap, k -> new ArrayList<>()).add(testId);
+                        List<String> capTests = testsByCapability.computeIfAbsent(cap, k -> new ArrayList<>());
+                        if (!capTests.contains(testId)) {
+                            capTests.add(testId);
+                        }
                     }
                 }
             } catch (ClassNotFoundException e) {

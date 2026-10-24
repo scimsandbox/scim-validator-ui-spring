@@ -465,7 +465,7 @@ class ValidationControllerPublishTest {
     }
 
     @Test
-    void publishRun_recordPublicationThrows_releasesClaimAndReservation() {
+    void publishRun_recordPublicationThrows_retriesAndRetainsClaimAndReservation() {
         UUID runId = UUID.randomUUID();
         ValidationRun runEntity = createSampleRun(runId, "developer@example.com", "PASSED");
         ComplianceScorecardView scorecard = createSampleScorecard(92, true, null);
@@ -497,8 +497,39 @@ class ValidationControllerPublishTest {
 
         assertThat(redirect).isEqualTo("redirect:/runs/" + runId);
         assertThat(redirectAttributes.getFlashAttributes()).containsKey("errorMessage");
-        verify(gitHubCompliancePublisherService).releaseClaim(runId);
-        verify(validationRunService).releasePublicationReservation(runEntity);
+        assertThat(redirectAttributes.getFlashAttributes().get("errorMessage").toString())
+                .contains("locked for reconciliation");
+        verify(validationRunService, org.mockito.Mockito.times(2))
+                .recordPublication(eq(runEntity), eq("developer@example.com"), any(CompliancePublishRequest.class), eq(pubResult));
+        verify(gitHubCompliancePublisherService, never()).releaseClaim(runId);
+        verify(validationRunService, never()).releasePublicationReservation(runEntity);
+    }
+
+    @Test
+    void publishRun_rejectsBlankTargetUrlAndUuidFormattedProductSlug() {
+        UUID runId = UUID.randomUUID();
+        ValidationRun blankTargetRun = createSampleRun(runId, "developer@example.com", "PASSED");
+        blankTargetRun.setTargetUrl("   ");
+
+        CompliancePublishFormData form = new CompliancePublishFormData(
+                "Apache Syncope", "apache-syncope", "3.0.0", "ASF", "https://syncope.apache.org", "Apache-2.0", true
+        );
+        BindingResult bindingResult = new BeanPropertyBindingResult(form, "publishForm");
+        RedirectAttributes redirectAttributes = new RedirectAttributesModelMap();
+
+        when(validationRunService.getRunEntity(runId, "developer@example.com", false)).thenReturn(blankTargetRun);
+
+        String redirect = controller.publishRun(runId, form, bindingResult, userAuth, redirectAttributes);
+        assertThat(redirect).isEqualTo("redirect:/runs/" + runId);
+        assertThat(redirectAttributes.getFlashAttributes().get("errorMessage").toString())
+                .contains("missing a target URL");
+        verify(gitHubCompliancePublisherService, never()).publish(any());
+
+        // Auto-slugification of a UUID product name prefixes "product-" so it never collides with a run badge UUID
+        CompliancePublishFormData uuidNamedForm = new CompliancePublishFormData(
+                "550e8400-e29b-41d4-a716-446655440000", "", "1.0.0", null, null, "MIT", false
+        );
+        assertThat(uuidNamedForm.resolveProductSlug()).isEqualTo("product-550e8400-e29b-41d4-a716-446655440000");
     }
 
     // ─────────────────────────────────────────────────────────────────────────

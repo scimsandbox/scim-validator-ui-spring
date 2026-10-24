@@ -15,7 +15,9 @@ public class CompliancePublishFormData {
 
     @NotBlank(message = "Product slug is required")
     @Size(max = 120, message = "Product slug cannot exceed 120 characters")
-    @Pattern(regexp = "^[a-z0-9]+(?:-[a-z0-9]+)*$", message = "Product slug must only contain lowercase alphanumeric characters separated by single hyphens")
+    @Pattern(
+            regexp = "^(?![0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$)[a-z0-9]+(?:-[a-z0-9]+)*$",
+            message = "Product slug must only contain lowercase alphanumeric characters separated by single hyphens and cannot be a UUID")
     private String productSlug;
 
     @NotBlank(message = "Product version is required")
@@ -115,7 +117,8 @@ public class CompliancePublishFormData {
             return productSlug.trim().toLowerCase(Locale.ROOT);
         }
         if (productName != null && !productName.isBlank()) {
-            return slugify(productName);
+            String generated = slugify(productName);
+            return Slugifier.isUuidFormatted(generated) ? "product-" + generated : generated;
         }
         return "scim-server";
     }

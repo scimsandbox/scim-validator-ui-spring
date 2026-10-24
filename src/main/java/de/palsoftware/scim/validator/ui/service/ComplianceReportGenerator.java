@@ -23,23 +23,31 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 @Service
 public class ComplianceReportGenerator {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
-    private static final Pattern URL_PATTERN = Pattern.compile("https?://[^\\s\"'>\\]\\)]+");
+    private static final Pattern URL_PATTERN = Pattern.compile("(?i)https?://[^\\s\"'>\\]\\)]+");
     private static final Pattern BEARER_PATTERN = Pattern.compile("(?i)bearer\\s+[A-Za-z0-9_\\-\\.~+/=]{8,}");
     private static final Pattern BASIC_PATTERN = Pattern.compile("(?i)basic\\s+[A-Za-z0-9+/=]{8,}");
     private static final Pattern AUTH_HEADER_PATTERN = Pattern.compile("(?i)authorization:\\s*[^;\\r\\n]+");
     private static final Pattern IPV4_PATTERN = Pattern.compile("\\b(?:\\d{1,3}\\.){3}\\d{1,3}(?::\\d+)?\\b");
+    private static final Pattern IPV6_PATTERN = Pattern.compile(
+            "(?i)\\[(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}\\](?::\\d+)?"
+            + "|\\b(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}\\b"
+            + "|(?:\\b[0-9a-f]{1,4})?::[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,5}\\b");
     private static final Pattern TARGET_URL_RESIDUAL_PATTERN = Pattern.compile("\\[TARGET_URL\\][^\\s\"'>\\]\\)]*");
     private static final Pattern TARGET_HOST_RESIDUAL_PATTERN = Pattern.compile("\\[TARGET_HOST\\][^\\s\"'>\\]\\)]*");
     private static final Pattern PEM_PRIVATE_KEY_BLOCK_PATTERN = Pattern.compile("(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----");
     private static final Pattern PEM_PRIVATE_KEY_HEADER_PATTERN = Pattern.compile("-----(?:BEGIN|END) [A-Z ]*PRIVATE KEY-----");
     private static final Pattern SENSITIVE_QUERY_PARAM_PATTERN = Pattern.compile("(?i)(?<=[?&])(?:api[_-]?key|token|secret|password|auth|client_secret|access_token)=[^\\s\"'>\\]\\)&]+");
+    private static final Pattern LEAKED_BEARER_PATTERN = Pattern.compile("(?i)authorization:\\s*bearer|bearer\\s+[a-z0-9_\\-\\.~+/=]{20,}");
+    private static final Pattern LEAKED_PRIVATE_KEY_PATTERN = Pattern.compile("-----BEGIN [A-Z ]*PRIVATE KEY-----");
     public static final String DEFAULT_SAMPLE_RUN_IDS = "11111111-1111-1111-1111-111111111111,22222222-2222-2222-2222-222222222222";
 
     @Value("${app.compliance.sample-run-ids:" + DEFAULT_SAMPLE_RUN_IDS + "}")
@@ -155,6 +163,9 @@ public class ComplianceReportGenerator {
         Objects.requireNonNull(scorecard, "scorecard must not be null");
 
         String targetUrl = run.getTargetUrl();
+        if (targetUrl == null || targetUrl.isBlank()) {
+            throw new IllegalArgumentException("Validation run targetUrl must not be blank when generating a sanitized compliance report");
+        }
         String publishedAtIso = null;
         String submitter = null;
         String productName = "SCIM Server";
@@ -246,6 +257,9 @@ public class ComplianceReportGenerator {
         String targetUrl = (request.targetUrl() != null && !request.targetUrl().isBlank())
                 ? request.targetUrl()
                 : (run != null ? run.getTargetUrl() : null);
+        if ((run != null || request.targetUrl() != null) && (targetUrl == null || targetUrl.isBlank())) {
+            throw new IllegalArgumentException("Validation run targetUrl must not be blank when generating a sanitized compliance report");
+        }
         String publishedAtIso = publishedAt != null
                 ? publishedAt.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)
                 : OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
@@ -358,13 +372,18 @@ public class ComplianceReportGenerator {
 
         String sanitized = rawError;
 
-        // Strip target URL explicitly
+        // Strip target URL and target host explicitly (case-insensitive and IPv6-aware)
         if (targetUrl != null && !targetUrl.isBlank()) {
-            sanitized = sanitized.replace(targetUrl, "[TARGET_URL]");
+            String trimmedTarget = targetUrl.trim();
+            sanitized = replaceIgnoreCase(sanitized, trimmedTarget, "[TARGET_URL]");
             try {
-                URI uri = URI.create(targetUrl);
-                if (uri.getHost() != null && !uri.getHost().isBlank()) {
-                    sanitized = sanitized.replace(uri.getHost(), "[TARGET_HOST]");
+                URI uri = URI.create(trimmedTarget);
+                String host = uri.getHost();
+                if (host != null && !host.isBlank()) {
+                    sanitized = replaceIgnoreCase(sanitized, host, "[TARGET_HOST]");
+                    if (host.startsWith("[") && host.endsWith("]") && host.length() > 2) {
+                        sanitized = replaceIgnoreCase(sanitized, host.substring(1, host.length() - 1), "[TARGET_HOST]");
+                    }
                 }
             } catch (Exception ignored) {
             }
@@ -382,8 +401,9 @@ public class ComplianceReportGenerator {
         sanitized = AUTH_HEADER_PATTERN.matcher(sanitized).replaceAll("Authorization: [REDACTED]");
         sanitized = BEARER_PATTERN.matcher(sanitized).replaceAll("Bearer [REDACTED_TOKEN]");
         sanitized = BASIC_PATTERN.matcher(sanitized).replaceAll("Basic [REDACTED_AUTH]");
-        // Scrub IP addresses
+        // Scrub IPv4 and IPv6 addresses
         sanitized = IPV4_PATTERN.matcher(sanitized).replaceAll("[REDACTED_IP]");
+        sanitized = IPV6_PATTERN.matcher(sanitized).replaceAll("[REDACTED_IP]");
         // Scrub sensitive query parameters
         sanitized = SENSITIVE_QUERY_PARAM_PATTERN.matcher(sanitized).replaceAll("[REDACTED_PARAM]");
 
@@ -393,6 +413,22 @@ public class ComplianceReportGenerator {
         }
 
         return sanitized;
+    }
+
+    private static String replaceIgnoreCase(String input, String target, String replacement) {
+        if (input == null || target == null || target.isEmpty()) {
+            return input;
+        }
+        return Pattern.compile(Pattern.quote(target), Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE)
+                .matcher(input)
+                .replaceAll(Matcher.quoteReplacement(replacement));
+    }
+
+    private static boolean containsIgnoreCase(String text, String needle) {
+        if (text == null || needle == null || needle.isEmpty()) {
+            return false;
+        }
+        return text.toLowerCase(Locale.ROOT).contains(needle.toLowerCase(Locale.ROOT));
     }
 
     /**
@@ -407,29 +443,37 @@ public class ComplianceReportGenerator {
         }
 
         if (targetUrl != null && !targetUrl.isBlank()) {
-            if (json.contains(targetUrl)) {
+            String trimmedTarget = targetUrl.trim();
+            if (containsIgnoreCase(json, trimmedTarget)) {
                 throw new SecurityException("Sanitization violation: targetUrl detected in report JSON!");
             }
             String host = null;
             try {
-                URI uri = URI.create(targetUrl);
+                URI uri = URI.create(trimmedTarget);
                 host = uri.getHost();
             } catch (Exception ignored) {
             }
             if (host != null && !host.isBlank()) {
                 String hostCheckJson = stripPublicProjectAndSubmitterFromMetadata(json);
-                if (hostCheckJson.contains(host)) {
+                String bareHost = (host.startsWith("[") && host.endsWith("]") && host.length() > 2)
+                        ? host.substring(1, host.length() - 1)
+                        : host;
+                if (containsIgnoreCase(hostCheckJson, host) || containsIgnoreCase(hostCheckJson, bareHost)) {
                     throw new SecurityException("Sanitization violation: target host (" + host + ") detected in report JSON!");
                 }
             }
         }
 
-        if (Pattern.compile("(?i)authorization:\\s*bearer|bearer\\s+[a-z0-9_\\-\\.~+/=]{20,}").matcher(json).find()) {
+        if (LEAKED_BEARER_PATTERN.matcher(json).find()) {
             throw new SecurityException("Sanitization violation: authorization token pattern detected in report JSON!");
         }
 
-        if (Pattern.compile("-----BEGIN [A-Z ]*PRIVATE KEY-----").matcher(json).find()) {
+        if (LEAKED_PRIVATE_KEY_PATTERN.matcher(json).find()) {
             throw new SecurityException("Sanitization violation: private key pattern detected in report JSON!");
+        }
+
+        if (IPV6_PATTERN.matcher(json).find()) {
+            throw new SecurityException("Sanitization violation: IPv6 address literal detected in report JSON!");
         }
 
         if (json.contains("\"requestBody\"") || json.contains("\"responseBody\"") ||

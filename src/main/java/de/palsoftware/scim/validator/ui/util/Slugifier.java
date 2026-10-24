@@ -1,6 +1,7 @@
 package de.palsoftware.scim.validator.ui.util;
 
 import java.util.Locale;
+import java.util.regex.Pattern;
 
 /**
  * Neutral utility for converting product names into URL-safe lowercase kebab-case slugs
@@ -8,7 +9,19 @@ import java.util.Locale;
  */
 public final class Slugifier {
 
+    private static final Pattern UUID_SLUG_PATTERN = Pattern.compile(
+            "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            Pattern.CASE_INSENSITIVE);
+
     private Slugifier() {
+    }
+
+    /**
+     * Returns true if {@code slug} matches the canonical 36-character UUID format
+     * reserved for per-run badge filenames ({@code compliance/badges/<runId>.svg}).
+     */
+    public static boolean isUuidFormatted(String slug) {
+        return slug != null && UUID_SLUG_PATTERN.matcher(slug.trim()).matches();
     }
 
     /**

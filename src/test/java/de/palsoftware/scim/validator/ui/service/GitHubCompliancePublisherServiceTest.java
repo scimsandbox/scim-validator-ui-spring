@@ -569,6 +569,33 @@ class GitHubCompliancePublisherServiceTest {
         assertThat(resolved).isEqualTo("https://database-resolved-scim.corp:9000");
     }
 
+    @Test
+    @DisplayName("Should reject UUID-shaped productSlug and escape Markdown table cells and @mentions in PR body")
+    void shouldRejectUuidProductSlugAndEscapeMarkdownInPrBody() {
+        UUID runId = UUID.randomUUID();
+        CompliancePublishRequest uuidSlugReq = new CompliancePublishRequest(
+                runId, "Test Product", runId.toString(), "1.0.0",
+                "Vendor", "https://example.com", "MIT", 90, "TEAL_GREEN", 9, 10
+        );
+
+        assertThatThrownBy(() -> publisherService.publish(uuidSlugReq))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("UUID-formatted slugs are reserved");
+
+        CompliancePublishRequest markdownReq = new CompliancePublishRequest(
+                runId, "Prod | Name\nRow2 @admin #1", "prod-name", "1.0.0",
+                "Vendor <script> | @org", "https://example.com/a|b", "MIT", 90, "TEAL_GREEN", 9, 10
+        );
+        String prBody = publisherService.generatePrBody(
+                markdownReq,
+                OffsetDateTime.now(ZoneOffset.UTC)
+        );
+        assertThat(prBody).contains("Prod \\| Name Row2 @\u200Badmin #\u200B1");
+        assertThat(prBody).contains("Vendor &lt;script&gt; \\| @\u200Borg");
+        assertThat(prBody).doesNotContain("@admin");
+        assertThat(prBody).doesNotContain("<script>");
+    }
+
     private static byte[] extractPkcs1FromPkcs8(byte[] pkcs8Der) {
         // Simple ASN.1 extractor for RSA Private Key OCTET STRING within PKCS#8 PrivateKeyInfo
         // In PKCS#8: SEQUENCE { version INTEGER, alg AlgorithmIdentifier, privateKey OCTET STRING }

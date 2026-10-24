@@ -21,6 +21,7 @@ import de.palsoftware.scim.validator.ui.repo.ValidationRunPublicationRepository;
 import de.palsoftware.scim.validator.ui.repo.ValidationRunRepository;
 import de.palsoftware.scim.validator.ui.repo.ValidationTestResultRepository;
 import de.palsoftware.scim.validator.ui.security.TargetUrlPolicy;
+import de.palsoftware.scim.validator.ui.util.Slugifier;
 import org.junit.platform.engine.TestExecutionResult;
 import org.junit.platform.engine.support.descriptor.MethodSource;
 import org.junit.platform.launcher.Launcher;
@@ -515,12 +516,40 @@ public class ValidationRunService {
         return purged;
     }
 
+    private final Object reservationLock = new Object();
+
     public void validatePublishQuota(String actorEmail) {
+        validatePublishQuota(actorEmail, null);
+    }
+
+    public void validatePublishQuota(String actorEmail, UUID excludeRunId) {
         long currentPublishedCount = countOwnedPublications(actorEmail);
-        if (currentPublishedCount >= maxPublishedRunsPerUser) {
+        long activePendingCount = countActivePendingReservations(actorEmail, excludeRunId);
+        if (currentPublishedCount + activePendingCount >= maxPublishedRunsPerUser) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "User has reached maximum published compliance runs cap (" + maxPublishedRunsPerUser + ").");
         }
+    }
+
+    private long countActivePendingReservations(String actorEmail, UUID excludeRunId) {
+        if (publicationRepository == null || actorEmail == null || actorEmail.isBlank()) {
+            return 0;
+        }
+        List<ValidationRunPublication> allForUser = publicationRepository
+                .findByCreatedByEmailOrderByPublishedAtDesc(actorEmail);
+        if (allForUser == null) {
+            return 0;
+        }
+        long count = 0;
+        for (ValidationRunPublication p : allForUser) {
+            if (excludeRunId != null && excludeRunId.equals(p.getRunId())) {
+                continue;
+            }
+            if (p.isPendingReservation() && !isStaleReservation(p)) {
+                count++;
+            }
+        }
+        return count;
     }
 
     public void validateProductSlugOwnership(String productSlug, String ownerEmail) {
@@ -528,6 +557,10 @@ public class ValidationRunService {
     }
 
     public void validateProductSlugOwnership(String productSlug, String ownerEmail, UUID currentRunId) {
+        if (productSlug != null && Slugifier.isUuidFormatted(productSlug)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Product slug '" + productSlug + "' cannot use a UUID format reserved for run badge identifiers.");
+        }
         if (publicationRepository == null || productSlug == null || productSlug.isBlank()
                 || ownerEmail == null || ownerEmail.isBlank()) {
             return;
@@ -582,51 +615,53 @@ public class ValidationRunService {
             ValidationRun run,
             String actorEmail,
             CompliancePublishRequest request) {
-        ValidationRun managedRun = resolveManagedRun(run);
-        ValidationRunPublication existing = findExistingPublicationOrReservation(managedRun);
+        synchronized (reservationLock) {
+            ValidationRun managedRun = resolveManagedRun(run);
+            ValidationRunPublication existing = findExistingPublicationOrReservation(managedRun);
 
-        if (run.isPublished() || managedRun.isPublished()
-                || (existing != null && !existing.isPendingReservation())) {
-            throw new IllegalStateException("Validation run has already been published: " + managedRun.getId());
-        }
-        if (existing != null && existing.isPendingReservation() && !isStaleReservation(existing)) {
-            throw new IllegalStateException("Validation run publication is already in progress: " + managedRun.getId());
-        }
-
-        String ownerEmail = resolveOwnerEmail(managedRun, run, actorEmail);
-        validateOwnerQuotaAndSlug(ownerEmail, request.productSlug(), managedRun.getId());
-
-        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
-        ValidationRunPublication reservation;
-        if (existing != null) {
-            OffsetDateTime stalePublishedAt = existing.getPublishedAt();
-            if (publicationRepository != null) {
-                OffsetDateTime cutoff = now.minus(getReservationTimeout());
-                int claimed = publicationRepository.claimStalePendingReservationById(
-                        managedRun.getId(), PENDING_RESERVATION_PR_URL, cutoff, now);
-                if (claimed == 0) {
-                    throw new IllegalStateException("Validation run publication is already in progress: " + managedRun.getId());
-                }
-                managedRun = resolveManagedRun(run);
-                existing = findExistingPublicationOrReservation(managedRun);
+            if (run.isPublished() || managedRun.isPublished()
+                    || (existing != null && !existing.isPendingReservation())) {
+                throw new IllegalStateException("Validation run has already been published: " + managedRun.getId());
             }
-            log.warn("Reclaiming stale pending publication reservation for runId={} (reserved at {})",
-                    managedRun.getId(), stalePublishedAt);
-            reservation = existing != null ? existing : new ValidationRunPublication();
+            if (existing != null && existing.isPendingReservation() && !isStaleReservation(existing)) {
+                throw new IllegalStateException("Validation run publication is already in progress: " + managedRun.getId());
+            }
+
+            String ownerEmail = resolveOwnerEmail(managedRun, run, actorEmail);
+            validateOwnerQuotaAndSlug(ownerEmail, request.productSlug(), managedRun.getId());
+
+            OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+            ValidationRunPublication reservation;
             if (existing != null) {
-                reservation.markNotNew();
+                OffsetDateTime stalePublishedAt = existing.getPublishedAt();
+                if (publicationRepository != null) {
+                    OffsetDateTime cutoff = now.minus(getReservationTimeout());
+                    int claimed = publicationRepository.claimStalePendingReservationById(
+                            managedRun.getId(), PENDING_RESERVATION_PR_URL, cutoff, now);
+                    if (claimed == 0) {
+                        throw new IllegalStateException("Validation run publication is already in progress: " + managedRun.getId());
+                    }
+                    managedRun = resolveManagedRun(run);
+                    existing = findExistingPublicationOrReservation(managedRun);
+                }
+                log.warn("Reclaiming stale pending publication reservation for runId={} (reserved at {})",
+                        managedRun.getId(), stalePublishedAt);
+                reservation = existing != null ? existing : new ValidationRunPublication();
+                if (existing != null) {
+                    reservation.markNotNew();
+                }
+            } else {
+                reservation = new ValidationRunPublication();
             }
-        } else {
-            reservation = new ValidationRunPublication();
-        }
-        populatePublicationMetadata(reservation, managedRun, ownerEmail, request);
-        String baseUrl = getEffectivePublicBaseUrl();
-        reservation.setReportUrl(baseUrl + "/compliance/?run=" + managedRun.getId());
-        reservation.setBadgeUrl(baseUrl + "/compliance/badges/" + managedRun.getId() + ".svg");
-        reservation.setPrUrl(PENDING_RESERVATION_PR_URL);
-        reservation.setPublishedAt(now);
+            populatePublicationMetadata(reservation, managedRun, ownerEmail, request);
+            String baseUrl = getEffectivePublicBaseUrl();
+            reservation.setReportUrl(baseUrl + "/compliance/?run=" + managedRun.getId());
+            reservation.setBadgeUrl(baseUrl + "/compliance/badges/" + managedRun.getId() + ".svg");
+            reservation.setPrUrl(PENDING_RESERVATION_PR_URL);
+            reservation.setPublishedAt(now);
 
-        return persistPublicationAndSyncRun(reservation, managedRun, run);
+            return persistPublicationAndSyncRun(reservation, managedRun, run);
+        }
     }
 
     @Transactional
@@ -713,7 +748,7 @@ public class ValidationRunService {
     }
 
     private void validateOwnerQuotaAndSlug(String ownerEmail, String productSlug, UUID runId) {
-        validatePublishQuota(ownerEmail);
+        validatePublishQuota(ownerEmail, runId);
         validateProductSlugOwnership(productSlug, ownerEmail, runId);
     }
 

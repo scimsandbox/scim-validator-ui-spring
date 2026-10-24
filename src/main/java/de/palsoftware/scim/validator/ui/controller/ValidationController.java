@@ -427,35 +427,47 @@ public class ValidationController {
         }
 
         String targetUrl = runEntity.getTargetUrl();
-        if (targetUrl != null && !targetUrl.isBlank()) {
-            String trimmedTarget = targetUrl.trim();
-            if (containsIgnoreCase(publishForm.getProductName(), trimmedTarget)
-                    || containsIgnoreCase(publishForm.getProductSlug(), trimmedTarget)
-                    || containsIgnoreCase(resolvedSlug, trimmedTarget)
-                    || containsIgnoreCase(publishForm.getProductVersion(), trimmedTarget)
-                    || containsIgnoreCase(publishForm.getVendorName(), trimmedTarget)
-                    || containsIgnoreCase(publishForm.getLicenseType(), trimmedTarget)
-                    || containsIgnoreCase(publishForm.getProjectUrl(), trimmedTarget)) {
+        if (targetUrl == null || targetUrl.isBlank()) {
+            redirectAttributes.addFlashAttribute("errorMessage",
+                    "Validation error: Validation run is missing a target URL and cannot be verified for sanitization.");
+            return "redirect:/runs/" + runId;
+        }
+        String trimmedTarget = targetUrl.trim();
+        if (containsIgnoreCase(publishForm.getProductName(), trimmedTarget)
+                || containsIgnoreCase(publishForm.getProductSlug(), trimmedTarget)
+                || containsIgnoreCase(resolvedSlug, trimmedTarget)
+                || containsIgnoreCase(publishForm.getProductVersion(), trimmedTarget)
+                || containsIgnoreCase(publishForm.getVendorName(), trimmedTarget)
+                || containsIgnoreCase(publishForm.getLicenseType(), trimmedTarget)
+                || containsIgnoreCase(publishForm.getProjectUrl(), trimmedTarget)) {
+            redirectAttributes.addFlashAttribute("errorMessage",
+                    "Validation error: Product metadata and Project URL must not contain the validation target URL.");
+            return "redirect:/runs/" + runId;
+        }
+        String targetHost = null;
+        try {
+            targetHost = URI.create(trimmedTarget).getHost();
+        } catch (Exception ignored) {
+        }
+        if (targetHost != null && !targetHost.isBlank()) {
+            String bareTargetHost = (targetHost.startsWith("[") && targetHost.endsWith("]") && targetHost.length() > 2)
+                    ? targetHost.substring(1, targetHost.length() - 1)
+                    : targetHost;
+            if (containsIgnoreCase(publishForm.getProductName(), targetHost)
+                    || containsIgnoreCase(publishForm.getProductName(), bareTargetHost)
+                    || containsIgnoreCase(publishForm.getProductSlug(), targetHost)
+                    || containsIgnoreCase(publishForm.getProductSlug(), bareTargetHost)
+                    || containsIgnoreCase(resolvedSlug, targetHost)
+                    || containsIgnoreCase(resolvedSlug, bareTargetHost)
+                    || containsIgnoreCase(publishForm.getProductVersion(), targetHost)
+                    || containsIgnoreCase(publishForm.getProductVersion(), bareTargetHost)
+                    || containsIgnoreCase(publishForm.getVendorName(), targetHost)
+                    || containsIgnoreCase(publishForm.getVendorName(), bareTargetHost)
+                    || containsIgnoreCase(publishForm.getLicenseType(), targetHost)
+                    || containsIgnoreCase(publishForm.getLicenseType(), bareTargetHost)) {
                 redirectAttributes.addFlashAttribute("errorMessage",
-                        "Validation error: Product metadata and Project URL must not contain the validation target URL.");
+                        "Validation error: Product metadata fields (Product Name, Slug, Version, Vendor, License) must not contain the validation target host (" + targetHost + ").");
                 return "redirect:/runs/" + runId;
-            }
-            String targetHost = null;
-            try {
-                targetHost = URI.create(trimmedTarget).getHost();
-            } catch (Exception ignored) {
-            }
-            if (targetHost != null && !targetHost.isBlank()) {
-                if (containsIgnoreCase(publishForm.getProductName(), targetHost)
-                        || containsIgnoreCase(publishForm.getProductSlug(), targetHost)
-                        || containsIgnoreCase(resolvedSlug, targetHost)
-                        || containsIgnoreCase(publishForm.getProductVersion(), targetHost)
-                        || containsIgnoreCase(publishForm.getVendorName(), targetHost)
-                        || containsIgnoreCase(publishForm.getLicenseType(), targetHost)) {
-                    redirectAttributes.addFlashAttribute("errorMessage",
-                            "Validation error: Product metadata fields (Product Name, Slug, Version, Vendor, License) must not contain the validation target host (" + targetHost + ").");
-                    return "redirect:/runs/" + runId;
-                }
             }
         }
 
@@ -520,7 +532,7 @@ public class ValidationController {
             gitHubCompliancePublisherService.releaseClaim(runId);
             safeReleaseReservation(runEntity);
             log.error("Failed to publish compliance report for runId={}", runId, ex);
-            String message = ex.getMessage() != null ? ex.getMessage() : "Unknown GitHub publisher error";
+            String message = sanitizeFlashErrorMessage(ex.getMessage(), "Unknown GitHub publisher error");
             redirectAttributes.addFlashAttribute("errorMessage", "GitHub publishing failed: " + message);
             return "redirect:/runs/" + runId;
         }
@@ -529,19 +541,29 @@ public class ValidationController {
             gitHubCompliancePublisherService.releaseClaim(runId);
             safeReleaseReservation(runEntity);
             String failureReason = result != null && result.errorMessage() != null
-                    ? result.errorMessage() : "GitHub publishing operation did not succeed";
+                    ? sanitizeFlashErrorMessage(result.errorMessage(), "GitHub publishing operation did not succeed")
+                    : "GitHub publishing operation did not succeed";
             redirectAttributes.addFlashAttribute("errorMessage", "Publication failed: " + failureReason);
             return "redirect:/runs/" + runId;
         }
 
         try {
             validationRunService.recordPublication(runEntity, userEmail, publishRequest, result);
-        } catch (Exception ex) {
-            gitHubCompliancePublisherService.releaseClaim(runId);
-            safeReleaseReservation(runEntity);
-            log.error("Failed to persist validation publication to database for runId={}", runId, ex);
-            redirectAttributes.addFlashAttribute("errorMessage", "Publication merged to GitHub but failed to update local database: " + ex.getMessage());
-            return "redirect:/runs/" + runId;
+        } catch (Exception firstEx) {
+            log.warn("Initial attempt to persist validation publication failed for runId={}, retrying once: {}",
+                    runId, firstEx.getMessage());
+            try {
+                validationRunService.recordPublication(runEntity, userEmail, publishRequest, result);
+            } catch (Exception ex) {
+                // Keep reservation and in-memory claim locked so a retry does not open a duplicate PR on GitHub
+                log.error("Failed to persist validation publication to database for runId={} after GitHub merge ({})",
+                        runId, result.prUrl(), ex);
+                String safeReason = sanitizeFlashErrorMessage(ex.getMessage(), "database error");
+                redirectAttributes.addFlashAttribute("errorMessage",
+                        "Publication merged to GitHub but failed to update local database: " + safeReason
+                                + ". The run remains locked for reconciliation.");
+                return "redirect:/runs/" + runId;
+            }
         }
 
         redirectAttributes.addFlashAttribute("successMessage",
@@ -549,6 +571,25 @@ public class ValidationController {
         redirectAttributes.addFlashAttribute("justPublished", true);
 
         return "redirect:/runs/" + runId;
+    }
+
+    private static String sanitizeFlashErrorMessage(String rawMessage, String fallback) {
+        if (rawMessage == null || rawMessage.isBlank()) {
+            return fallback;
+        }
+        // Strip raw JSON response bodies and newlines from exception messages shown in UI flash alerts
+        String cleaned = rawMessage.replace('\r', ' ').replace('\n', ' ').trim();
+        int jsonStart = cleaned.indexOf('{');
+        if (jsonStart > 0) {
+            cleaned = cleaned.substring(0, jsonStart).trim();
+            if (cleaned.endsWith(":")) {
+                cleaned = cleaned.substring(0, cleaned.length() - 1).trim();
+            }
+        }
+        if (cleaned.length() > 200) {
+            cleaned = cleaned.substring(0, 197) + "...";
+        }
+        return cleaned.isEmpty() ? fallback : cleaned;
     }
 
     private static boolean containsIgnoreCase(String value, String needle) {
