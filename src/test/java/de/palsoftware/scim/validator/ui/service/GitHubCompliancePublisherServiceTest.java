@@ -596,6 +596,95 @@ class GitHubCompliancePublisherServiceTest {
         assertThat(prBody).doesNotContain("<script>");
     }
 
+    @Test
+    @DisplayName("Should return idempotent success without opening a duplicate PR when compliance/index.json already contains runId")
+    void shouldReturnIdempotentResultWhenIndexJsonAlreadyContainsRunId() throws Exception {
+        UUID runId = UUID.randomUUID();
+        OffsetDateTime originalPublishedAt = OffsetDateTime.parse("2026-10-24T12:00:00Z");
+        ComplianceCatalogEntry existingEntry = new ComplianceCatalogEntry(
+                runId,
+                "Idempotent Product",
+                "idempotent-product",
+                "1.0.0",
+                "Vendor Inc",
+                "https://example.com",
+                "Apache-2.0",
+                95,
+                ColourGradientInfo.from("EMERALD", 95),
+                9,
+                10,
+                "compliance/reports/idempotent-product/1.0.0-20261024-" + runId + ".json",
+                "compliance/badges/idempotent-product.svg",
+                originalPublishedAt.toString(),
+                null
+        );
+        mockServer.setExistingIndexJson(objectMapper.writeValueAsString(List.of(existingEntry)));
+
+        CompliancePublishRequest request = new CompliancePublishRequest(
+                runId,
+                "Idempotent Product",
+                "idempotent-product",
+                "1.0.0",
+                "Vendor Inc",
+                "https://example.com",
+                "Apache-2.0",
+                95,
+                "EMERALD",
+                9,
+                10
+        );
+
+        CompliancePublicationResult result = publisherService.publish(request);
+
+        assertThat(result).isNotNull();
+        assertThat(result.success()).isTrue();
+        assertThat(result.runId()).isEqualTo(runId);
+        assertThat(result.prUrl()).isEqualTo(
+                "https://github.com/scimsandbox/scim-website/blob/main/compliance/reports/idempotent-product/1.0.0-20261024-" + runId + ".json");
+        assertThat(result.reportUrl()).isEqualTo("https://scimsandbox.net/compliance/?run=" + runId);
+        assertThat(result.badgeUrl()).isEqualTo("https://scimsandbox.net/compliance/badges/" + runId + ".svg");
+        assertThat(result.publishedAt()).isEqualTo(originalPublishedAt);
+        assertThat(publisherService.isMergedInMemory(runId)).isTrue();
+
+        // Verify no branch, tree, commit, or PR was created
+        long mutatingGitCalls = mockServer.getRecordedRequests().stream()
+                .filter(r -> ("POST".equals(r.method()) || "PUT".equals(r.method()) || "PATCH".equals(r.method()))
+                        && !r.path().contains("/access_tokens"))
+                .count();
+        assertThat(mutatingGitCalls).isZero();
+
+        // Verify releaseClaim does not release a merged run's claim
+        publisherService.releaseClaim(runId);
+        assertThatThrownBy(() -> publisherService.publish(request))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("already been published");
+    }
+
+    @Test
+    @DisplayName("Should reject control characters and line breaks in productName and vendorName")
+    void shouldRejectControlCharactersInProductNameAndVendorName() {
+        UUID runId = UUID.randomUUID();
+        for (String badProductName : List.of("Prod\nInjected", "Prod\rInjected", "Prod\u0007Bell", "Prod\tTab")) {
+            CompliancePublishRequest badNameReq = new CompliancePublishRequest(
+                    runId, badProductName, "valid-slug", "1.0.0",
+                    "Valid Vendor", "https://example.com", "Apache-2.0", 90, "TEAL_GREEN", 9, 10
+            );
+            assertThatThrownBy(() -> publisherService.publish(badNameReq))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("Invalid productName");
+        }
+
+        for (String badVendorName : List.of("Vendor\nCo-authored-by: x", "Vendor\rLine", "Vendor\u0000Null")) {
+            CompliancePublishRequest badVendorReq = new CompliancePublishRequest(
+                    runId, "Valid Product", "valid-slug", "1.0.0",
+                    badVendorName, "https://example.com", "Apache-2.0", 90, "TEAL_GREEN", 9, 10
+            );
+            assertThatThrownBy(() -> publisherService.publish(badVendorReq))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("Invalid vendorName");
+        }
+    }
+
     private static byte[] extractPkcs1FromPkcs8(byte[] pkcs8Der) {
         // Simple ASN.1 extractor for RSA Private Key OCTET STRING within PKCS#8 PrivateKeyInfo
         // In PKCS#8: SEQUENCE { version INTEGER, alg AlgorithmIdentifier, privateKey OCTET STRING }

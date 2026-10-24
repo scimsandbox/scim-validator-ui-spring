@@ -277,6 +277,63 @@ class SanitizationAndBadgeChallengerTest {
                     )
             ).isInstanceOf(SecurityException.class);
         }
+
+        @Test
+        @DisplayName("Method references like Foo::add, User::create, and List::of must not trigger false-positive IPv6 sanitization errors")
+        void methodReferencesShouldNotTriggerFalsePositiveIpv6SanitizationErrors() throws Exception {
+            String targetUrl = "https://scim.internal.corp/v2";
+            String errorWithMethodRefs = "Assertion failed in Foo::add, User::create, and List::of during validation";
+            String sanitized = ComplianceReportGenerator.sanitizeErrorMessage(errorWithMethodRefs, targetUrl);
+            assertThat(sanitized).contains("Foo::add").contains("User::create").contains("List::of");
+            assertThat(sanitized).doesNotContain("[REDACTED_IP]");
+
+            ValidationRun run = new ValidationRun();
+            org.springframework.test.util.ReflectionTestUtils.setField(run, "id", UUID.randomUUID());
+            run.setName("Method Ref Run");
+            run.setTargetUrl(targetUrl);
+            run.setStatus("PASSED");
+            run.setExecutedAt(OffsetDateTime.now(ZoneOffset.UTC));
+
+            ValidationRunPublication pub = new ValidationRunPublication();
+            pub.setRunId(run.getId());
+            pub.setProductName("SCIM Server");
+            pub.setProductSlug("scim-server");
+            pub.setProductVersion("1.0.0");
+            pub.setLicenseType("Apache-2.0");
+
+            ValidationTestResult tr = new ValidationTestResult();
+            tr.setTestIdentifier("USR_01");
+            tr.setDisplayName("USR_01: Verify Foo::add and User::create with List::of");
+            tr.setTestName("Foo::add");
+            tr.setClassName("de.palsoftware.scim.Foo");
+            tr.setStatus("FAILED");
+            tr.setErrorMessage(errorWithMethodRefs);
+
+            ComplianceScorecardView scorecard = new ComplianceScorecardView(
+                    run.getId(), "Run", targetUrl, OffsetDateTime.now(ZoneOffset.UTC), "PASSED",
+                    95, ColourGradient.EMERALD, true, null,
+                    null, null, null, Collections.emptyList(), 8, 8, 10,
+                    157, 140, 17, 0, Collections.emptyMap(), Collections.emptyList()
+            );
+
+            SanitizedComplianceReport report = ComplianceReportGenerator.buildSanitizedReport(
+                    run, pub, scorecard, List.of(tr));
+            String json = objectMapper.writeValueAsString(report);
+            assertThat(json).contains("Foo::add").contains("User::create").contains("List::of");
+            assertThatCode(() -> ComplianceReportGenerator.assertSanitized(json, targetUrl))
+                    .doesNotThrowAnyException();
+
+            // Meanwhile, genuine compressed/loopback IPv6 literals are still caught
+            assertThat(ComplianceReportGenerator.sanitizeErrorMessage("Connect to fe80::1 or ::1 failed", targetUrl))
+                    .doesNotContain("fe80::1")
+                    .doesNotContain("::1");
+            assertThatThrownBy(() ->
+                    ComplianceReportGenerator.assertSanitized("{\"err\":\"Connect to fe80::1\"}", targetUrl)
+            ).isInstanceOf(SecurityException.class);
+            assertThatThrownBy(() ->
+                    ComplianceReportGenerator.assertSanitized("{\"err\":\"Connect to ::1\"}", targetUrl)
+            ).isInstanceOf(SecurityException.class);
+        }
     }
 
     // =========================================================================

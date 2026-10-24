@@ -40,7 +40,8 @@ public class ComplianceReportGenerator {
     private static final Pattern IPV6_PATTERN = Pattern.compile(
             "(?i)\\[(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}\\](?::\\d+)?"
             + "|\\b(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}\\b"
-            + "|(?:\\b[0-9a-f]{1,4})?::[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,5}\\b");
+            + "|\\b(?:[0-9a-f]{1,4}:){1,6}:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,5}\\b"
+            + "|(?<![a-z0-9_:])::1\\b");
     private static final Pattern TARGET_URL_RESIDUAL_PATTERN = Pattern.compile("\\[TARGET_URL\\][^\\s\"'>\\]\\)]*");
     private static final Pattern TARGET_HOST_RESIDUAL_PATTERN = Pattern.compile("\\[TARGET_HOST\\][^\\s\"'>\\]\\)]*");
     private static final Pattern PEM_PRIVATE_KEY_BLOCK_PATTERN = Pattern.compile("(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----");

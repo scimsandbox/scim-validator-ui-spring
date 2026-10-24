@@ -11,6 +11,7 @@ public class CompliancePublishFormData {
 
     @NotBlank(message = "Product name is required")
     @Size(max = 120, message = "Product name cannot exceed 120 characters")
+    @Pattern(regexp = "^[^\\p{Cntrl}]*$", message = "Product name must not contain control characters or line breaks")
     private String productName;
 
     @NotBlank(message = "Product slug is required")
@@ -26,6 +27,7 @@ public class CompliancePublishFormData {
     private String productVersion;
 
     @Size(max = 120, message = "Vendor/organization name cannot exceed 120 characters")
+    @Pattern(regexp = "^[^\\p{Cntrl}]*$", message = "Vendor name must not contain control characters or line breaks")
     private String vendorName;
 
     @Size(max = 500, message = "Project URL cannot exceed 500 characters")

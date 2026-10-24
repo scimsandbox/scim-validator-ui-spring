@@ -47,6 +47,7 @@ public class GitHubCompliancePublisherService {
     private final ValidationRunRepository runRepository;
     private final ReentrantLock publishLock = new ReentrantLock(true);
     private final Map<UUID, Long> claimedRunTimestamps = new ConcurrentHashMap<>();
+    private final Set<UUID> mergedRunIds = ConcurrentHashMap.newKeySet();
 
     @Value("${app.compliance.reservation-timeout-seconds:300}")
     private long claimTtlSeconds = 300;
@@ -148,6 +149,7 @@ public class GitHubCompliancePublisherService {
                 if (result == null || !result.success()) {
                     releaseClaim(request.runId());
                 } else {
+                    mergedRunIds.add(request.runId());
                     // Pin the in-memory claim so it never expires after a successful GitHub merge
                     claimedRunTimestamps.put(request.runId(), Long.MAX_VALUE / 2);
                 }
@@ -162,9 +164,13 @@ public class GitHubCompliancePublisherService {
     }
 
     public void releaseClaim(UUID runId) {
-        if (runId != null) {
+        if (runId != null && !mergedRunIds.contains(runId)) {
             claimedRunTimestamps.remove(runId);
         }
+    }
+
+    public boolean isMergedInMemory(UUID runId) {
+        return runId != null && mergedRunIds.contains(runId);
     }
 
     private void refreshReservationHeartbeat(UUID runId) {
@@ -198,9 +204,12 @@ public class GitHubCompliancePublisherService {
         if (runId == null) {
             return false;
         }
+        if (mergedRunIds.contains(runId)) {
+            return true;
+        }
         long now = System.currentTimeMillis();
         long ttlMillis = getClaimTtlMillis();
-        claimedRunTimestamps.entrySet().removeIf(entry -> (now - entry.getValue()) > ttlMillis);
+        claimedRunTimestamps.entrySet().removeIf(entry -> !mergedRunIds.contains(entry.getKey()) && (now - entry.getValue()) > ttlMillis);
         Long claimedAt = claimedRunTimestamps.get(runId);
         return claimedAt != null && (now - claimedAt) <= ttlMillis;
     }
@@ -284,8 +293,14 @@ public class GitHubCompliancePublisherService {
         if (request.runId() == null) {
             throw new IllegalArgumentException("Publish request runId must not be null");
         }
-        if (request.productName() == null || request.productName().isBlank() || request.productName().length() > 120) {
-            throw new IllegalArgumentException("Invalid productName: must be non-blank and at most 120 characters");
+        if (request.productName() == null || request.productName().isBlank()
+                || request.productName().length() > 120
+                || containsControlCharacters(request.productName())) {
+            throw new IllegalArgumentException("Invalid productName: must be non-blank, at most 120 characters, and must not contain control characters");
+        }
+        if (request.vendorName() != null
+                && (request.vendorName().length() > 120 || containsControlCharacters(request.vendorName()))) {
+            throw new IllegalArgumentException("Invalid vendorName: must be at most 120 characters and must not contain control characters");
         }
         if (request.productSlug() == null || request.productSlug().isBlank()
                 || request.productSlug().length() > 120
@@ -350,6 +365,30 @@ public class GitHubCompliancePublisherService {
         // Step 3: Fetch existing compliance/index.json
         refreshReservationHeartbeat(runId);
         List<ComplianceCatalogEntry> catalog = fetchExistingCatalog(token);
+        for (ComplianceCatalogEntry existingEntry : catalog) {
+            if (existingEntry != null && existingEntry.runId() != null
+                    && runId.toString().equalsIgnoreCase(existingEntry.runId().toString())) {
+                log.info("Compliance report for runId={} already exists in compliance/index.json; returning idempotent result", runId);
+                String baseUrl = publicBaseUrl != null && !publicBaseUrl.isBlank()
+                        ? publicBaseUrl.replaceAll("/+$", "")
+                        : "https://scimsandbox.net";
+                String reportUrl = baseUrl + "/compliance/?run=" + runId;
+                String badgeUrl = baseUrl + "/compliance/badges/" + runId + ".svg";
+                String existingPrUrl = "https://github.com/" + repo + "/blob/" + branch + "/"
+                        + (existingEntry.reportPath() != null && !existingEntry.reportPath().isBlank()
+                        ? existingEntry.reportPath()
+                        : "compliance/index.json");
+                OffsetDateTime existingPublishedAt = publishedAt;
+                if (existingEntry.publishedAt() != null && !existingEntry.publishedAt().isBlank()) {
+                    try {
+                        existingPublishedAt = OffsetDateTime.parse(existingEntry.publishedAt());
+                    } catch (Exception ignored) {
+                    }
+                }
+                return CompliancePublicationResult.succeeded(
+                        runId, existingPrUrl, reportUrl, badgeUrl, baseCommitSha, existingPublishedAt);
+            }
+        }
 
         // Generate file paths and contents
         String dateSlug = publishedAt.format(DATE_FORMATTER);
@@ -434,10 +473,13 @@ public class GitHubCompliancePublisherService {
             );
             String newTreeSha = createTree(token, baseTreeSha, treeEntries);
 
+            String safeProductName = stripControlChars(req.productName());
+            String safeProductVersion = stripControlChars(req.productVersion());
+
             // Step 6: Create commit
             refreshReservationHeartbeat(runId);
             String commitMsg = String.format("publish(compliance): %s %s scorecard (%s)",
-                    req.productName(), req.productVersion(), runId);
+                    safeProductName, safeProductVersion, runId);
             String newCommitSha = createCommit(token, commitMsg, newTreeSha, List.of(baseCommitSha));
 
             // Step 7: Update branch ref
@@ -446,7 +488,7 @@ public class GitHubCompliancePublisherService {
             // Step 8: Open Pull Request
             refreshReservationHeartbeat(runId);
             String prTitle = String.format("publish(compliance): %s %s (%s)",
-                    req.productName(), req.productVersion(), shortRunId);
+                    safeProductName, safeProductVersion, shortRunId);
             String prBody = generatePrBody(req, publishedAt);
             JsonNode prResponse = openPullRequest(token, prTitle, branchName, branch, prBody);
             int pullNumber = prResponse.get("number").asInt();
@@ -455,7 +497,7 @@ public class GitHubCompliancePublisherService {
             // Step 9: Squash-merge Pull Request
             refreshReservationHeartbeat(runId);
             String mergeCommitTitle = String.format("publish(compliance): %s %s scorecard (#%d)",
-                    req.productName(), req.productVersion(), pullNumber);
+                    safeProductName, safeProductVersion, pullNumber);
             String mergeCommitSha = squashMergePullRequest(token, pullNumber, mergeCommitTitle, prBody);
 
             String basePublicUrl = getEffectivePublicBaseUrl();
@@ -780,6 +822,26 @@ public class GitHubCompliancePublisherService {
                 || lower.contains("branch protection")
                 || lower.contains("required status check")
                 || lower.contains("review is required");
+    }
+
+    private static boolean containsControlCharacters(String value) {
+        if (value == null) {
+            return false;
+        }
+        for (int i = 0; i < value.length(); i++) {
+            char ch = value.charAt(i);
+            if (ch == '\r' || ch == '\n' || Character.isISOControl(ch)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String stripControlChars(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.replaceAll("[\\p{Cntrl}\\r\\n]", "");
     }
 
     static String escapeMarkdownCell(String value) {

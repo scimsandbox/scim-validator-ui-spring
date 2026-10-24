@@ -526,12 +526,36 @@ public class ValidationRunRepositoryIsolationAndConstraintsTest {
                 assertThat(raceDeleted).isZero();
                 assertThat(jpaPubRepo.existsById(detachedBobRun.getId())).isTrue();
 
+                // Verify reconciliation lock protects a merged-but-unrecorded run reservation from staleness, purge, and release
+                em.getTransaction().begin();
+                ValidationRunPublication agedPending = jpaPubRepo.findById(detachedBobRun.getId()).orElseThrow();
+                agedPending.setPublishedAt(OffsetDateTime.now(ZoneOffset.UTC).minusMinutes(20));
+                jpaPubRepo.save(agedPending);
+                em.flush();
+                em.getTransaction().commit();
+                em.clear();
+
+                jpaService.markReconciliationRequired(detachedBobRun.getId());
+                assertThat(jpaService.isReconciliationRequired(detachedBobRun.getId())).isTrue();
+                ValidationRunPublication reloadedPending = jpaPubRepo.findById(detachedBobRun.getId()).orElseThrow();
+                assertThat(jpaService.isStaleReservation(reloadedPending)).isFalse();
+
+                em.getTransaction().begin();
+                int purgedWhileReconciling = jpaService.purgeStalePendingReservations();
+                jpaService.releasePublicationReservation(detachedBobRun);
+                em.flush();
+                em.getTransaction().commit();
+                em.clear();
+                assertThat(purgedWhileReconciling).isZero();
+                assertThat(jpaPubRepo.existsById(detachedBobRun.getId())).isTrue();
+
                 em.getTransaction().begin();
                 ValidationRunPublication finalizedBobPub = jpaService.recordPublication(
                         detachedBobRun, "bob@example.com", bobValidReq, bobRes);
                 em.flush();
                 em.getTransaction().commit();
                 em.clear();
+                assertThat(jpaService.isReconciliationRequired(detachedBobRun.getId())).isFalse();
                 assertThat(finalizedBobPub.getPrUrl()).isEqualTo("https://github.com/scimsandbox/scim-website/pull/11");
                 assertThat(finalizedBobPub.getProductSlug()).isEqualTo("bob-scim");
                 assertThat(jpaRunRepo.findOwnedRuns("bob@example.com", Sort.unsorted())).isEmpty();

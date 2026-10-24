@@ -529,8 +529,10 @@ public class ValidationController {
         try {
             result = gitHubCompliancePublisherService.publish(publishRequest);
         } catch (Exception ex) {
-            gitHubCompliancePublisherService.releaseClaim(runId);
-            safeReleaseReservation(runEntity);
+            if (!validationRunService.isReconciliationRequired(runId)) {
+                gitHubCompliancePublisherService.releaseClaim(runId);
+                safeReleaseReservation(runEntity);
+            }
             log.error("Failed to publish compliance report for runId={}", runId, ex);
             String message = sanitizeFlashErrorMessage(ex.getMessage(), "Unknown GitHub publisher error");
             redirectAttributes.addFlashAttribute("errorMessage", "GitHub publishing failed: " + message);
@@ -538,8 +540,10 @@ public class ValidationController {
         }
 
         if (result == null || !result.success()) {
-            gitHubCompliancePublisherService.releaseClaim(runId);
-            safeReleaseReservation(runEntity);
+            if (!validationRunService.isReconciliationRequired(runId)) {
+                gitHubCompliancePublisherService.releaseClaim(runId);
+                safeReleaseReservation(runEntity);
+            }
             String failureReason = result != null && result.errorMessage() != null
                     ? sanitizeFlashErrorMessage(result.errorMessage(), "GitHub publishing operation did not succeed")
                     : "GitHub publishing operation did not succeed";
@@ -556,6 +560,7 @@ public class ValidationController {
                 validationRunService.recordPublication(runEntity, userEmail, publishRequest, result);
             } catch (Exception ex) {
                 // Keep reservation and in-memory claim locked so a retry does not open a duplicate PR on GitHub
+                validationRunService.markReconciliationRequired(runId);
                 log.error("Failed to persist validation publication to database for runId={} after GitHub merge ({})",
                         runId, result.prUrl(), ex);
                 String safeReason = sanitizeFlashErrorMessage(ex.getMessage(), "database error");

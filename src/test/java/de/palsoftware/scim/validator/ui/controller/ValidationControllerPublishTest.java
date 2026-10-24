@@ -501,8 +501,43 @@ class ValidationControllerPublishTest {
                 .contains("locked for reconciliation");
         verify(validationRunService, org.mockito.Mockito.times(2))
                 .recordPublication(eq(runEntity), eq("developer@example.com"), any(CompliancePublishRequest.class), eq(pubResult));
+        verify(validationRunService).markReconciliationRequired(runId);
         verify(gitHubCompliancePublisherService, never()).releaseClaim(runId);
         verify(validationRunService, never()).releasePublicationReservation(runEntity);
+
+        // Subsequent publishRun failure on a reconciliation-locked run must NOT release the claim or reservation
+        when(validationRunService.isReconciliationRequired(runId)).thenReturn(true);
+        when(gitHubCompliancePublisherService.publish(any(CompliancePublishRequest.class)))
+                .thenThrow(new IllegalStateException("Validation run has already been published: " + runId));
+
+        RedirectAttributes retryRedirectAttributes = new RedirectAttributesModelMap();
+        String retryRedirect = controller.publishRun(runId, form, bindingResult, userAuth, retryRedirectAttributes);
+        assertThat(retryRedirect).isEqualTo("redirect:/runs/" + runId);
+        verify(gitHubCompliancePublisherService, never()).releaseClaim(runId);
+        verify(validationRunService, never()).releasePublicationReservation(runEntity);
+    }
+
+    @Test
+    void publishForm_rejectsControlCharactersInProductNameAndVendorName() {
+        try (jakarta.validation.ValidatorFactory factory = jakarta.validation.Validation.buildDefaultValidatorFactory()) {
+            jakarta.validation.Validator beanValidator = factory.getValidator();
+
+            CompliancePublishFormData badNameForm = new CompliancePublishFormData(
+                    "Apache Syncope\nCo-authored-by: attacker", "apache-syncope", "3.0.0",
+                    "ASF", "https://syncope.apache.org", "Apache-2.0", false
+            );
+            assertThat(beanValidator.validate(badNameForm))
+                    .anyMatch(v -> "productName".equals(v.getPropertyPath().toString())
+                            && v.getMessage().contains("control characters"));
+
+            CompliancePublishFormData badVendorForm = new CompliancePublishFormData(
+                    "Apache Syncope", "apache-syncope", "3.0.0",
+                    "ASF\r\nInjected", "https://syncope.apache.org", "Apache-2.0", false
+            );
+            assertThat(beanValidator.validate(badVendorForm))
+                    .anyMatch(v -> "vendorName".equals(v.getPropertyPath().toString())
+                            && v.getMessage().contains("control characters"));
+        }
     }
 
     @Test

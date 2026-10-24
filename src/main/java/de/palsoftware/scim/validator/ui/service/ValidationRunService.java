@@ -41,9 +41,11 @@ import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.io.PrintWriter;
@@ -56,7 +58,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -138,6 +142,31 @@ public class ValidationRunService {
     @Value("${app.compliance.reservation-timeout-seconds:300}")
     private long reservationTimeoutSeconds = 300;
 
+    @Autowired(required = false)
+    private PlatformTransactionManager transactionManager;
+
+    private final Set<UUID> reconciliationRequiredRunIds = ConcurrentHashMap.newKeySet();
+
+    public void setTransactionManager(PlatformTransactionManager transactionManager) {
+        this.transactionManager = transactionManager;
+    }
+
+    public void markReconciliationRequired(UUID runId) {
+        if (runId != null) {
+            reconciliationRequiredRunIds.add(runId);
+        }
+    }
+
+    public boolean isReconciliationRequired(UUID runId) {
+        return runId != null && reconciliationRequiredRunIds.contains(runId);
+    }
+
+    public void clearReconciliationRequired(UUID runId) {
+        if (runId != null) {
+            reconciliationRequiredRunIds.remove(runId);
+        }
+    }
+
     public int getMaxRunsPerUser() {
         return maxRunsPerUser;
     }
@@ -168,6 +197,10 @@ public class ValidationRunService {
     }
 
     public boolean isStaleReservation(ValidationRunPublication publication) {
+        if (publication != null && publication.getRunId() != null
+                && reconciliationRequiredRunIds.contains(publication.getRunId())) {
+            return false;
+        }
         return publication != null && publication.isStalePendingReservation(getReservationTimeout());
     }
 
@@ -495,7 +528,7 @@ public class ValidationRunService {
         int purged = 0;
         for (ValidationRunPublication stale : staleList) {
             UUID runId = stale.getRunId();
-            if (runId == null) {
+            if (runId == null || reconciliationRequiredRunIds.contains(runId)) {
                 continue;
             }
             int deleted = publicationRepository.deleteStalePendingReservationById(
@@ -610,63 +643,73 @@ public class ValidationRunService {
                 .filter(p -> !p.isPendingReservation());
     }
 
-    @Transactional
     public ValidationRunPublication reservePublication(
             ValidationRun run,
             String actorEmail,
             CompliancePublishRequest request) {
         synchronized (reservationLock) {
-            ValidationRun managedRun = resolveManagedRun(run);
-            ValidationRunPublication existing = findExistingPublicationOrReservation(managedRun);
-
-            if (run.isPublished() || managedRun.isPublished()
-                    || (existing != null && !existing.isPendingReservation())) {
-                throw new IllegalStateException("Validation run has already been published: " + managedRun.getId());
+            if (transactionManager != null) {
+                TransactionTemplate txTemplate = new TransactionTemplate(transactionManager);
+                return txTemplate.execute(status -> doReservePublication(run, actorEmail, request));
             }
-            if (existing != null && existing.isPendingReservation() && !isStaleReservation(existing)) {
-                throw new IllegalStateException("Validation run publication is already in progress: " + managedRun.getId());
-            }
-
-            String ownerEmail = resolveOwnerEmail(managedRun, run, actorEmail);
-            validateOwnerQuotaAndSlug(ownerEmail, request.productSlug(), managedRun.getId());
-
-            OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
-            ValidationRunPublication reservation;
-            if (existing != null) {
-                OffsetDateTime stalePublishedAt = existing.getPublishedAt();
-                if (publicationRepository != null) {
-                    OffsetDateTime cutoff = now.minus(getReservationTimeout());
-                    int claimed = publicationRepository.claimStalePendingReservationById(
-                            managedRun.getId(), PENDING_RESERVATION_PR_URL, cutoff, now);
-                    if (claimed == 0) {
-                        throw new IllegalStateException("Validation run publication is already in progress: " + managedRun.getId());
-                    }
-                    managedRun = resolveManagedRun(run);
-                    existing = findExistingPublicationOrReservation(managedRun);
-                }
-                log.warn("Reclaiming stale pending publication reservation for runId={} (reserved at {})",
-                        managedRun.getId(), stalePublishedAt);
-                reservation = existing != null ? existing : new ValidationRunPublication();
-                if (existing != null) {
-                    reservation.markNotNew();
-                }
-            } else {
-                reservation = new ValidationRunPublication();
-            }
-            populatePublicationMetadata(reservation, managedRun, ownerEmail, request);
-            String baseUrl = getEffectivePublicBaseUrl();
-            reservation.setReportUrl(baseUrl + "/compliance/?run=" + managedRun.getId());
-            reservation.setBadgeUrl(baseUrl + "/compliance/badges/" + managedRun.getId() + ".svg");
-            reservation.setPrUrl(PENDING_RESERVATION_PR_URL);
-            reservation.setPublishedAt(now);
-
-            return persistPublicationAndSyncRun(reservation, managedRun, run);
+            return doReservePublication(run, actorEmail, request);
         }
+    }
+
+    private ValidationRunPublication doReservePublication(
+            ValidationRun run,
+            String actorEmail,
+            CompliancePublishRequest request) {
+        ValidationRun managedRun = resolveManagedRun(run);
+        ValidationRunPublication existing = findExistingPublicationOrReservation(managedRun);
+
+        if (run.isPublished() || managedRun.isPublished()
+                || (existing != null && !existing.isPendingReservation())) {
+            throw new IllegalStateException("Validation run has already been published: " + managedRun.getId());
+        }
+        if (existing != null && existing.isPendingReservation() && !isStaleReservation(existing)) {
+            throw new IllegalStateException("Validation run publication is already in progress: " + managedRun.getId());
+        }
+
+        String ownerEmail = resolveOwnerEmail(managedRun, run, actorEmail);
+        validateOwnerQuotaAndSlug(ownerEmail, request.productSlug(), managedRun.getId());
+
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        ValidationRunPublication reservation;
+        if (existing != null) {
+            OffsetDateTime stalePublishedAt = existing.getPublishedAt();
+            if (publicationRepository != null) {
+                OffsetDateTime cutoff = now.minus(getReservationTimeout());
+                int claimed = publicationRepository.claimStalePendingReservationById(
+                        managedRun.getId(), PENDING_RESERVATION_PR_URL, cutoff, now);
+                if (claimed == 0) {
+                    throw new IllegalStateException("Validation run publication is already in progress: " + managedRun.getId());
+                }
+                managedRun = resolveManagedRun(run);
+                existing = findExistingPublicationOrReservation(managedRun);
+            }
+            log.warn("Reclaiming stale pending publication reservation for runId={} (reserved at {})",
+                    managedRun.getId(), stalePublishedAt);
+            reservation = existing != null ? existing : new ValidationRunPublication();
+            if (existing != null) {
+                reservation.markNotNew();
+            }
+        } else {
+            reservation = new ValidationRunPublication();
+        }
+        populatePublicationMetadata(reservation, managedRun, ownerEmail, request);
+        String baseUrl = getEffectivePublicBaseUrl();
+        reservation.setReportUrl(baseUrl + "/compliance/?run=" + managedRun.getId());
+        reservation.setBadgeUrl(baseUrl + "/compliance/badges/" + managedRun.getId() + ".svg");
+        reservation.setPrUrl(PENDING_RESERVATION_PR_URL);
+        reservation.setPublishedAt(now);
+
+        return persistPublicationAndSyncRun(reservation, managedRun, run);
     }
 
     @Transactional
     public void releasePublicationReservation(ValidationRun run) {
-        if (run == null || run.getId() == null) {
+        if (run == null || run.getId() == null || reconciliationRequiredRunIds.contains(run.getId())) {
             return;
         }
         UUID runId = run.getId();
@@ -705,7 +748,9 @@ public class ValidationRunService {
             existing.setBadgeUrl(result.badgeUrl());
             existing.setPrUrl(result.prUrl());
             existing.setPublishedAt(result.publishedAt() != null ? result.publishedAt() : OffsetDateTime.now(ZoneOffset.UTC));
-            return persistPublicationAndSyncRun(existing, managedRun, run);
+            ValidationRunPublication saved = persistPublicationAndSyncRun(existing, managedRun, run);
+            clearReconciliationRequired(managedRun.getId());
+            return saved;
         }
 
         if (run.isPublished() || managedRun.isPublished() || existing != null) {
@@ -721,7 +766,9 @@ public class ValidationRunService {
         publication.setPrUrl(result.prUrl());
         publication.setPublishedAt(result.publishedAt() != null ? result.publishedAt() : OffsetDateTime.now(ZoneOffset.UTC));
 
-        return persistPublicationAndSyncRun(publication, managedRun, run);
+        ValidationRunPublication saved = persistPublicationAndSyncRun(publication, managedRun, run);
+        clearReconciliationRequired(managedRun.getId());
+        return saved;
     }
 
     private ValidationRun resolveManagedRun(ValidationRun run) {
@@ -778,6 +825,7 @@ public class ValidationRunService {
         managedRun.setPublication(publication);
         if (publicationRepository != null) {
             publication = publicationRepository.save(publication);
+            publicationRepository.flush();
         }
         if (runRepository != null) {
             runRepository.save(managedRun);
