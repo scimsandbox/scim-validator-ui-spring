@@ -24,12 +24,22 @@ public class ComplianceBadgeGenerator {
      * @return Complete, standalone SVG markup
      */
     public static String generateBadgeSvg(int score, int compliantCaps, int totalCaps, String badgeId) {
+        return generateBadgeSvg(score, compliantCaps, totalCaps, badgeId, false);
+    }
+
+    public static String generateBadgeSvg(int score, int compliantCaps, int totalCaps, String badgeId, boolean isSample) {
         ColourGradient gradient = ColourGradient.forScore(score);
         String cleaned = (badgeId != null) ? badgeId.replaceAll("[^a-zA-Z0-9_-]", "") : "";
         String safeId = cleaned.isBlank() ? "def" : cleaned;
 
         String labelText = "SCIM 2.0";
-        String valueText = score + "% · " + compliantCaps + "/" + totalCaps + " caps";
+        String ariaLabel = isSample
+                ? ("SCIM 2.0 (sample): " + score + "% · " + compliantCaps + "/" + totalCaps)
+                : (labelText + ": " + score + "% · " + compliantCaps + "/" + totalCaps + " caps");
+        String descText = isSample
+                ? String.format("SCIM 2.0 sample compliance scorecard fixture: %d%% Core Conformance, %d/%d capabilities", score, compliantCaps, totalCaps)
+                : String.format("SCIM 2.0 compliance scorecard: %d%% Core Conformance, %d/%d capabilities", score, compliantCaps, totalCaps);
+        String valueText = score + "% · " + compliantCaps + "/" + totalCaps + (isSample ? " sample" : " caps");
 
         int leftWidth = 60;
         int leftTextLength = 480;
@@ -47,9 +57,9 @@ public class ComplianceBadgeGenerator {
         String overlayId = "scim-o-" + safeId;
 
         return """
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="%d" height="20" viewBox="0 0 %d 20" role="img" aria-label="%s: %s">
-  <title>%s: %s</title>
-  <desc>SCIM 2.0 compliance scorecard: %d%% Core Conformance, %d/%d capabilities</desc>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="%d" height="20" viewBox="0 0 %d 20" role="img" aria-label="%s">
+  <title>%s</title>
+  <desc>%s</desc>
   <defs>
     <linearGradient id="%s" x1="0%%" y1="0%%" x2="100%%" y2="100%%">
       <stop offset="0%%" stop-color="%s"/>
@@ -76,9 +86,9 @@ public class ComplianceBadgeGenerator {
   </g>
 </svg>
 """.formatted(
-                totalWidth, totalWidth, labelText, valueText,
-                labelText, valueText,
-                score, compliantCaps, totalCaps,
+                totalWidth, totalWidth, ariaLabel,
+                ariaLabel,
+                descText,
                 gradId, gradient.getStartColor(), gradient.getEndColor(),
                 overlayId,
                 clipId, totalWidth,
@@ -103,7 +113,8 @@ public class ComplianceBadgeGenerator {
                 case '%' -> w += 11.0;
                 case '·' -> w += 5.0;
                 case '/' -> w += 5.5;
-                case 'c', 'a', 'p', 's' -> w += 6.5;
+                case 'c', 'a', 'p', 's', 'e' -> w += 6.5;
+                case 'm' -> w += 8.0;
                 default -> w += 7.0;
             }
         }
