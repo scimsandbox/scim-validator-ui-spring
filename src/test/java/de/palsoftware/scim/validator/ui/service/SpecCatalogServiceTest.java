@@ -24,11 +24,11 @@ class SpecCatalogServiceTest {
     }
 
     @Test
-    @DisplayName("Loads all 4 RFC catalogs with exactly 157 unique requirements")
-    void testCatalogsLoaded_Exactly157Requirements() {
+    @DisplayName("Loads all 4 RFC catalogs with exactly 158 unique requirements")
+    void testCatalogsLoaded_Exactly158Requirements() {
         Map<String, SpecRequirement> reqs = service.getRequirements();
-        assertThat(reqs).hasSize(157);
-        assertThat(service.getTotalRequirementsCount()).isEqualTo(157);
+        assertThat(reqs).hasSize(158);
+        assertThat(service.getTotalRequirementsCount()).isEqualTo(158);
     }
 
     @Test
@@ -41,7 +41,7 @@ class SpecCatalogServiceTest {
         long rfc9865Count = reqs.values().stream().filter(r -> "9865".equals(r.rfc())).count();
         long rfc9967Count = reqs.values().stream().filter(r -> "9967".equals(r.rfc())).count();
 
-        assertThat(rfc7643Count).isEqualTo(48);
+        assertThat(rfc7643Count).isEqualTo(49);
         assertThat(rfc7644Count).isEqualTo(96);
         assertThat(rfc9865Count).isEqualTo(8);
         assertThat(rfc9967Count).isEqualTo(5);
@@ -56,12 +56,12 @@ class SpecCatalogServiceTest {
         long shouldCount = reqs.values().stream().filter(SpecRequirement::isShould).count();
         long mayOrOptCount = reqs.values().stream().filter(SpecRequirement::isMayOrOptional).count();
 
-        assertThat(mustCount).isEqualTo(134);
+        assertThat(mustCount).isEqualTo(135);
         assertThat(shouldCount).isEqualTo(9);
         assertThat(mayOrOptCount).isEqualTo(14); // 13 MAY + 1 OPTIONAL
 
         int totalWeight = reqs.values().stream().mapToInt(SpecRequirement::getWeight).sum();
-        assertThat(totalWeight).isEqualTo(134 * 3 + 9 * 2 + 14 * 1); // 402 + 18 + 14 = 434
+        assertThat(totalWeight).isEqualTo(135 * 3 + 9 * 2 + 14 * 1); // 405 + 18 + 14 = 437
     }
 
     @Test
@@ -75,11 +75,11 @@ class SpecCatalogServiceTest {
     }
 
     @Test
-    @DisplayName("Reflective inspection of the 13 Spock specs discovers exactly 253 test methods")
-    void testSpockReflection_Discovers253Tests() {
+    @DisplayName("Reflective inspection of the 13 Spock specs discovers exactly 254 test methods")
+    void testSpockReflection_Discovers254Tests() {
         Map<String, TestSpecMapping> testMappings = service.getAllTestMappings();
-        assertThat(testMappings).hasSize(253);
-        assertThat(service.getTotalTestsCount()).isEqualTo(253);
+        assertThat(testMappings).hasSize(254);
+        assertThat(service.getTotalTestsCount()).isEqualTo(254);
 
         // Every test method must have a valid identifier, display name, class name, and >= 1 spec ref
         for (TestSpecMapping mapping : testMappings.values()) {
@@ -117,6 +117,14 @@ class SpecCatalogServiceTest {
         List<String> etagTests = service.getTestsForCapability("etag");
         assertThat(etagTests).hasSize(13);
         assertThat(etagTests).contains("USR_16", "PAT_20", "GRP_17", "GRP_19", "NEG_21");
+
+        List<String> changePasswordTests = service.getTestsForCapability("changePassword");
+        assertThat(changePasswordTests).containsExactly("USR_25");
+
+        Optional<TestSpecMapping> usr25Opt = service.getTestMapping("USR_25");
+        assertThat(usr25Opt).isPresent();
+        assertThat(usr25Opt.get().specRefs()).contains("RFC7643-4.1.1-R7");
+        assertThat(usr25Opt.get().requiredCapabilities()).contains("changePassword");
     }
 
     @Test

@@ -376,22 +376,35 @@ public class ComplianceScoreService {
 
         for (String cap : OPTIONAL_CAPABILITIES) {
             if ("changePassword".equals(cap)) {
-                boolean supported = Boolean.TRUE.equals(changePasswordSupported);
-                CapabilitySupportLevel lvl = supported
-                        ? CapabilitySupportLevel.SUPPORTED_COMPLIANT
-                        : CapabilitySupportLevel.UNSUPPORTED;
-                result.put(cap, CapabilityStatus.of(
-                        cap,
-                        CAPABILITY_TITLES.get(cap),
-                        CAPABILITY_SECTIONS.get(cap),
-                        lvl,
-                        1,
-                        supported ? 1 : 0,
-                        supported ? 1 : 0,
-                        0,
-                        supported ? 0 : 1
-                ));
-                continue;
+                List<String> cpTestIds = specCatalogService.getTestsForCapability("changePassword");
+                boolean hasTestResults = false;
+                if (cpTestIds != null && !cpTestIds.isEmpty()) {
+                    for (String tid : cpTestIds) {
+                        if (resultsByTestId.containsKey(tid)) {
+                            hasTestResults = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!hasTestResults) {
+                    boolean supported = Boolean.TRUE.equals(changePasswordSupported);
+                    CapabilitySupportLevel lvl = supported
+                            ? CapabilitySupportLevel.SUPPORTED_COMPLIANT
+                            : CapabilitySupportLevel.UNSUPPORTED;
+                    result.put(cap, CapabilityStatus.of(
+                            cap,
+                            CAPABILITY_TITLES.get(cap),
+                            CAPABILITY_SECTIONS.get(cap),
+                            lvl,
+                            1,
+                            supported ? 1 : 0,
+                            supported ? 1 : 0,
+                            0,
+                            supported ? 0 : 1
+                    ));
+                    continue;
+                }
             }
 
             List<String> capTestIds = specCatalogService.getTestsForCapability(cap);

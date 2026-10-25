@@ -87,8 +87,8 @@ class ComplianceScoreServiceTest {
         assertThat(scorecard.shouldBreakdown().conformancePercent()).isEqualTo(100);
         assertThat(scorecard.mayBreakdown().conformancePercent()).isEqualTo(100);
 
-        assertThat(scorecard.catalogRequirementsTotal()).isEqualTo(157);
-        assertThat(scorecard.activeRequirementsCount()).isEqualTo(155);
+        assertThat(scorecard.catalogRequirementsTotal()).isEqualTo(158);
+        assertThat(scorecard.activeRequirementsCount()).isEqualTo(156);
         assertThat(scorecard.untestedRequirementsCount()).isEqualTo(0);
         assertThat(scorecard.excludedRequirementsCount()).isEqualTo(2);
 
@@ -292,6 +292,52 @@ class ComplianceScoreServiceTest {
     }
 
     @Test
+    @DisplayName("changePassword capability is evaluated from mapped test results when available")
+    void testChangePasswordEvaluatedFromTestResults() {
+        ValidationRun run = createSampleRun("PASSED");
+
+        // 1. All pass -> SUPPORTED_COMPLIANT
+        List<ValidationTestResult> resultsPass = List.of(
+                createTestResult("USR_25", "USR_25: Password update", "SUCCESS")
+        );
+        ComplianceScorecardView cardPass = scoreService.computeScorecard(run, resultsPass, Collections.emptyList());
+        CapabilityStatus cpPass = cardPass.capabilities().stream()
+                .filter(c -> "changePassword".equals(c.capability())).findFirst().orElseThrow();
+        assertThat(cpPass.status()).isEqualTo(CapabilitySupportLevel.SUPPORTED_COMPLIANT);
+        assertThat(cpPass.isSupported()).isTrue();
+        assertThat(cpPass.passRate()).isEqualTo(100.0);
+        assertThat(cpPass.totalTests()).isEqualTo(1);
+        assertThat(cpPass.passedTests()).isEqualTo(1);
+        assertThat(cpPass.failedTests()).isZero();
+
+        // 2. Failure -> SUPPORTED_PARTIAL
+        List<ValidationTestResult> resultsFail = List.of(
+                createTestResult("USR_25", "USR_25: Password update", "FAILED")
+        );
+        ComplianceScorecardView cardFail = scoreService.computeScorecard(run, resultsFail, Collections.emptyList());
+        CapabilityStatus cpFail = cardFail.capabilities().stream()
+                .filter(c -> "changePassword".equals(c.capability())).findFirst().orElseThrow();
+        assertThat(cpFail.status()).isEqualTo(CapabilitySupportLevel.SUPPORTED_PARTIAL);
+        assertThat(cpFail.isSupported()).isTrue();
+        assertThat(cpFail.passRate()).isZero();
+        assertThat(cpFail.totalTests()).isEqualTo(1);
+        assertThat(cpFail.passedTests()).isZero();
+        assertThat(cpFail.failedTests()).isEqualTo(1);
+
+        // 3. Aborted / empty execution -> UNSUPPORTED
+        List<ValidationTestResult> resultsAbort = List.of(
+                createTestResult("USR_25", "USR_25: Password update", "ABORTED")
+        );
+        ComplianceScorecardView cardAbort = scoreService.computeScorecard(run, resultsAbort, Collections.emptyList());
+        CapabilityStatus cpAbort = cardAbort.capabilities().stream()
+                .filter(c -> "changePassword".equals(c.capability())).findFirst().orElseThrow();
+        assertThat(cpAbort.status()).isEqualTo(CapabilitySupportLevel.UNSUPPORTED);
+        assertThat(cpAbort.isSupported()).isFalse();
+        assertThat(cpAbort.totalTests()).isEqualTo(1);
+        assertThat(cpAbort.abortedTests()).isEqualTo(1);
+    }
+
+    @Test
     @DisplayName("Capability with mixed pass and fail is marked SUPPORTED_PARTIAL")
     void testSupportedPartialCapability() {
         ValidationRun run = createSampleRun("PASSED");
@@ -329,7 +375,7 @@ class ComplianceScoreServiceTest {
         Map<String, RfcSectionSummary> summaries = scorecard.rfcSummaries();
 
         assertThat(summaries).containsKeys("7643", "7644", "9865", "9967");
-        assertThat(summaries.get("7643").totalRequirements()).isEqualTo(48);
+        assertThat(summaries.get("7643").totalRequirements()).isEqualTo(49);
         assertThat(summaries.get("7644").totalRequirements()).isEqualTo(96);
         assertThat(summaries.get("9865").totalRequirements()).isEqualTo(8);
         assertThat(summaries.get("9967").totalRequirements()).isEqualTo(5);
@@ -371,8 +417,8 @@ class ComplianceScoreServiceTest {
 
         assertThat(scorecard.excludedRequirementsCount()).isEqualTo(2);
         assertThat(scorecard.untestedRequirementsCount()).isEqualTo(0);
-        assertThat(scorecard.activeRequirementsCount()).isEqualTo(155);
-        assertThat(scorecard.catalogRequirementsTotal()).isEqualTo(157);
+        assertThat(scorecard.activeRequirementsCount()).isEqualTo(156);
+        assertThat(scorecard.catalogRequirementsTotal()).isEqualTo(158);
     }
 
     private ComplianceScorecardView createMockScorecard(int score, String status) {
@@ -382,7 +428,7 @@ class ComplianceScoreServiceTest {
                 ("PASSED".equals(status) || "FAILED".equals(status)) && score >= 50,
                 null, null, null, null,
                 Collections.emptyList(), 0, 0, 10,
-                157, 100, 0, 10,
+                158, 100, 0, 10,
                 Collections.emptyMap(), Collections.emptyList()
         );
     }
