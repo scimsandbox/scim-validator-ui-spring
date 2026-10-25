@@ -556,7 +556,7 @@ public class ValidationRunServiceChallengerTest {
 
         @Override
         int discoverTestCount(String baseUrl, String authToken) {
-            return 250;
+            return 253;
         }
 
         @Override

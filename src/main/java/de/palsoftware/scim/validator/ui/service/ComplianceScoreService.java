@@ -189,7 +189,8 @@ public class ComplianceScoreService {
                 }
             }
 
-            if (isCore && totalTestsForReq > 0) {
+            boolean isNaDisposition = "na".equalsIgnoreCase(req.disposition());
+            if (isCore && !isNaDisposition && totalTestsForReq > 0) {
                 testableCoreReqs++;
                 if (executedTestsForReq > 0) {
                     executedCoreReqs++;
@@ -201,7 +202,6 @@ public class ComplianceScoreService {
             int w = req.getWeight();
             String status;
 
-            boolean isNaDisposition = "na".equalsIgnoreCase(req.disposition());
             if (!capActive || (isNaDisposition && executedTestsForReq == 0)) {
                 status = "EXCLUDED_CAPABILITY";
                 excludedCount++;
@@ -350,7 +350,10 @@ public class ComplianceScoreService {
             for (RequirementTraceResult r : matrix) {
                 String cap = r.capability() != null ? r.capability().trim() : "none";
                 boolean isCore = "none".equalsIgnoreCase(cap) || cap.isEmpty();
-                if (isCore && r.totalTests() > 0) {
+                boolean isNaDisposition = specCatalogService.getRequirement(r.id())
+                        .map(spec -> "na".equalsIgnoreCase(spec.disposition()))
+                        .orElse(false);
+                if (isCore && !isNaDisposition && r.totalTests() > 0) {
                     testableCore++;
                     if (r.executedTests() > 0) {
                         executedCore++;

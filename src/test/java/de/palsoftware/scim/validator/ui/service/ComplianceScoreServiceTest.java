@@ -88,8 +88,8 @@ class ComplianceScoreServiceTest {
         assertThat(scorecard.mayBreakdown().conformancePercent()).isEqualTo(100);
 
         assertThat(scorecard.catalogRequirementsTotal()).isEqualTo(157);
-        assertThat(scorecard.activeRequirementsCount()).isEqualTo(147);
-        assertThat(scorecard.untestedRequirementsCount()).isEqualTo(8);
+        assertThat(scorecard.activeRequirementsCount()).isEqualTo(155);
+        assertThat(scorecard.untestedRequirementsCount()).isEqualTo(0);
         assertThat(scorecard.excludedRequirementsCount()).isEqualTo(2);
 
         assertThat(scorecard.getScoreBadgeText()).isEqualTo("100%");
@@ -370,8 +370,8 @@ class ComplianceScoreServiceTest {
         assertThat(rfc7644.executedTests()).isZero();
 
         assertThat(scorecard.excludedRequirementsCount()).isEqualTo(2);
-        assertThat(scorecard.untestedRequirementsCount()).isEqualTo(8);
-        assertThat(scorecard.activeRequirementsCount()).isEqualTo(147);
+        assertThat(scorecard.untestedRequirementsCount()).isEqualTo(0);
+        assertThat(scorecard.activeRequirementsCount()).isEqualTo(155);
         assertThat(scorecard.catalogRequirementsTotal()).isEqualTo(157);
     }
 

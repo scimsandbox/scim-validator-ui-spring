@@ -75,11 +75,11 @@ class SpecCatalogServiceTest {
     }
 
     @Test
-    @DisplayName("Reflective inspection of the 13 Spock specs discovers exactly 250 test methods")
-    void testSpockReflection_Discovers250Tests() {
+    @DisplayName("Reflective inspection of the 13 Spock specs discovers exactly 253 test methods")
+    void testSpockReflection_Discovers253Tests() {
         Map<String, TestSpecMapping> testMappings = service.getAllTestMappings();
-        assertThat(testMappings).hasSize(250);
-        assertThat(service.getTotalTestsCount()).isEqualTo(250);
+        assertThat(testMappings).hasSize(253);
+        assertThat(service.getTotalTestsCount()).isEqualTo(253);
 
         // Every test method must have a valid identifier, display name, class name, and >= 1 spec ref
         for (TestSpecMapping mapping : testMappings.values()) {
@@ -100,7 +100,7 @@ class SpecCatalogServiceTest {
         assertThat(patchTests).hasSize(31);
 
         List<String> sortTests = service.getTestsForCapability("sort");
-        assertThat(sortTests).hasSize(5);
+        assertThat(sortTests).hasSize(7);
 
         List<String> cursorTests = service.getTestsForCapability("cursorPagination");
         assertThat(cursorTests).hasSize(6);

@@ -157,7 +157,7 @@ public class SpecCatalogServiceChallengerTest {
             SpecCatalogService fresh = new SpecCatalogService(resolver);
             assertThatCode(fresh::init).doesNotThrowAnyException();
             assertThat(fresh.getTotalRequirementsCount()).isEqualTo(157);
-            assertThat(fresh.getTotalTestsCount()).isEqualTo(250);
+            assertThat(fresh.getTotalTestsCount()).isEqualTo(253);
         }
 
         @Test
@@ -169,7 +169,7 @@ public class SpecCatalogServiceChallengerTest {
                 SpecCatalogService fallbackService = new SpecCatalogService(resolver);
                 assertThatCode(fallbackService::init).doesNotThrowAnyException();
                 assertThat(fallbackService.getTotalRequirementsCount()).isEqualTo(157);
-                assertThat(fallbackService.getTotalTestsCount()).isEqualTo(250);
+                assertThat(fallbackService.getTotalTestsCount()).isEqualTo(253);
             } finally {
                 Thread.currentThread().setContextClassLoader(originalCl);
             }
@@ -290,7 +290,7 @@ public class SpecCatalogServiceChallengerTest {
         }
 
         @Test
-        @DisplayName("INVARIANT: Exactly 10 catalog requirements are untested; all other 147 have >= 1 mapped test")
+        @DisplayName("INVARIANT: Exactly 2 catalog requirements are untested; all other 155 have >= 1 mapped test")
         void testUntestedVsTestedRequirements() {
             Map<String, SpecRequirement> reqs = service.getRequirements();
             List<String> untestedIds = new ArrayList<>();
@@ -305,8 +305,8 @@ public class SpecCatalogServiceChallengerTest {
                 }
             }
 
-            assertThat(untestedIds).hasSize(10);
-            assertThat(testedIds).hasSize(147);
+            assertThat(untestedIds).hasSize(2);
+            assertThat(testedIds).hasSize(155);
 
             // Specifically verify non-observable requirements are in the untested set
             assertThat(untestedIds).contains(
@@ -339,11 +339,11 @@ public class SpecCatalogServiceChallengerTest {
     class SpockTestDiscoveryTests {
 
         @Test
-        @DisplayName("INVARIANT: Discovers exactly 250 feature methods across 13 Spock specifications")
-        void testExactly250FeatureMethods() {
+        @DisplayName("INVARIANT: Discovers exactly 253 feature methods across 13 Spock specifications")
+        void testExactly253FeatureMethods() {
             Map<String, TestSpecMapping> mappings = service.getAllTestMappings();
-            assertThat(mappings).hasSize(250);
-            assertThat(service.getAllMappings()).hasSize(250);
+            assertThat(mappings).hasSize(253);
+            assertThat(service.getAllMappings()).hasSize(253);
 
             // Verify test distribution across spec classes
             Map<String, Long> countByClass = mappings.values().stream()
@@ -351,7 +351,7 @@ public class SpecCatalogServiceChallengerTest {
 
             assertThat(countByClass).containsKeys(SpecCatalogService.SPEC_CLASS_NAMES.toArray(new String[0]));
             long totalFromClasses = countByClass.values().stream().mapToLong(Long::longValue).sum();
-            assertThat(totalFromClasses).isEqualTo(250);
+            assertThat(totalFromClasses).isEqualTo(253);
         }
 
         @Test
