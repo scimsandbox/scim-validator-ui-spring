@@ -198,6 +198,7 @@ public class ValidationRunService {
         }
     }
 
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     public Optional<CompliancePublicationResult> tryReconcilePendingPublication(ValidationRun run) {
         if (run == null || run.getId() == null) {
             return Optional.empty();
@@ -245,6 +246,7 @@ public class ValidationRunService {
         if (transactionManager != null) {
             TransactionTemplate txTemplate = new TransactionTemplate(transactionManager);
             txTemplate.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+            txTemplate.setReadOnly(false);
             return txTemplate.execute(status -> action.get());
         }
         return action.get();
@@ -591,6 +593,7 @@ public class ValidationRunService {
 
     @EventListener(ApplicationReadyEvent.class)
     @Scheduled(fixedDelayString = "${app.compliance.reservation-cleanup-interval-ms:60000}")
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     public void cleanupStalePendingReservations() {
         for (Map.Entry<UUID, PendingReconciliation> entry : pendingReconciliations.entrySet()) {
             UUID runId = entry.getKey();
@@ -620,6 +623,7 @@ public class ValidationRunService {
         }
     }
 
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     public int purgeStalePendingReservations() {
         if (publicationRepository == null) {
             return 0;
@@ -750,16 +754,13 @@ public class ValidationRunService {
                 .filter(p -> !p.isPendingReservation());
     }
 
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     public ValidationRunPublication reservePublication(
             ValidationRun run,
             String actorEmail,
             CompliancePublishRequest request) {
         synchronized (reservationLock) {
-            if (transactionManager != null) {
-                TransactionTemplate txTemplate = new TransactionTemplate(transactionManager);
-                return txTemplate.execute(status -> doReservePublication(run, actorEmail, request));
-            }
-            return doReservePublication(run, actorEmail, request);
+            return executeInIsolatedTransaction(() -> doReservePublication(run, actorEmail, request));
         }
     }
 
@@ -838,6 +839,21 @@ public class ValidationRunService {
         if (run.hasPendingReservation()) {
             run.setPublication(null);
         }
+    }
+
+    @Transactional
+    public boolean touchPublicationReservation(UUID runId) {
+        if (runId == null || publicationRepository == null) {
+            return false;
+        }
+        return publicationRepository.findById(runId)
+                .filter(ValidationRunPublication::isPendingReservation)
+                .map(pub -> {
+                    pub.setPublishedAt(OffsetDateTime.now(ZoneOffset.UTC));
+                    publicationRepository.save(pub);
+                    return true;
+                })
+                .orElse(false);
     }
 
     @Transactional

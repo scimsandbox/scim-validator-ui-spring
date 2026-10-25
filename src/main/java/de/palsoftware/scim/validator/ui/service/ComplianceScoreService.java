@@ -201,7 +201,8 @@ public class ComplianceScoreService {
             int w = req.getWeight();
             String status;
 
-            if (!capActive) {
+            boolean isNaDisposition = "na".equalsIgnoreCase(req.disposition());
+            if (!capActive || (isNaDisposition && executedTestsForReq == 0)) {
                 status = "EXCLUDED_CAPABILITY";
                 excludedCount++;
             } else if (executedTestsForReq == 0) {

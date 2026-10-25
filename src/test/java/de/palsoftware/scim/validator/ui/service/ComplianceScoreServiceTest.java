@@ -89,8 +89,8 @@ class ComplianceScoreServiceTest {
 
         assertThat(scorecard.catalogRequirementsTotal()).isEqualTo(157);
         assertThat(scorecard.activeRequirementsCount()).isEqualTo(147);
-        assertThat(scorecard.untestedRequirementsCount()).isEqualTo(10);
-        assertThat(scorecard.excludedRequirementsCount()).isEqualTo(0);
+        assertThat(scorecard.untestedRequirementsCount()).isEqualTo(8);
+        assertThat(scorecard.excludedRequirementsCount()).isEqualTo(2);
 
         assertThat(scorecard.getScoreBadgeText()).isEqualTo("100%");
         assertThat(scorecard.getCapabilityBadgeText()).isEqualTo("10/10 caps");
@@ -338,6 +338,41 @@ class ComplianceScoreServiceTest {
             assertThat(s.rfcTitle()).isNotBlank();
             assertThat(s.conformancePercent()).isEqualTo(100);
         }
+    }
+
+    @Test
+    @DisplayName("Non-API-observable catalog items with disposition: na and zero executed tests are classified as EXCLUDED_CAPABILITY")
+    void testNonApiObservableDispositionNa_ClassifiedAsExcludedCapability() {
+        ValidationRun run = createSampleRun("PASSED");
+        List<ValidationTestResult> testResults = new ArrayList<>();
+        for (TestSpecMapping mapping : catalogService.getAllMappings()) {
+            testResults.add(createTestResult(mapping.testId(), mapping.displayName(), "SUCCESS"));
+        }
+
+        ComplianceScorecardView scorecard = scoreService.computeScorecard(run, testResults, Collections.emptyList());
+
+        // Verify that RFC7643-9.2-R1 and RFC7644-7.2-R1 are classified as EXCLUDED_CAPABILITY in the requirement matrix
+        Map<String, RequirementTraceResult> matrixById = new HashMap<>();
+        for (RequirementTraceResult r : scorecard.requirementMatrix()) {
+            matrixById.put(r.id(), r);
+        }
+
+        assertThat(matrixById).containsKey("RFC7643-9.2-R1");
+        RequirementTraceResult rfc7643 = matrixById.get("RFC7643-9.2-R1");
+        assertThat(rfc7643.status()).isEqualTo("EXCLUDED_CAPABILITY");
+        assertThat(rfc7643.inActiveScope()).isFalse();
+        assertThat(rfc7643.executedTests()).isZero();
+
+        assertThat(matrixById).containsKey("RFC7644-7.2-R1");
+        RequirementTraceResult rfc7644 = matrixById.get("RFC7644-7.2-R1");
+        assertThat(rfc7644.status()).isEqualTo("EXCLUDED_CAPABILITY");
+        assertThat(rfc7644.inActiveScope()).isFalse();
+        assertThat(rfc7644.executedTests()).isZero();
+
+        assertThat(scorecard.excludedRequirementsCount()).isEqualTo(2);
+        assertThat(scorecard.untestedRequirementsCount()).isEqualTo(8);
+        assertThat(scorecard.activeRequirementsCount()).isEqualTo(147);
+        assertThat(scorecard.catalogRequirementsTotal()).isEqualTo(157);
     }
 
     private ComplianceScorecardView createMockScorecard(int score, String status) {

@@ -393,6 +393,103 @@ class ValidationRunServiceRetentionTest {
             assertThat(runRepository.findById(pubRun2.getId())).isPresent();
             assertThat(publicationRepository.findById(pubRun2.getId())).isPresent();
         }
+
+        @Test
+        @DisplayName("touchPublicationReservation updates publishedAt timestamp on pending reservation")
+        void touchPublicationReservation_updatesTimestampWhenPending() {
+            ValidationRun run = createRun("Pending Run", false);
+            ValidationRunPublication pendingPub = new ValidationRunPublication();
+            setField(pendingPub, "runId", run.getId());
+            setField(pendingPub, "run", run);
+            setField(pendingPub, "createdByEmail", USER_EMAIL);
+            setField(pendingPub, "productName", "Pending Product");
+            setField(pendingPub, "productSlug", "pending-product");
+            setField(pendingPub, "productVersion", "1.0.0");
+            setField(pendingPub, "licenseType", "Apache-2.0");
+            setField(pendingPub, "reportUrl", ValidationRunService.PENDING_RESERVATION_PR_URL);
+            setField(pendingPub, "badgeUrl", ValidationRunService.PENDING_RESERVATION_PR_URL);
+            setField(pendingPub, "prUrl", ValidationRunService.PENDING_RESERVATION_PR_URL);
+            OffsetDateTime oldTime = OffsetDateTime.now().minusMinutes(5);
+            setField(pendingPub, "publishedAt", oldTime);
+            run.setPublication(pendingPub);
+            publicationRepository.save(pendingPub);
+
+            boolean touched = service.touchPublicationReservation(run.getId());
+            assertThat(touched).isTrue();
+
+            ValidationRunPublication updated = publicationRepository.findById(run.getId()).orElseThrow();
+            assertThat(updated.getPublishedAt()).isAfter(oldTime);
+        }
+
+        @Test
+        @DisplayName("touchPublicationReservation returns false when runId is null, not found, or not pending")
+        void touchPublicationReservation_returnsFalseWhenNotPending() {
+            assertThat(service.touchPublicationReservation(null)).isFalse();
+            assertThat(service.touchPublicationReservation(UUID.randomUUID())).isFalse();
+
+            ValidationRun publishedRun = createPublishedRun("Already Published");
+            assertThat(service.touchPublicationReservation(publishedRun.getId())).isFalse();
+        }
+
+        @Test
+        @DisplayName("reservePublication overrides class-level readOnly=true and executes in isolated read-write transaction")
+        void reservePublication_executesInReadWriteIsolatedTransaction() throws Exception {
+            var method = ValidationRunService.class.getMethod(
+                    "reservePublication",
+                    ValidationRun.class,
+                    String.class,
+                    de.palsoftware.scim.validator.ui.model.spec.CompliancePublishRequest.class);
+            var txAnnotation = method.getAnnotation(org.springframework.transaction.annotation.Transactional.class);
+            assertThat(txAnnotation).isNotNull();
+            assertThat(txAnnotation.propagation()).isEqualTo(org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED);
+
+            List<org.springframework.transaction.TransactionDefinition> capturedDefs = new ArrayList<>();
+            org.springframework.transaction.PlatformTransactionManager recordingTxManager = new org.springframework.transaction.PlatformTransactionManager() {
+                @Override
+                public org.springframework.transaction.TransactionStatus getTransaction(org.springframework.transaction.TransactionDefinition definition) {
+                    capturedDefs.add(definition);
+                    return new org.springframework.transaction.support.SimpleTransactionStatus();
+                }
+
+                @Override
+                public void commit(org.springframework.transaction.TransactionStatus status) {}
+
+                @Override
+                public void rollback(org.springframework.transaction.TransactionStatus status) {}
+            };
+
+            TestableValidationRunService txService = new TestableValidationRunService(
+                    runRepository, userRepository, publicationRepository);
+            txService.setTransactionManager(recordingTxManager);
+
+            ValidationRun run = createRun("To Reserve", false);
+            var request = new de.palsoftware.scim.validator.ui.model.spec.CompliancePublishRequest(
+                    run.getId(),
+                    "SCIM Sandbox",
+                    "scimsandbox",
+                    "1.3.1",
+                    "",
+                    "https://scimsandbox.net/",
+                    "Apache-2.0",
+                    true,
+                    100,
+                    "emerald",
+                    7,
+                    10,
+                    USER_EMAIL,
+                    null,
+                    null,
+                    false
+            );
+
+            ValidationRunPublication reserved = txService.reservePublication(run, USER_EMAIL, request);
+            assertThat(reserved).isNotNull();
+            assertThat(reserved.isPendingReservation()).isTrue();
+            assertThat(capturedDefs).hasSize(1);
+            assertThat(capturedDefs.get(0).getPropagationBehavior())
+                    .isEqualTo(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+            assertThat(capturedDefs.get(0).isReadOnly()).isFalse();
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
