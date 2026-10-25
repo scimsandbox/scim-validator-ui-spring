@@ -1,7 +1,9 @@
 package de.palsoftware.scim.validator.ui.dto;
 
 import de.palsoftware.scim.validator.ui.model.ValidationRun;
+import de.palsoftware.scim.validator.ui.model.ValidationRunPublication;
 
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
@@ -14,8 +16,48 @@ public record ValidationRunView(
         String createdByEmail,
         int totalTests,
         int passedTests,
-        int failedTests) {
+        int failedTests,
+        boolean publishingInProgress,
+        boolean published) {
+
+    public ValidationRunView(
+            UUID id,
+            String name,
+            String targetUrl,
+            OffsetDateTime executedAt,
+            String status,
+            String createdByEmail,
+            int totalTests,
+            int passedTests,
+            int failedTests,
+            boolean publishingInProgress) {
+        this(id, name, targetUrl, executedAt, status, createdByEmail, totalTests, passedTests, failedTests, publishingInProgress, false);
+    }
+
+    public ValidationRunView(
+            UUID id,
+            String name,
+            String targetUrl,
+            OffsetDateTime executedAt,
+            String status,
+            String createdByEmail,
+            int totalTests,
+            int passedTests,
+            int failedTests) {
+        this(id, name, targetUrl, executedAt, status, createdByEmail, totalTests, passedTests, failedTests, false, false);
+    }
+
     public static ValidationRunView from(ValidationRun run) {
+        return from(run, ValidationRunPublication.DEFAULT_RESERVATION_TIMEOUT);
+    }
+
+    public static ValidationRunView from(ValidationRun run, Duration reservationTimeout) {
+        boolean activePublishing = run.hasPendingReservation()
+                && !run.getPublication().isStalePendingReservation(reservationTimeout);
+        return from(run, activePublishing);
+    }
+
+    public static ValidationRunView from(ValidationRun run, boolean publishingInProgress) {
         return new ValidationRunView(
                 run.getId(),
                 run.getName(),
@@ -25,6 +67,8 @@ public record ValidationRunView(
                 run.getCreatedByUser().getEmail(),
                 run.getTotalTests(),
                 run.getPassedTests(),
-                run.getFailedTests());
+                run.getFailedTests(),
+                publishingInProgress,
+                run.isPublished());
     }
 }

@@ -290,6 +290,36 @@ class ValidationRunServiceTest {
                 .isInstanceOf(ResponseStatusException.class);
     }
 
+    @Test
+    void deleteRun_publishedRun_rejectsForBothAdminAndNonAdmin() {
+        de.palsoftware.scim.validator.ui.model.ValidationRunPublication pub =
+                new de.palsoftware.scim.validator.ui.model.ValidationRunPublication();
+        pub.setRunId(runId);
+        pub.setPrUrl("https://github.com/scimsandbox/scim-website/pull/1");
+        sampleRun.setPublication(pub);
+
+        when(runRepository.findById(runId)).thenReturn(Optional.of(sampleRun));
+        when(runRepository.findAccessibleById(runId, "user@example.com")).thenReturn(Optional.of(sampleRun));
+
+        assertThatThrownBy(() -> service.deleteRun(runId, "admin@example.com", true))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(ex -> {
+                    ResponseStatusException rse = (ResponseStatusException) ex;
+                    assertThat(rse.getStatusCode()).isEqualTo(org.springframework.http.HttpStatus.CONFLICT);
+                    assertThat(rse.getReason()).contains("Published compliance runs cannot be deleted");
+                });
+
+        assertThatThrownBy(() -> service.deleteRun(runId, "user@example.com", false))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(ex -> {
+                    ResponseStatusException rse = (ResponseStatusException) ex;
+                    assertThat(rse.getStatusCode()).isEqualTo(org.springframework.http.HttpStatus.CONFLICT);
+                    assertThat(rse.getReason()).contains("Published compliance runs cannot be deleted");
+                });
+
+        verify(runRepository, org.mockito.Mockito.never()).deleteById(runId);
+    }
+
     // ─── ValidationExecutionListener ───────────────────────────────────
 
     @Test

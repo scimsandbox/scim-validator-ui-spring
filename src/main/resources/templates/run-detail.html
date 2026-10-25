@@ -509,6 +509,764 @@
             width: 24px;
             height: 24px;
         }
+
+        /* ── Milestone 4 Scorecard & Publishing Styles ── */
+        .gradient-emerald { background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important; }
+        .gradient-teal-green { background: linear-gradient(135deg, #22c55e 0%, #0d9488 100%) !important; }
+        .gradient-amber { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%) !important; }
+        .gradient-orange { background: linear-gradient(135deg, #f97316 0%, #ea580c 100%) !important; }
+        .gradient-red { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%) !important; }
+
+        .glow-emerald { box-shadow: 0 4px 24px rgba(16, 185, 129, 0.22); border-color: rgba(16, 185, 129, 0.45) !important; }
+        .glow-teal-green { box-shadow: 0 4px 24px rgba(34, 197, 94, 0.22); border-color: rgba(34, 197, 94, 0.45) !important; }
+        .glow-amber { box-shadow: 0 4px 24px rgba(245, 158, 11, 0.22); border-color: rgba(245, 158, 11, 0.45) !important; }
+        .glow-orange { box-shadow: 0 4px 24px rgba(249, 115, 22, 0.22); border-color: rgba(249, 115, 22, 0.45) !important; }
+        .glow-red { box-shadow: 0 4px 24px rgba(239, 68, 68, 0.22); border-color: rgba(239, 68, 68, 0.45) !important; }
+
+        .scorecard-card {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 24px;
+            box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+        }
+        .scorecard-hero {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 28px;
+            padding: 20px 24px;
+            background: #0f172a;
+            border-radius: 10px;
+            border: 1px solid #334155;
+            margin-bottom: 24px;
+            flex-wrap: wrap;
+        }
+        .score-badge-circle {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            width: 112px;
+            height: 112px;
+            border-radius: 50%;
+            color: #ffffff;
+            font-weight: 800;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.45);
+            flex-shrink: 0;
+            border: 3.5px solid rgba(255, 255, 255, 0.25);
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
+        }
+        .score-badge-number {
+            font-size: 2.2rem;
+            line-height: 1;
+            letter-spacing: -0.03em;
+        }
+        .score-badge-label {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            opacity: 0.95;
+            margin-top: 3px;
+            font-weight: 700;
+        }
+        .score-hero-details { flex: 1; min-width: 260px; }
+        .score-hero-title { font-size: 1.35rem; font-weight: 700; color: #f8fafc; margin: 0 0 6px 0; }
+        .score-hero-subtitle { font-size: 13.5px; color: #94a3b8; margin: 0 0 14px 0; }
+        .score-stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
+            gap: 12px;
+        }
+        .score-stat-box {
+            background: rgba(30, 41, 59, 0.65);
+            border: 1px solid #334155;
+            border-radius: 8px;
+            padding: 9px 12px;
+        }
+        .score-stat-val {
+            font-size: 1.05rem;
+            font-weight: 700;
+            color: #f8fafc;
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .score-stat-key { font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.04em; }
+
+        .eligibility-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 5px 12px;
+            border-radius: 9999px;
+            font-size: 12px;
+            font-weight: 700;
+            margin-top: 10px;
+        }
+        .eligibility-pill.eligible {
+            background: rgba(16, 185, 129, 0.15);
+            color: #34d399;
+            border: 1px solid rgba(16, 185, 129, 0.35);
+        }
+        .eligibility-pill.ineligible {
+            background: rgba(239, 68, 68, 0.15);
+            color: #f87171;
+            border: 1px solid rgba(239, 68, 68, 0.35);
+        }
+
+        .normative-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        @media (max-width: 900px) { .normative-grid { grid-template-columns: 1fr; } }
+        .normative-card {
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 10px;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+        .normative-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+        .normative-pill {
+            padding: 3px 10px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 800;
+            letter-spacing: 0.05em;
+        }
+        .normative-pill.must { background: rgba(239, 68, 68, 0.18); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.4); }
+        .normative-pill.should { background: rgba(245, 158, 11, 0.18); color: #fde047; border: 1px solid rgba(245, 158, 11, 0.4); }
+        .normative-pill.may { background: rgba(59, 130, 246, 0.18); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.4); }
+        .normative-percent {
+            font-size: 1.45rem;
+            font-weight: 800;
+            color: #f8fafc;
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .normative-progress-bg {
+            width: 100%;
+            height: 8px;
+            background: #1e293b;
+            border-radius: 9999px;
+            overflow: hidden;
+            margin-bottom: 12px;
+        }
+        .normative-progress-fill { height: 100%; border-radius: 9999px; transition: width 0.4s ease; }
+        .fill-must { background: linear-gradient(90deg, #ef4444, #10b981); }
+        .fill-should { background: linear-gradient(90deg, #f59e0b, #10b981); }
+        .fill-may { background: linear-gradient(90deg, #3b82f6, #10b981); }
+        .normative-details {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            color: #94a3b8;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+        .normative-details strong { color: #f8fafc; }
+
+        .capabilities-section { margin-bottom: 24px; }
+        .section-subtitle {
+            font-size: 11px;
+            font-weight: 700;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+        .capabilities-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(235px, 1fr));
+            gap: 12px;
+        }
+        .capability-tile {
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            padding: 12px 14px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            transition: border-color 0.15s;
+        }
+        .capability-tile:hover { border-color: #475569; }
+        .cap-title { font-size: 13px; font-weight: 700; color: #f8fafc; margin-bottom: 2px; }
+        .cap-rfc { font-size: 11px; color: #94a3b8; margin-bottom: 8px; font-family: 'JetBrains Mono', monospace; }
+        .cap-status-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 3px 8px;
+            border-radius: 9999px;
+            font-size: 11px;
+            font-weight: 700;
+            width: fit-content;
+        }
+        .cap-compliant { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.35); }
+        .cap-partial { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.35); }
+        .cap-unsupported { background: rgba(100, 116, 139, 0.15); color: #94a3b8; border: 1px solid rgba(100, 116, 139, 0.3); }
+        .cap-meta {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 11.5px;
+            color: #94a3b8;
+            margin-top: 8px;
+        }
+
+        .matrix-details {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 10px;
+            margin-bottom: 0;
+            overflow: hidden;
+        }
+        .matrix-summary {
+            cursor: pointer;
+            padding: 16px 20px;
+            background: #0f172a;
+            font-size: 1.05rem;
+            font-weight: 700;
+            color: #f8fafc;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            user-select: none;
+            border-bottom: 1px solid transparent;
+            transition: background 0.15s, border-color 0.15s;
+            list-style: none;
+        }
+        .matrix-summary::-webkit-details-marker { display: none; }
+        .matrix-details[open] .matrix-summary { border-bottom-color: #334155; }
+        .matrix-summary:hover { background: #141f33; }
+        .matrix-summary-content { display: flex; align-items: center; gap: 12px; }
+        .matrix-chevron { width: 18px; height: 18px; transition: transform 0.2s ease; }
+        .matrix-details[open] .matrix-chevron { transform: rotate(90deg); }
+        .matrix-body { padding: 20px; background: #111827; }
+
+        .rfc-summary-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .rfc-summary-card {
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            padding: 10px 14px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+        .rfc-summary-card:hover, .rfc-summary-card.active {
+            border-color: #3b82f6;
+            background: rgba(59, 130, 246, 0.1);
+        }
+        .rfc-card-title { font-size: 12px; font-weight: 700; color: #f8fafc; margin-bottom: 4px; }
+        .rfc-card-score { font-size: 1.15rem; font-weight: 800; color: #38bdf8; font-family: 'JetBrains Mono', monospace; }
+        .rfc-card-sub { font-size: 11px; color: #94a3b8; }
+
+        .matrix-controls-bar {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+        .matrix-search-input {
+            background: #0f172a;
+            border: 1px solid #334155;
+            color: #f8fafc;
+            padding: 8px 14px;
+            border-radius: 6px;
+            font-size: 13px;
+            width: min(340px, 100%);
+            outline: none;
+            transition: border-color 0.15s;
+        }
+        .matrix-search-input:focus { border-color: #3b82f6; }
+        .filter-button-group { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+        .filter-btn {
+            padding: 5px 11px;
+            border-radius: 6px;
+            border: 1px solid #334155;
+            background: #0f172a;
+            color: #94a3b8;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+        .filter-btn:hover { color: #f8fafc; background: #1e293b; }
+        .filter-btn.active { background: #2563eb; color: #ffffff; border-color: #3b82f6; }
+
+        .matrix-table tr.highlight-row td {
+            background: rgba(59, 130, 246, 0.28) !important;
+            transition: background 0.6s ease;
+        }
+        .req-id-cell { font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 12px; color: #60a5fa; white-space: nowrap; }
+        .req-title-cell { font-size: 13px; line-height: 1.45; color: #e2e8f0; max-width: 460px; }
+        .req-rfc-section { font-size: 11px; color: #94a3b8; margin-top: 2px; }
+        .normative-tag {
+            display: inline-block;
+            padding: 2px 7px;
+            border-radius: 4px;
+            font-size: 10.5px;
+            font-weight: 800;
+            letter-spacing: 0.04em;
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .normative-tag.must { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }
+        .normative-tag.should { background: rgba(245, 158, 11, 0.15); color: #facc15; border: 1px solid rgba(245, 158, 11, 0.3); }
+        .normative-tag.may { background: rgba(59, 130, 246, 0.15); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.3); }
+
+        .test-id-pills { display: flex; flex-wrap: wrap; gap: 4px; }
+        .test-id-pill {
+            display: inline-flex;
+            align-items: center;
+            background: #0f172a;
+            border: 1px solid #334155;
+            color: #cbd5e1;
+            border-radius: 4px;
+            padding: 2px 6px;
+            font-size: 11px;
+            font-family: 'JetBrains Mono', monospace;
+            text-decoration: none;
+            transition: all 0.15s ease;
+        }
+        .test-id-pill:hover { border-color: #3b82f6; color: #93c5fd; text-decoration: none; }
+
+        .specref-badge-container { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+        .specref-badge-pill {
+            display: inline-flex;
+            align-items: center;
+            background: rgba(37, 99, 235, 0.12);
+            color: #93c5fd;
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-radius: 4px;
+            padding: 1px 7px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            font-weight: 600;
+            text-decoration: none;
+            transition: all 0.15s ease;
+            user-select: none;
+        }
+        .specref-badge-pill:hover {
+            background: rgba(37, 99, 235, 0.28);
+            color: #ffffff;
+            border-color: #60a5fa;
+            text-decoration: none;
+            box-shadow: 0 0 8px rgba(59, 130, 246, 0.4);
+        }
+
+        /* Action bar publish buttons */
+        .btn-publish-action {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            background: #2563eb;
+            color: #ffffff;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            border: 1px solid #3b82f6;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            box-shadow: 0 1px 3px rgba(37, 99, 235, 0.3);
+        }
+        .btn-publish-action:hover {
+            background: #1d4ed8;
+            border-color: #2563eb;
+            box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+        }
+        .btn-publish-disabled {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            background: #1e293b;
+            color: #64748b;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            border: 1px solid #334155;
+            cursor: not-allowed;
+            opacity: 0.75;
+        }
+        .btn-published-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            background: rgba(16, 185, 129, 0.15);
+            color: #34d399;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            border: 1px solid rgba(16, 185, 129, 0.4);
+            text-decoration: none;
+            transition: all 0.15s ease;
+        }
+        .btn-published-link:hover {
+            background: rgba(16, 185, 129, 0.25);
+            color: #6ee7b7;
+            text-decoration: none;
+        }
+
+        /* Published Banner Card */
+        .published-banner-card {
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, #1e293b 70%);
+            border: 1px solid rgba(16, 185, 129, 0.35);
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .published-banner-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            flex-wrap: wrap;
+            margin-bottom: 16px;
+        }
+        .published-badge-group { display: flex; align-items: center; gap: 14px; }
+        .published-icon-circle {
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            background: rgba(16, 185, 129, 0.15);
+            border: 1px solid rgba(16, 185, 129, 0.35);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+        .status-published {
+            background: rgba(16, 185, 129, 0.2);
+            color: #34d399;
+            border: 1px solid rgba(16, 185, 129, 0.4);
+        }
+        .published-action-links { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .btn-public-report {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 7px 14px;
+            background: #10b981;
+            color: #ffffff;
+            font-size: 13px;
+            font-weight: 700;
+            border-radius: 6px;
+            text-decoration: none;
+            transition: background 0.15s;
+        }
+        .btn-public-report:hover { background: #059669; color: #ffffff; text-decoration: none; }
+        .btn-pr-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 7px 14px;
+            background: #334155;
+            color: #f8fafc;
+            font-size: 13px;
+            font-weight: 600;
+            border-radius: 6px;
+            border: 1px solid #475569;
+            text-decoration: none;
+            transition: background 0.15s;
+        }
+        .btn-pr-link:hover { background: #475569; color: #ffffff; text-decoration: none; }
+        .published-meta-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 12px;
+            background: #0f172a;
+            padding: 14px 18px;
+            border-radius: 8px;
+            border: 1px solid #334155;
+            margin-bottom: 16px;
+        }
+        .pub-meta-key {
+            font-size: 11px;
+            font-weight: 700;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            display: block;
+            margin-bottom: 2px;
+        }
+        .pub-meta-val { font-size: 13.5px; color: #f8fafc; font-weight: 600; }
+        .badge-embed-section {
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            padding: 14px 18px;
+        }
+        .badge-embed-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .snippet-box {
+            display: flex;
+            align-items: center;
+            background: #0b1220;
+            border: 1px solid #334155;
+            border-radius: 6px;
+            padding: 6px 10px;
+            gap: 10px;
+        }
+        .snippet-code {
+            flex: 1;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            color: #38bdf8;
+            white-space: nowrap;
+            overflow-x: auto;
+            background: transparent;
+            padding: 4px;
+        }
+        .btn-copy-snippet {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            background: #334155;
+            color: #f8fafc;
+            border: 1px solid #475569;
+            border-radius: 5px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s;
+            white-space: nowrap;
+        }
+        .btn-copy-snippet:hover { background: #475569; color: #fff; }
+        .btn-copy-snippet.copied { background: #059669; border-color: #10b981; color: #ffffff; }
+
+        /* Ineligibility Banner */
+        .ineligibility-banner-card {
+            background: rgba(239, 68, 68, 0.08);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            border-radius: 10px;
+            padding: 18px 20px;
+            margin-bottom: 20px;
+        }
+        .ineligibility-icon-circle {
+            width: 38px;
+            height: 38px;
+            border-radius: 50%;
+            background: rgba(239, 68, 68, 0.15);
+            border: 1px solid rgba(239, 68, 68, 0.35);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+        .status-ineligible {
+            background: rgba(239, 68, 68, 0.15);
+            color: #f87171;
+            border: 1px solid rgba(239, 68, 68, 0.35);
+        }
+
+        /* Modal Overlay & Dialog */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(11, 18, 32, 0.85);
+            -webkit-backdrop-filter: blur(8px);
+            backdrop-filter: blur(8px);
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            overflow-y: auto;
+        }
+        .modal-dialog {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 14px;
+            padding: 26px 30px;
+            box-shadow: 0 25px 60px rgba(0, 0, 0, 0.7);
+            color: #f8fafc;
+            width: 100%;
+            max-width: 680px;
+            max-height: 90vh;
+            overflow-y: auto;
+            animation: modal-appear 0.2s ease-out;
+        }
+        @keyframes modal-appear {
+            from { opacity: 0; transform: scale(0.96) translateY(10px); }
+            to { opacity: 1; transform: scale(1) translateY(0); }
+        }
+        .modal-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            margin-bottom: 18px;
+            border-bottom: 1px solid #334155;
+            padding-bottom: 14px;
+        }
+        .modal-header-icon {
+            width: 38px;
+            height: 38px;
+            border-radius: 8px;
+            background: rgba(37, 99, 235, 0.15);
+            border: 1px solid rgba(59, 130, 246, 0.35);
+            color: #60a5fa;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+        .modal-close-btn {
+            background: transparent;
+            border: none;
+            color: #94a3b8;
+            font-size: 24px;
+            line-height: 1;
+            cursor: pointer;
+            padding: 0;
+            transition: color 0.15s;
+        }
+        .modal-close-btn:hover { color: #f8fafc; }
+        .modal-sanitization-notice {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 12px 14px;
+            background: rgba(16, 185, 129, 0.08);
+            border: 1px solid rgba(16, 185, 129, 0.28);
+            border-radius: 8px;
+            color: #cbd5e1;
+            font-size: 13px;
+            line-height: 1.45;
+            margin-bottom: 20px;
+        }
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 14px 18px;
+            margin-bottom: 20px;
+        }
+        @media (max-width: 640px) { .form-grid { grid-template-columns: 1fr; } }
+        .form-group { display: flex; flex-direction: column; gap: 5px; }
+        .form-group.full-width { grid-column: 1 / -1; }
+        .form-group label {
+            font-size: 11px;
+            font-weight: 700;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .form-group label .required { color: #f87171; margin-left: 2px; }
+        .form-group input[type="text"],
+        .form-group input[type="url"],
+        .select-input {
+            padding: 9px 12px;
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 6px;
+            color: #f8fafc;
+            font-size: 13.5px;
+            font-family: inherit;
+            outline: none;
+            transition: border-color 0.15s, box-shadow 0.15s;
+        }
+        .form-group input:focus, .select-input:focus {
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+        }
+        .field-hint { font-size: 11.5px; color: #64748b; line-height: 1.35; }
+        .checkbox-group { margin-top: 4px; }
+        .checkbox-label {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 13.5px;
+            color: #e2e8f0;
+            cursor: pointer;
+            user-select: none;
+            font-weight: 500;
+        }
+        .checkbox-label input[type="checkbox"] { width: 16px; height: 16px; accent-color: #2563eb; cursor: pointer; }
+        .modal-scorecard-preview {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 12px;
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 6px;
+        }
+        .preview-score-pill {
+            padding: 3px 10px;
+            border-radius: 9999px;
+            color: #ffffff;
+            font-size: 12px;
+            font-weight: 700;
+        }
+        .preview-caps { font-size: 12.5px; color: #94a3b8; font-weight: 600; }
+        .modal-footer {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 12px;
+            border-top: 1px solid #334155;
+            padding-top: 16px;
+        }
+        .btn-secondary {
+            padding: 9px 18px;
+            background: #334155;
+            color: #f8fafc;
+            border: 1px solid #475569;
+            border-radius: 6px;
+            font-size: 13.5px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .btn-secondary:hover { background: #475569; color: #fff; }
+        .btn-publish-submit {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 9px 20px;
+            background: #2563eb;
+            color: #ffffff;
+            border: 1px solid #3b82f6;
+            border-radius: 6px;
+            font-size: 13.5px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .btn-publish-submit:hover {
+            background: #1d4ed8;
+            box-shadow: 0 0 12px rgba(59, 130, 246, 0.5);
+        }
+        .btn-publish-submit:disabled { opacity: 0.6; cursor: wait; }
     </style>
 </head>
 <body>
@@ -542,6 +1300,16 @@
     </div>
 
     <th:block th:unless="${runNotFound}">
+        <div th:if="${successMessage}" class="card" style="background-color: rgba(16, 185, 129, 0.15); border-color: rgba(16, 185, 129, 0.35); color: #34d399; padding: 12px 16px; margin-bottom: 16px; display: flex; align-items: center; gap: 10px;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><path d="m9 12 2 2 4-4"></path></svg>
+            <span th:text="${successMessage}"></span>
+        </div>
+
+        <div th:if="${errorMessage}" class="card" style="background-color: rgba(239, 68, 68, 0.15); border-color: rgba(239, 68, 68, 0.35); color: #f87171; padding: 12px 16px; margin-bottom: 16px; display: flex; align-items: center; gap: 10px;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+            <span th:text="${errorMessage}"></span>
+        </div>
+
         <div th:if="${infoMessage}" class="card" style="background-color: rgba(34, 197, 94, 0.15); border-color: rgba(34, 197, 94, 0.3); color: #4ade80; padding: 12px 16px; margin-bottom: 16px;">
             <span th:text="${infoMessage}"></span>
         </div>
@@ -551,12 +1319,144 @@
             <span>This compliance test suite is currently running. Results will update automatically.</span>
         </div>
 
-        <div class="card">
+        <div th:if="${isPublishing != null and isPublishing}" class="running-banner">
+            <div class="mini-spinner"></div>
+            <span>Publishing compliance report to the Compliance Directory...</span>
+        </div>
+
+        <!-- Published on scimsandbox.net Banner -->
+        <div th:if="${publication != null or (isPublished != null and isPublished)}" class="card published-banner-card">
+            <div class="published-banner-header">
+                <div class="published-badge-group">
+                    <div class="published-icon-circle">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><path d="m9 12 2 2 4-4"></path></svg>
+                    </div>
+                    <div>
+                        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                            <h2 style="margin: 0; font-size: 1.22rem; font-weight: 700; color: #f8fafc;">Published on scimsandbox.net Compliance Directory</h2>
+                            <span class="status-badge status-published">Verified Directory Record</span>
+                        </div>
+                        <p style="margin: 4px 0 0; font-size: 13.5px; color: #94a3b8;">
+                            This run is permanently published in the public compliance directory. It is protected against the 10-run auto-pruning limit.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="published-action-links">
+                    <a th:if="${publication != null and publication.reportUrl != null}" th:href="${publication.reportUrl}" target="_blank" rel="noopener noreferrer" class="btn-public-report">
+                        <span>View Public Report</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+                    </a>
+                    <a th:if="${publication != null and publication.prUrl != null and !publication.pendingReservation}" th:href="${publication.prUrl}" target="_blank" rel="noopener noreferrer" class="btn-pr-link">
+                        <span>GitHub Pull Request</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"></circle><circle cx="6" cy="6" r="3"></circle><path d="M13 6h3a2 2 0 0 1 2 2v7"></path><line x1="6" y1="9" x2="6" y2="21"></line></svg>
+                    </a>
+                </div>
+            </div>
+
+            <!-- Publication Metadata -->
+            <div class="published-meta-grid" th:if="${publication != null}">
+                <div class="pub-meta-item">
+                    <span class="pub-meta-key">Product</span>
+                    <span class="pub-meta-val" th:text="${publication.productName + ' ' + publication.productVersion}">Product v1.0</span>
+                </div>
+                <div class="pub-meta-item" th:if="${publication.vendorName != null and !#strings.isEmpty(publication.vendorName)}">
+                    <span class="pub-meta-key">Vendor / Org</span>
+                    <span class="pub-meta-val" th:text="${publication.vendorName}">Vendor</span>
+                </div>
+                <div class="pub-meta-item">
+                    <span class="pub-meta-key">License</span>
+                    <span class="pub-meta-val" th:text="${publication.licenseType}">Apache-2.0</span>
+                </div>
+                <div class="pub-meta-item">
+                    <span class="pub-meta-key">Published At</span>
+                    <span class="pub-meta-val" th:text="${#temporals.format(publication.publishedAt, 'yyyy-MM-dd HH:mm:ssXXX')}">2026-10-23</span>
+                </div>
+                <div class="pub-meta-item" th:if="${publication.showSubmitter}">
+                    <span class="pub-meta-key">Verified Submitter</span>
+                    <span class="pub-meta-val" th:text="${publication.createdByEmail}">user@example.com</span>
+                </div>
+            </div>
+
+            <!-- Badge Embed Snippet Box -->
+            <div class="badge-embed-section" th:if="${publication != null}">
+                <div class="badge-embed-header">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="9" y1="21" x2="9" y2="9"></line></svg>
+                        <strong style="font-size: 13px; color: #f8fafc;">Embed Compliance Badge in README.md</strong>
+                    </div>
+                    <div class="badge-preview">
+                        <span style="font-size: 11px; color: #94a3b8; text-transform: uppercase; font-weight: 700; margin-right: 6px;">Live Badge:</span>
+                        <img th:src="${publication.badgeUrl}" alt="SCIM 2.0 Compliance" style="height: 20px; vertical-align: middle;">
+                    </div>
+                </div>
+
+                <div class="snippet-box">
+                    <code class="snippet-code" id="markdown-badge-snippet" th:text="${'[![SCIM 2.0 Compliance](' + publication.badgeUrl + ')](' + publication.reportUrl + ')'}">[![SCIM 2.0 Compliance](https://scimsandbox.net/compliance/badges/xxx.svg)](https://scimsandbox.net/compliance/?run=xxx)</code>
+                    <button type="button" class="btn-copy-snippet" id="copy-badge-markdown-btn" data-snippet-target="markdown-badge-snippet">
+                        <svg class="copy-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                        <span>Copy Markdown</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Ineligibility Banner -->
+        <div th:if="${(publication == null and (isPublished == null or !isPublished) and (isPublishing == null or !isPublishing)) and (scorecard != null and !scorecard.publishEligible)}" class="card ineligibility-banner-card">
+            <div style="display: flex; align-items: flex-start; gap: 14px;">
+                <div class="ineligibility-icon-circle">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                </div>
+                <div style="flex: 1;">
+                    <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                        <h3 style="margin: 0; font-size: 1.05rem; font-weight: 700; color: #fca5a5;">Not Eligible for Directory Publication</h3>
+                        <span class="status-badge status-ineligible">Ineligible</span>
+                    </div>
+                    <p style="margin: 6px 0 0; font-size: 13.5px; color: #e2e8f0; line-height: 1.5;" th:text="${scorecard.publishIneligibilityReason != null ? scorecard.publishIneligibilityReason : ('Core RFC Conformance score is below the minimum ' + (minPublishScore != null ? minPublishScore : 50) + '% publishing threshold.')}">
+                        Core RFC Conformance score is below the minimum publishing threshold.
+                    </p>
+                    <div style="margin-top: 10px; font-size: 12.5px; color: #94a3b8;">
+                        <span th:text="${'Directory Publication Criteria: (1) Run status must be completed (PASSED or FAILED), and (2) Core RFC Conformance score must be ≥ ' + (minPublishScore != null ? minPublishScore : 50) + '%.'}">Directory Publication Criteria: (1) Run status must be completed (PASSED or FAILED), and (2) Core RFC Conformance score must be &ge; 50%.</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card" th:if="${run != null}">
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
                 <h1 style="margin: 0;">Compliance Run Result</h1>
-                <div style="display: flex; gap: 10px;">
+                <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
                     <a th:href="@{/}" class="btn-link">← Back to compliance runs</a>
                     <a th:href="@{/runs/{id}/export(id=${run.id})}" class="btn-link">↓ Export as JSON</a>
+
+                    <!-- 1. Publish Button: Eligible & Unpublished -->
+                    <button th:if="${(publication == null and (isPublished == null or !isPublished) and (isPublishing == null or !isPublishing)) and (scorecard != null and scorecard.publishEligible)}"
+                            type="button" id="open-publish-modal-btn" class="btn-publish-action">
+                        <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"></path><path d="M12 12v9"></path><path d="m8 17 4 4 4-4"></path></svg>
+                        <span>Publish to Directory</span>
+                    </button>
+
+                    <!-- 2. Publish Button: Ineligible & Unpublished (Disabled with Tooltip) -->
+                    <button th:if="${(publication == null and (isPublished == null or !isPublished) and (isPublishing == null or !isPublishing)) and (scorecard != null and !scorecard.publishEligible)}"
+                            type="button" class="btn-publish-disabled" disabled th:data-tooltip="${scorecard.publishIneligibilityReason}">
+                        <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                        <span>Publish to Directory</span>
+                    </button>
+
+                    <!-- 2b. Publish Button: Publishing in Progress (Disabled) -->
+                    <button th:if="${isPublishing != null and isPublishing}"
+                            type="button" class="btn-publish-disabled" disabled data-tooltip="A publication for this validation run is currently in progress.">
+                        <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"></path><path d="M12 12v9"></path><path d="m8 17 4 4 4-4"></path></svg>
+                        <span>Publishing...</span>
+                    </button>
+
+                    <!-- 3. Link to Public Report when already Published -->
+                    <a th:if="${publication != null or (isPublished != null and isPublished)}"
+                       th:href="${publication != null and publication.reportUrl != null ? publication.reportUrl : ('https://scimsandbox.net/compliance/?run=' + run.id)}"
+                       target="_blank" rel="noopener noreferrer" class="btn-published-link">
+                        <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><path d="m9 12 2 2 4-4"></path></svg>
+                        <span>View on Directory ↗</span>
+                    </a>
                 </div>
             </div>
             <div class="meta">
@@ -568,6 +1468,293 @@
                 <div><span class="key">Status</span> <span class="status-badge" th:text="${run.status}" th:classappend="${'status-' + #strings.toLowerCase(run.status)}">status</span></div>
                 <div><span class="key">Result</span> <span class="val" th:text="${run.passedTests + ' passed / ' + run.failedTests + ' failed' + (run.status != 'ERROR' and run.totalTests > run.passedTests + run.failedTests ? ' / ' + (run.totalTests - run.passedTests - run.failedTests) + ' skipped' : '') + ' / ' + run.totalTests + ' total'}">summary</span></div>
             </div>
+        </div>
+
+        <!-- Compliance Scorecard Card -->
+        <div class="card scorecard-card" th:if="${scorecard != null}">
+            <!-- Hero Conformance Score Header -->
+            <div class="scorecard-hero"
+                 th:classappend="${scorecard.colourGradient != null ? 'glow-' + #strings.toLowerCase(#strings.replace(scorecard.colourGradient.name(), '_', '-')) : ''}">
+                <!-- Score Circle Badge -->
+                <div class="score-badge-circle"
+                     th:classappend="${scorecard.colourGradient != null ? 'gradient-' + #strings.toLowerCase(#strings.replace(scorecard.colourGradient.name(), '_', '-')) : 'gradient-emerald'}"
+                     th:style="${scorecard.colourGradient != null ? 'background: ' + scorecard.colourGradient.cssLinearGradient() : ''}">
+                    <span class="score-badge-number" th:text="${scorecard.coreScore + '%'}">100%</span>
+                    <span class="score-badge-label" th:text="${scorecard.colourGradient != null ? scorecard.colourGradient.getLabel() : 'Score'}">Excellent</span>
+                </div>
+
+                <!-- Hero Details & Metadata -->
+                <div class="score-hero-details">
+                    <h2 class="score-hero-title">SCIM 2.0 Compliance Scorecard</h2>
+                    <p class="score-hero-subtitle">
+                        Requirement-weighted conformance across RFC 7643, RFC 7644, RFC 9865 &amp; RFC 9967
+                    </p>
+
+                    <!-- Quick Stats Grid -->
+                    <div class="score-stats-grid">
+                        <div class="score-stat-box">
+                            <div class="score-stat-val" th:text="${scorecard.coreScore + '%'}">100%</div>
+                            <div class="score-stat-key">Core Conformance</div>
+                        </div>
+                        <div class="score-stat-box">
+                            <div class="score-stat-val" th:text="${scorecard.activeRequirementsCount + ' / ' + scorecard.catalogRequirementsTotal}">147 / 157</div>
+                            <div class="score-stat-key">Active Requirements</div>
+                        </div>
+                        <div class="score-stat-box">
+                            <div class="score-stat-val" th:text="${scorecard.compliantCapabilitiesCount + ' / ' + scorecard.totalCapabilitiesCount}">10 / 10</div>
+                            <div class="score-stat-key">Capabilities Compliant</div>
+                        </div>
+                        <div class="score-stat-box">
+                            <div class="score-stat-val" th:text="${#numbers.formatDecimal((scorecard.mustBreakdown.earnedPoints + scorecard.shouldBreakdown.earnedPoints + scorecard.mayBreakdown.earnedPoints), 1, 0) + ' / ' + #numbers.formatDecimal((scorecard.mustBreakdown.totalPoints + scorecard.shouldBreakdown.totalPoints + scorecard.mayBreakdown.totalPoints), 1, 0)}">434 / 434</div>
+                            <div class="score-stat-key">Normative Points</div>
+                        </div>
+                    </div>
+
+                    <!-- Publish Eligibility Status -->
+                    <div style="margin-top: 12px;">
+                        <span th:if="${scorecard.publishEligible}" class="eligibility-pill eligible">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                            <span th:text="${'Eligible for Public Directory (Score ≥ ' + (minPublishScore != null ? minPublishScore : 50) + '%)'}">Eligible for Public Directory (Score ≥ 50%)</span>
+                        </span>
+                        <span th:unless="${scorecard.publishEligible}" class="eligibility-pill ineligible"
+                              th:title="${scorecard.publishIneligibilityReason}">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                            <span th:text="${scorecard.publishIneligibilityReason != null ? scorecard.publishIneligibilityReason : 'Ineligible for Public Directory'}">Ineligible for Public Directory</span>
+                        </span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Normative Breakdown: MUST, SHOULD, MAY -->
+            <div class="normative-grid">
+                <!-- MUST Breakdown (Weight: 3) -->
+                <div class="normative-card" th:if="${scorecard.mustBreakdown != null}">
+                    <div>
+                        <div class="normative-header">
+                            <span class="normative-pill must">MUST (Weight 3x)</span>
+                            <span class="normative-percent" th:text="${scorecard.mustBreakdown.activeRequirements > 0 ? scorecard.mustBreakdown.conformancePercent + '%' : 'N/A'}">100%</span>
+                        </div>
+                        <div class="normative-progress-bg">
+                            <div class="normative-progress-fill fill-must"
+                                 th:style="'width: ' + ${scorecard.mustBreakdown.activeRequirements > 0 ? scorecard.mustBreakdown.conformancePercent : 0} + '%;'"></div>
+                        </div>
+                    </div>
+                    <div class="normative-details">
+                        <span>Compliant: <strong th:text="${scorecard.mustBreakdown.compliantRequirements}">134</strong></span>
+                        <span th:if="${scorecard.mustBreakdown.partialRequirements > 0}">Partial: <strong style="color: #facc15;" th:text="${scorecard.mustBreakdown.partialRequirements}">0</strong></span>
+                        <span th:if="${scorecard.mustBreakdown.failedRequirements > 0}">Failed: <strong style="color: #f87171;" th:text="${scorecard.mustBreakdown.failedRequirements}">0</strong></span>
+                        <span>Active: <strong th:text="${scorecard.mustBreakdown.activeRequirements}">134</strong></span>
+                        <span>Points: <strong th:text="${#numbers.formatDecimal(scorecard.mustBreakdown.earnedPoints, 1, 1) + ' / ' + #numbers.formatDecimal(scorecard.mustBreakdown.totalPoints, 1, 1)}">402.0 / 402.0</strong></span>
+                    </div>
+                </div>
+
+                <!-- SHOULD Breakdown (Weight: 2) -->
+                <div class="normative-card" th:if="${scorecard.shouldBreakdown != null}">
+                    <div>
+                        <div class="normative-header">
+                            <span class="normative-pill should">SHOULD (Weight 2x)</span>
+                            <span class="normative-percent" th:text="${scorecard.shouldBreakdown.activeRequirements > 0 ? scorecard.shouldBreakdown.conformancePercent + '%' : 'N/A'}">100%</span>
+                        </div>
+                        <div class="normative-progress-bg">
+                            <div class="normative-progress-fill fill-should"
+                                 th:style="'width: ' + ${scorecard.shouldBreakdown.activeRequirements > 0 ? scorecard.shouldBreakdown.conformancePercent : 0} + '%;'"></div>
+                        </div>
+                    </div>
+                    <div class="normative-details">
+                        <span>Compliant: <strong th:text="${scorecard.shouldBreakdown.compliantRequirements}">9</strong></span>
+                        <span th:if="${scorecard.shouldBreakdown.partialRequirements > 0}">Partial: <strong style="color: #facc15;" th:text="${scorecard.shouldBreakdown.partialRequirements}">0</strong></span>
+                        <span th:if="${scorecard.shouldBreakdown.failedRequirements > 0}">Failed: <strong style="color: #f87171;" th:text="${scorecard.shouldBreakdown.failedRequirements}">0</strong></span>
+                        <span>Active: <strong th:text="${scorecard.shouldBreakdown.activeRequirements}">9</strong></span>
+                        <span>Points: <strong th:text="${#numbers.formatDecimal(scorecard.shouldBreakdown.earnedPoints, 1, 1) + ' / ' + #numbers.formatDecimal(scorecard.shouldBreakdown.totalPoints, 1, 1)}">18.0 / 18.0</strong></span>
+                    </div>
+                </div>
+
+                <!-- MAY / OPTIONAL Breakdown (Weight: 1) -->
+                <div class="normative-card" th:if="${scorecard.mayBreakdown != null}">
+                    <div>
+                        <div class="normative-header">
+                            <span class="normative-pill may">MAY (Weight 1x)</span>
+                            <span class="normative-percent" th:text="${scorecard.mayBreakdown.activeRequirements > 0 ? scorecard.mayBreakdown.conformancePercent + '%' : 'N/A'}">100%</span>
+                        </div>
+                        <div class="normative-progress-bg">
+                            <div class="normative-progress-fill fill-may"
+                                 th:style="'width: ' + ${scorecard.mayBreakdown.activeRequirements > 0 ? scorecard.mayBreakdown.conformancePercent : 0} + '%;'"></div>
+                        </div>
+                    </div>
+                    <div class="normative-details">
+                        <span>Compliant: <strong th:text="${scorecard.mayBreakdown.compliantRequirements}">4</strong></span>
+                        <span th:if="${scorecard.mayBreakdown.partialRequirements > 0}">Partial: <strong style="color: #facc15;" th:text="${scorecard.mayBreakdown.partialRequirements}">0</strong></span>
+                        <span th:if="${scorecard.mayBreakdown.failedRequirements > 0}">Failed: <strong style="color: #f87171;" th:text="${scorecard.mayBreakdown.failedRequirements}">0</strong></span>
+                        <span>Active: <strong th:text="${scorecard.mayBreakdown.activeRequirements}">4</strong></span>
+                        <span>Points: <strong th:text="${#numbers.formatDecimal(scorecard.mayBreakdown.earnedPoints, 1, 1) + ' / ' + #numbers.formatDecimal(scorecard.mayBreakdown.totalPoints, 1, 1)}">4.0 / 4.0</strong></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 10 Optional Capabilities Section -->
+            <div class="capabilities-section" th:if="${scorecard.capabilities != null and !#lists.isEmpty(scorecard.capabilities)}">
+                <div class="section-subtitle">
+                    <span>Optional SCIM Capabilities (<span th:text="${scorecard.compliantCapabilitiesCount + '/' + scorecard.totalCapabilitiesCount}">10/10</span> compliant · <span th:text="${scorecard.supportedCapabilitiesCount + '/' + scorecard.totalCapabilitiesCount}">10/10</span> supported)</span>
+                    <span>Non-executed capabilities do not penalize Core RFC Conformance %</span>
+                </div>
+                <div class="capabilities-grid">
+                    <div th:each="cap : ${scorecard.capabilities}" class="capability-tile">
+                        <div>
+                            <div class="cap-title" th:text="${cap.displayName}">PATCH Operations</div>
+                            <div class="cap-rfc" th:text="${cap.rfcSection}">RFC 7644 §3.5.2</div>
+                        </div>
+                        <div>
+                            <!-- Status Pill -->
+                            <div>
+                                <span th:if="${cap.status.name() == 'SUPPORTED_COMPLIANT' or cap.status.name() == 'SUPPORTED'}"
+                                      class="cap-status-pill cap-compliant">✓ Supported &amp; Compliant</span>
+                                <span th:if="${cap.status.name() == 'SUPPORTED_PARTIAL'}"
+                                      class="cap-status-pill cap-partial"
+                                      th:text="'⚠ Supported (' + ${#numbers.formatDecimal(cap.passRate, 1, 0)} + '%)'">⚠ Supported (80%)</span>
+                                <span th:if="${cap.status.name() == 'UNSUPPORTED' or cap.status.name() == 'ABORTED'}"
+                                      class="cap-status-pill cap-unsupported">⊘ Unsupported (Skipped)</span>
+                                <span th:if="${cap.status.name() == 'NOT_EVALUATED'}"
+                                      class="cap-status-pill cap-unsupported">? Not Evaluated</span>
+                            </div>
+                            <!-- Meta Counts -->
+                            <div class="cap-meta">
+                                <span th:if="${cap.executedTests > 0}"
+                                      th:text="${cap.passedTests + '/' + cap.executedTests + ' passed' + (cap.abortedTests > 0 ? ', ' + cap.abortedTests + ' skipped' : '')}">31/31 passed</span>
+                                <span th:if="${cap.executedTests == 0}"
+                                      th:text="${cap.abortedTests + ' tests skipped'}">23 tests skipped</span>
+                                <span th:if="${cap.totalTests > 0}"
+                                      th:text="${cap.totalTests + ' total tests'}">31 total tests</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Collapsible RFC Requirement Traceability Matrix -->
+            <details class="matrix-details" id="rfc-matrix-details" open>
+                <summary class="matrix-summary">
+                    <div class="matrix-summary-content">
+                        <svg class="matrix-chevron" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                        <span>RFC Requirement Traceability Matrix (<span th:text="${scorecard.catalogRequirementsTotal}">157</span> Requirements)</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; font-size: 11.5px;">
+                        <span class="status-badge status-success" th:text="${scorecard.activeRequirementsCount + ' Active'}">147 Active</span>
+                        <span class="status-badge status-aborted" th:text="${scorecard.untestedRequirementsCount + ' Untested'}">10 Untested</span>
+                        <span class="status-badge status-error" th:if="${scorecard.excludedRequirementsCount > 0}" th:text="${scorecard.excludedRequirementsCount + ' Excluded'}">0 Excluded</span>
+                    </div>
+                </summary>
+                <div class="matrix-body">
+                    <!-- Per-RFC Summary Cards -->
+                    <div class="rfc-summary-cards" th:if="${scorecard.rfcSummaries != null}">
+                        <div class="rfc-summary-card active" onclick="filterMatrixByRfc('ALL', this)">
+                            <div class="rfc-card-title">All RFC Catalogs</div>
+                            <div class="rfc-card-score" th:text="${scorecard.activeRequirementsCount > 0 ? scorecard.coreScore + '%' : 'N/A'}">100%</div>
+                            <div class="rfc-card-sub" th:text="${scorecard.catalogRequirementsTotal + ' total requirements'}">157 total requirements</div>
+                        </div>
+                        <div class="rfc-summary-card" th:if="${scorecard.rfcSummaries.containsKey('7643')}" onclick="filterMatrixByRfc('7643', this)">
+                            <div class="rfc-card-title">RFC 7643: Schemas</div>
+                            <div class="rfc-card-score" th:text="${scorecard.rfcSummaries.get('7643').activeRequirements > 0 ? scorecard.rfcSummaries.get('7643').conformancePercent + '%' : 'N/A'}">100%</div>
+                            <div class="rfc-card-sub" th:text="${scorecard.rfcSummaries.get('7643').activeRequirements + '/' + scorecard.rfcSummaries.get('7643').totalRequirements + ' active reqs'}">48 active reqs</div>
+                        </div>
+                        <div class="rfc-summary-card" th:if="${scorecard.rfcSummaries.containsKey('7644')}" onclick="filterMatrixByRfc('7644', this)">
+                            <div class="rfc-card-title">RFC 7644: Protocol</div>
+                            <div class="rfc-card-score" th:text="${scorecard.rfcSummaries.get('7644').activeRequirements > 0 ? scorecard.rfcSummaries.get('7644').conformancePercent + '%' : 'N/A'}">100%</div>
+                            <div class="rfc-card-sub" th:text="${scorecard.rfcSummaries.get('7644').activeRequirements + '/' + scorecard.rfcSummaries.get('7644').totalRequirements + ' active reqs'}">96 active reqs</div>
+                        </div>
+                        <div class="rfc-summary-card" th:if="${scorecard.rfcSummaries.containsKey('9865')}" onclick="filterMatrixByRfc('9865', this)">
+                            <div class="rfc-card-title">RFC 9865: Cursor</div>
+                            <div class="rfc-card-score" th:text="${scorecard.rfcSummaries.get('9865').activeRequirements > 0 ? scorecard.rfcSummaries.get('9865').conformancePercent + '%' : 'N/A'}">100%</div>
+                            <div class="rfc-card-sub" th:text="${scorecard.rfcSummaries.get('9865').activeRequirements + '/' + scorecard.rfcSummaries.get('9865').totalRequirements + ' active reqs'}">8 active reqs</div>
+                        </div>
+                        <div class="rfc-summary-card" th:if="${scorecard.rfcSummaries.containsKey('9967')}" onclick="filterMatrixByRfc('9967', this)">
+                            <div class="rfc-card-title">RFC 9967: Async</div>
+                            <div class="rfc-card-score" th:text="${scorecard.rfcSummaries.get('9967').activeRequirements > 0 ? scorecard.rfcSummaries.get('9967').conformancePercent + '%' : 'N/A'}">100%</div>
+                            <div class="rfc-card-sub" th:text="${scorecard.rfcSummaries.get('9967').activeRequirements + '/' + scorecard.rfcSummaries.get('9967').totalRequirements + ' active reqs'}">5 active reqs</div>
+                        </div>
+                    </div>
+
+                    <!-- Search and Filtering Bar -->
+                    <div class="matrix-controls-bar">
+                        <input type="text"
+                               id="matrixSearchInput"
+                               class="matrix-search-input"
+                               placeholder="Filter by ID, RFC section, title, or test ID..."
+                               onkeyup="filterMatrixRows()">
+
+                        <div class="filter-button-group">
+                            <button type="button" class="filter-btn active" onclick="filterMatrixByStatus('ALL', this)">All</button>
+                            <button type="button" class="filter-btn" onclick="filterMatrixByStatus('COMPLIANT', this)">Compliant</button>
+                            <button type="button" class="filter-btn" onclick="filterMatrixByStatus('PARTIAL', this)">Partial</button>
+                            <button type="button" class="filter-btn" onclick="filterMatrixByStatus('FAILED', this)">Failed</button>
+                            <button type="button" class="filter-btn" onclick="filterMatrixByStatus('UNTESTED', this)">Untested</button>
+                            <button type="button" class="filter-btn" onclick="filterMatrixByStatus('EXCLUDED_CAPABILITY', this)">Excluded</button>
+                        </div>
+                    </div>
+
+                    <!-- Traceability Matrix Table -->
+                    <div class="table-responsive" style="max-height: 600px; overflow-y: auto;">
+                        <table class="overview-table matrix-table" id="rfcMatrixTable">
+                            <thead>
+                            <tr>
+                                <th style="min-width: 170px;">Requirement ID</th>
+                                <th style="min-width: 320px;">Specification Requirement</th>
+                                <th style="min-width: 90px;">Level</th>
+                                <th style="min-width: 110px;">Capability</th>
+                                <th style="min-width: 110px;">Status</th>
+                                <th style="min-width: 90px;">Weight</th>
+                                <th style="min-width: 140px;">Mapped Tests</th>
+                            </tr>
+                            </thead>
+                            <tbody>
+                            <tr th:each="req : ${scorecard.requirementMatrix}"
+                                th:id="${'req-' + req.id}"
+                                th:attr="data-rfc=${req.rfc}, data-status=${req.status}">
+                                <td class="req-id-cell">
+                                    <span th:text="${req.id}">RFC7644-4-R1</span>
+                                    <div class="req-rfc-section" th:text="${'RFC ' + req.rfc + ' §' + req.section}">RFC 7644 §4</div>
+                                </td>
+                                <td class="req-title-cell" th:text="${req.title}">
+                                    Service providers MUST support discovery endpoints...
+                                </td>
+                                <td>
+                                    <span class="normative-tag"
+                                          th:classappend="${#strings.toLowerCase(req.level)}"
+                                          th:text="${req.level}">MUST</span>
+                                </td>
+                                <td>
+                                    <span th:if="${req.capability == 'none' or req.capability == ''}" style="color: #94a3b8; font-size: 12px;">Core SCIM</span>
+                                    <span th:if="${req.capability != 'none' and req.capability != ''}"
+                                          style="color: #38bdf8; font-family: 'JetBrains Mono', monospace; font-size: 12px;"
+                                          th:text="${req.capability}">patch</span>
+                                </td>
+                                <td>
+                                    <span th:if="${req.status == 'COMPLIANT'}" class="status-badge status-success">COMPLIANT</span>
+                                    <span th:if="${req.status == 'PARTIAL'}" class="status-badge status-aborted"
+                                          th:title="${req.passedTests + '/' + req.executedTests + ' tests passed'}">PARTIAL</span>
+                                    <span th:if="${req.status == 'FAILED'}" class="status-badge status-failed">FAILED</span>
+                                    <span th:if="${req.status == 'UNTESTED'}" class="status-badge status-aborted" style="background: rgba(148, 163, 184, 0.15); color: #94a3b8; border-color: rgba(148, 163, 184, 0.3);">UNTESTED</span>
+                                    <span th:if="${req.status == 'EXCLUDED_CAPABILITY'}" class="status-badge" style="background: rgba(100, 116, 139, 0.15); color: #94a3b8; border-color: rgba(100, 116, 139, 0.3);">EXCLUDED</span>
+                                </td>
+                                <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px;">
+                                    <span th:text="${#numbers.formatDecimal(req.earnedWeight, 1, 1) + ' / ' + req.weight + ' pts'}">3.0 / 3 pts</span>
+                                </td>
+                                <td>
+                                    <div th:if="${req.mappedTestIds != null and !#lists.isEmpty(req.mappedTestIds)}" class="test-id-pills">
+                                        <a th:each="tid : ${req.mappedTestIds}"
+                                           th:href="${'#test-row-' + tid}"
+                                           class="test-id-pill"
+                                           th:text="${tid}"
+                                           th:title="${'Jump to test ' + tid}">DSC_01</a>
+                                    </div>
+                                    <span th:if="${req.mappedTestIds == null or #lists.isEmpty(req.mappedTestIds)}"
+                                          style="color: #64748b; font-size: 11px;">None (untested)</span>
+                                </td>
+                            </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </details>
         </div>
 
         <div class="card">
@@ -588,7 +1775,22 @@
                     <th:block th:each="test : ${tests}">
                         <tr>
                             <td th:text="${test.className}" style="font-family: 'JetBrains Mono', monospace; font-size: 12.5px;">specs.A1_ServiceDiscoverySpec</td>
-                            <td th:text="${test.displayName}">ServiceProviderConfig response is valid and contains required fields</td>
+                            <td th:id="${'test-row-' + (T(de.palsoftware.scim.validator.ui.service.ComplianceScoreService).extractTestId(test.displayName) != null ? T(de.palsoftware.scim.validator.ui.service.ComplianceScoreService).extractTestId(test.displayName) : test.id)}">
+                                <div style="font-weight: 600; margin-bottom: 4px;" th:text="${test.displayName}">ServiceProviderConfig response is valid and contains required fields</div>
+                                <div class="specref-badge-container"
+                                     th:with="testId=${T(de.palsoftware.scim.validator.ui.service.ComplianceScoreService).extractTestId(test.displayName)},
+                                              mapping=${testSpecMappings != null ? (testId != null ? testSpecMappings.get(testId) : testSpecMappings.get(test.displayName)) : null},
+                                              refs=${mapping != null ? mapping.specRefs : null}">
+                                    <th:block th:if="${refs != null and !#lists.isEmpty(refs)}">
+                                        <a th:each="ref : ${refs}"
+                                           th:href="${'#req-' + ref}"
+                                           class="specref-badge-pill"
+                                           th:text="${ref}"
+                                           th:title="${'Trace to RFC Requirement: ' + ref}"
+                                           data-tooltip="View requirement in Traceability Matrix">RFC7644-4-R1</a>
+                                    </th:block>
+                                </div>
+                            </td>
                             <td>
                                 <span class="status-badge" th:text="${test.status}" th:classappend="${'status-' + #strings.toLowerCase(test.status)}">SUCCESS</span>
                             </td>
@@ -634,6 +1836,109 @@
                 </table>
             </div>
         </div>
+        <!-- Publish Modal Overlay -->
+        <div id="publish-modal-overlay" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="publish-modal-title" style="display: none;">
+            <div class="modal-dialog">
+                <div class="modal-header">
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <div class="modal-header-icon">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"></path><path d="M12 12v9"></path><path d="m8 17 4 4 4-4"></path></svg>
+                        </div>
+                        <div>
+                            <h3 id="publish-modal-title" style="margin: 0; font-size: 1.25rem; font-weight: 700; color: #f8fafc;">Publish to SCIM Compliance Directory</h3>
+                            <p style="margin: 3px 0 0; font-size: 13px; color: #94a3b8;">Publish verified compliance scorecard to scimsandbox.net with 1-click GitHub commit</p>
+                        </div>
+                    </div>
+                    <button type="button" id="publish-modal-close" class="modal-close-btn" aria-label="Close modal">&times;</button>
+                </div>
+
+                <div class="modal-sanitization-notice">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><path d="m9 12 2 2 4-4"></path></svg>
+                    <div>
+                        <strong style="color: #a7f3d0;">Guaranteed Report Sanitization:</strong> Only requirement scores, test IDs, capability matrix, and the public product metadata entered below (Product Name, Vendor, Project URL, License) are published. <u>Zero</u> target URLs, authorization headers, or HTTP request/response payloads are ever shared or saved to GitHub.
+                    </div>
+                </div>
+
+                <form id="publish-form" method="post" th:action="@{/runs/{id}/publish(id=${run.id})}">
+                    <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="publish-product-name">Product Name <span class="required">*</span></label>
+                            <input type="text" id="publish-product-name" name="productName" th:value="${publishForm != null ? publishForm.productName : ''}" required maxlength="120" placeholder="e.g. Apache Syncope, Keycloak, PingDirectory" autocomplete="off">
+                            <span class="field-hint">Public display name shown on the compliance leaderboard.</span>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="publish-product-slug">Product Slug (URL Identifier) <span class="required">*</span></label>
+                            <input type="text" id="publish-product-slug" name="productSlug" th:value="${publishForm != null ? publishForm.productSlug : ''}" required maxlength="120" pattern="[a-z0-9]+(?:-[a-z0-9]+)*" placeholder="e.g. apache-syncope, keycloak" autocomplete="off">
+                            <span class="field-hint">Lowercase, hyphen-separated. Used in directory URLs and badge paths.</span>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="publish-product-version">Product Version <span class="required">*</span></label>
+                            <input type="text" id="publish-product-version" name="productVersion" th:value="${publishForm != null ? publishForm.productVersion : ''}" required maxlength="60" pattern="[A-Za-z0-9][A-Za-z0-9._+-]{0,59}" placeholder="e.g. 3.0.0, 2026.1, v1.4-rc2" autocomplete="off">
+                            <span class="field-hint">Specific release, branch, or build validated in this run.</span>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="publish-vendor-name">Vendor / Organization</label>
+                            <input type="text" id="publish-vendor-name" name="vendorName" th:value="${publishForm != null ? publishForm.vendorName : ''}" maxlength="120" placeholder="e.g. The Apache Software Foundation, Red Hat" autocomplete="off">
+                            <span class="field-hint">Optional vendor, maintainer, or parent organization.</span>
+                        </div>
+
+                        <div class="form-group full-width">
+                            <label for="publish-project-url">Project / Homepage URL</label>
+                            <input type="url" id="publish-project-url" name="projectUrl" th:value="${publishForm != null ? publishForm.projectUrl : ''}" maxlength="500" placeholder="https://syncope.apache.org or https://github.com/..." autocomplete="off">
+                            <span class="field-hint">Public repository, documentation, or product website.</span>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="publish-license-type">License Type <span class="required">*</span></label>
+                            <select id="publish-license-type" name="licenseType" required class="select-input">
+                                <option value="" disabled th:selected="${publishForm == null or publishForm.licenseType == null or publishForm.licenseType == ''}">Select License...</option>
+                                <option value="Apache-2.0" th:selected="${publishForm != null and publishForm.licenseType == 'Apache-2.0'}">Apache-2.0 (Apache License 2.0)</option>
+                                <option value="MIT" th:selected="${publishForm != null and publishForm.licenseType == 'MIT'}">MIT (MIT License)</option>
+                                <option value="GPL-3.0" th:selected="${publishForm != null and publishForm.licenseType == 'GPL-3.0'}">GPL-3.0 (GNU General Public License v3.0)</option>
+                                <option value="BSD-3-Clause" th:selected="${publishForm != null and publishForm.licenseType == 'BSD-3-Clause'}">BSD-3-Clause (3-Clause BSD License)</option>
+                                <option value="MPL-2.0" th:selected="${publishForm != null and publishForm.licenseType == 'MPL-2.0'}">MPL-2.0 (Mozilla Public License 2.0)</option>
+                                <option value="AGPL-3.0" th:selected="${publishForm != null and publishForm.licenseType == 'AGPL-3.0'}">AGPL-3.0 (GNU Affero General Public License)</option>
+                                <option value="LGPL-3.0" th:selected="${publishForm != null and publishForm.licenseType == 'LGPL-3.0'}">LGPL-3.0 (GNU Lesser General Public License)</option>
+                                <option value="Proprietary" th:selected="${publishForm != null and publishForm.licenseType == 'Proprietary'}">Proprietary (Closed Source)</option>
+                                <option value="Commercial" th:selected="${publishForm != null and publishForm.licenseType == 'Commercial'}">Commercial (Commercial License)</option>
+                                <option value="Other" th:selected="${publishForm != null and publishForm.licenseType == 'Other'}">Other / Custom Open Source</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Scorecard Summary</label>
+                            <div class="modal-scorecard-preview">
+                                <span class="preview-score-pill" th:if="${scorecard != null}" th:style="${'background: ' + scorecard.colourGradient().cssLinearGradient()}" th:text="${scorecard.coreScore() + '%'}">98%</span>
+                                <span class="preview-caps" th:if="${scorecard != null}" th:text="${scorecard.compliantCapabilitiesCount() + '/' + scorecard.totalCapabilitiesCount() + ' capabilities'}">8/10 capabilities</span>
+                                <span class="preview-caps" th:if="${scorecard == null}">—</span>
+                            </div>
+                            <span class="field-hint">Locked from verified test execution results.</span>
+                        </div>
+
+                        <div class="form-group full-width checkbox-group">
+                            <label class="checkbox-label" for="publish-show-submitter">
+                                <input type="checkbox" id="publish-show-submitter" name="showSubmitter" value="true" th:checked="${publishForm != null and publishForm.showSubmitter}">
+                                <span>Show my email (<strong th:text="${currentUser}">user@example.com</strong>) on the directory report as the verified submitter</span>
+                            </label>
+                            <span class="field-hint" style="margin-left: 26px;">If unchecked, submission is attributed anonymously as "Community Verified".</span>
+                        </div>
+                    </div>
+
+                    <div class="modal-footer">
+                        <button type="button" id="publish-modal-cancel" class="btn-secondary">Cancel</button>
+                        <button type="submit" id="publish-submit-btn" class="btn-publish-submit">
+                            <svg class="publish-submit-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"></path><path d="M12 12v9"></path><path d="m8 17 4 4 4-4"></path></svg>
+                            <span>Publish Compliance Report</span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
     </th:block>
 </div>
 <script>
@@ -658,6 +1963,207 @@
         if (statusBadge && statusBadge.textContent.trim().toUpperCase() === 'RUNNING') {
             setTimeout(function () {
                 window.location.reload();
+            }, 2500);
+        }
+    })();
+
+    // ─── Milestone 4: Matrix Filtering & Jump Navigation ───
+    let currentRfcFilter = 'ALL';
+    let currentStatusFilter = 'ALL';
+
+    function filterMatrixByRfc(rfc, el) {
+        currentRfcFilter = rfc;
+        if (el) {
+            document.querySelectorAll('.rfc-summary-card').forEach(c => c.classList.remove('active'));
+            el.classList.add('active');
+        }
+        filterMatrixRows();
+    }
+
+    function filterMatrixByStatus(status, el) {
+        currentStatusFilter = status;
+        if (el) {
+            document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+            el.classList.add('active');
+        }
+        filterMatrixRows();
+    }
+
+    function filterMatrixRows() {
+        const input = document.getElementById('matrixSearchInput');
+        const query = (input ? input.value : '').toLowerCase().trim();
+        const rows = document.querySelectorAll('#rfcMatrixTable tbody tr');
+
+        rows.forEach(row => {
+            const rfc = row.getAttribute('data-rfc') || '';
+            const status = row.getAttribute('data-status') || '';
+            const text = row.textContent.toLowerCase();
+
+            const matchesRfc = (currentRfcFilter === 'ALL' || rfc === currentRfcFilter);
+            const matchesStatus = (currentStatusFilter === 'ALL' || status === currentStatusFilter);
+            const matchesQuery = (!query || text.includes(query));
+
+            if (matchesRfc && matchesStatus && matchesQuery) {
+                row.style.display = '';
+            } else {
+                row.style.display = 'none';
+            }
+        });
+    }
+
+    // Bidirectional Smooth Scrolling & Highlighting
+    document.addEventListener('DOMContentLoaded', () => {
+        // From Spock Test Table to RFC Matrix
+        document.querySelectorAll('.specref-badge-pill').forEach(pill => {
+            pill.addEventListener('click', (e) => {
+                const href = pill.getAttribute('href');
+                if (href && href.startsWith('#req-')) {
+                    const matrixDetails = document.getElementById('rfc-matrix-details');
+                    if (matrixDetails && !matrixDetails.open) {
+                        matrixDetails.open = true;
+                    }
+                    const targetRow = document.querySelector(href);
+                    if (targetRow) {
+                        targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        targetRow.classList.add('highlight-row');
+                        setTimeout(() => targetRow.classList.remove('highlight-row'), 2400);
+                    }
+                }
+            });
+        });
+
+        // From RFC Matrix to Spock Test Table
+        document.querySelectorAll('.test-id-pill').forEach(pill => {
+            pill.addEventListener('click', (e) => {
+                const href = pill.getAttribute('href');
+                if (href && href.startsWith('#test-row-')) {
+                    const targetCell = document.querySelector(href);
+                    if (targetCell) {
+                        const targetRow = targetCell.closest('tr');
+                        if (targetRow) {
+                            targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            targetRow.classList.add('highlight-row');
+                            setTimeout(() => targetRow.classList.remove('highlight-row'), 2400);
+                        }
+                    }
+                }
+            });
+        });
+    });
+
+    // ─── Milestone 4: Publish Modal & Copy Badge Handling ───
+    (function() {
+        var openBtn = document.getElementById('open-publish-modal-btn');
+        var modal = document.getElementById('publish-modal-overlay');
+        var closeBtn = document.getElementById('publish-modal-close');
+        var cancelBtn = document.getElementById('publish-modal-cancel');
+        var nameInput = document.getElementById('publish-product-name');
+        var slugInput = document.getElementById('publish-product-slug');
+        var form = document.getElementById('publish-form');
+        var submitBtn = document.getElementById('publish-submit-btn');
+        var copyBtn = document.getElementById('copy-badge-markdown-btn');
+
+        var slugManuallyEdited = false;
+
+        function openModal() {
+            if (modal) {
+                modal.style.display = 'flex';
+                if (nameInput) nameInput.focus();
+            }
+        }
+
+        function closeModal() {
+            if (modal) modal.style.display = 'none';
+        }
+
+        if (openBtn) openBtn.addEventListener('click', openModal);
+        if (closeBtn) closeBtn.addEventListener('click', closeModal);
+        if (cancelBtn) cancelBtn.addEventListener('click', closeModal);
+
+        if (modal) {
+            modal.addEventListener('click', function(e) {
+                if (e.target === modal) closeModal();
+            });
+        }
+
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape' && modal && modal.style.display === 'flex') {
+                closeModal();
+            }
+        });
+
+        if (slugInput) {
+            slugInput.addEventListener('input', function() {
+                slugManuallyEdited = slugInput.value.trim().length > 0;
+            });
+        }
+
+        if (nameInput && slugInput) {
+            nameInput.addEventListener('input', function() {
+                if (!slugManuallyEdited) {
+                    slugInput.value = nameInput.value.toString().toLowerCase()
+                        .trim()
+                        .replace(/[\s_]+/g, '-')
+                        .replace(/[^\w\-]+/g, '')
+                        .replace(/\-\-+/g, '-')
+                        .replace(/^-+/, '')
+                        .replace(/-+$/, '');
+                }
+            });
+        }
+
+        if (form && submitBtn) {
+            form.addEventListener('submit', function() {
+                submitBtn.disabled = true;
+                submitBtn.innerHTML = '<span class="mini-spinner" style="width:14px;height:14px;border-width:2px;border-top-color:#fff;"></span> Publishing...';
+            });
+        }
+
+        if (copyBtn) {
+            copyBtn.addEventListener('click', function() {
+                var snippetEl = document.getElementById('markdown-badge-snippet');
+                if (snippetEl) {
+                    copyTextToClipboard(snippetEl.textContent.trim(), copyBtn);
+                }
+            });
+        }
+
+        function copyTextToClipboard(text, btn) {
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(text).then(function() {
+                    showCopiedFeedback(btn);
+                }).catch(function() {
+                    fallbackCopy(text, btn);
+                });
+            } else {
+                fallbackCopy(text, btn);
+            }
+        }
+
+        function fallbackCopy(text, btn) {
+            var textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.style.position = 'fixed';
+            textarea.style.left = '-9999px';
+            document.body.appendChild(textarea);
+            textarea.focus();
+            textarea.select();
+            try {
+                document.execCommand('copy');
+                showCopiedFeedback(btn);
+            } catch (err) {
+                console.error('Failed to copy text', err);
+            }
+            document.body.removeChild(textarea);
+        }
+
+        function showCopiedFeedback(btn) {
+            var originalHtml = btn.innerHTML;
+            btn.innerHTML = '✓ Copied!';
+            btn.classList.add('copied');
+            setTimeout(function() {
+                btn.innerHTML = originalHtml;
+                btn.classList.remove('copied');
             }, 2500);
         }
     })();

@@ -25,7 +25,7 @@ This repository contains two surfaces of the SCIM sandbox:
 - the SCIM provider implementation you validate against
 - the validator spec source code or bootstrap logic
 - the database migrations for `validator_mgmt_users`, `validation_run`,
-  `validation_test_result`, or `validation_http_exchange`
+  `validation_run_publication`, `validation_test_result`, or `validation_http_exchange`
 - Docker Compose, Kubernetes manifests, or the old multi-module reactor layout
 
 ## Features
@@ -41,8 +41,8 @@ This repository contains two surfaces of the SCIM sandbox:
 
 | Area | Routes |
 | --- | --- |
-| UI | `/`, `/runs/{runId}` |
-| Run actions | `POST /runs`, `POST /runs/{runId}/delete` |
+| UI | `/`, `/runs/{runId}`, `/playground` |
+| Run actions | `POST /runs`, `POST /runs/{runId}/delete`, `POST /runs/{runId}/publish` |
 | Auth | `POST /logout` |
 | Actuator | `GET /actuator/health` with `X-API-KEY` |
 
@@ -120,6 +120,20 @@ For local development, that usually means either:
 | `APP_SECURITY_OIDC_ROLE_CLAIM` | no | Claim used to extract roles. Default: `https://scimplayground.dev/roles` |
 | `APP_SECURITY_OIDC_ADMIN_ROLE` | no | Role value mapped to `ROLE_ADMIN`. Default: `admin` |
 | `APP_SECURITY_OIDC_USER_ROLE` | no | Role value mapped to `ROLE_USER`. Default: `user` |
+| `APP_RUNS_MAX_PUBLISHED_PER_USER` | no | Maximum published compliance runs retained per user. Default: `50` |
+| `APP_GITHUB_PUBLISH_ENABLED` | no | Enables 1-click GitHub compliance directory publishing (`app.github.publish.enabled`). Default: `false` |
+| `APP_GITHUB_APP_ID` | no | GitHub App ID for compliance publishing (`app.github.app-id`) |
+| `APP_GITHUB_INSTALLATION_ID` | no | GitHub App installation ID (`app.github.installation-id`) |
+| `APP_GITHUB_PRIVATE_KEY` | no | PEM-encoded RSA private key for GitHub App (`app.github.private-key`) |
+| `APP_GITHUB_REPO` | no | Target GitHub repository (`app.github.repo`). Default: `scimsandbox/scim-website` |
+| `APP_GITHUB_BRANCH` | no | Target GitHub branch (`app.github.branch`). Default: `main` |
+| `APP_GITHUB_API_URL` | no | GitHub API base URL (`app.github.api-url`). Default: `https://api.github.com` |
+| `APP_COMPLIANCE_MIN_PUBLISH_SCORE` | no | Minimum Core RFC Conformance percentage required to publish (`app.compliance.min-publish-score`). Default: `50` |
+| `APP_COMPLIANCE_MIN_CORE_COVERAGE_PERCENT` | no | Minimum testable Core requirement execution coverage percentage required to publish (`app.compliance.min-core-coverage-percent`). Default: `50` |
+| `APP_COMPLIANCE_PUBLIC_BASE_URL` | no | Public compliance directory base URL (`app.compliance.public-base-url`). Default: `https://scimsandbox.net` |
+| `APP_COMPLIANCE_SAMPLE_RUN_IDS` | no | Comma-separated UUIDs of official sample fixture runs (`app.compliance.sample-run-ids`). |
+| `APP_COMPLIANCE_RESERVATION_TIMEOUT_SECONDS` | no | Seconds before a pending publication reservation is treated as stale and retryable (`app.compliance.reservation-timeout-seconds`). Default: `300` |
+| `APP_COMPLIANCE_RESERVATION_CLEANUP_INTERVAL_MS` | no | Milliseconds between background sweeps that purge stale pending publication reservations (`app.compliance.reservation-cleanup-interval-ms`). Default: `60000` |
 | `SERVER_PORT` | no | Spring Boot server port. Default: `8082` |
 
 ## Running Locally
@@ -225,6 +239,17 @@ release triggers the Docker publish workflow for `edipal/scim-validator-ui`.
 - `ValidationRunService` launches the suite and persists run/test/exchange data
 - `SecurityConfig` configures OIDC login, logout, CSRF, and the actuator API-key filter
 - `src/main/resources/templates` contains the Thymeleaf UI
+- **Published Run Immutability**: Published compliance runs cannot be deleted
+  via `POST /runs/{runId}/delete` so that public leaderboard links on
+  `scimsandbox.net` and product-slug ownership records remain permanently
+  intact.
+- **Single-Instance Concurrency Assumption (`replicas: 1`)**: Quota
+  enforcement, product-slug reservation locking (`reservationLock`), and
+  in-memory publication claim/reconciliation tracking (`claimedRunTimestamps`,
+  `pendingReconciliations`) assume a single application instance (`replicas: 1`
+  in Kubernetes). Scaling horizontally beyond 1 replica requires migrating
+  these guards to database-level pessimistic locking (`SELECT ... FOR UPDATE`)
+  or distributed locks.
 
 ## Contributing
 

@@ -11,12 +11,17 @@ import de.palsoftware.scim.validator.ui.dto.ValidationTestResultView;
 import de.palsoftware.scim.validator.ui.model.ValidationMgmtUser;
 import de.palsoftware.scim.validator.ui.model.ValidationHttpExchange;
 import de.palsoftware.scim.validator.ui.model.ValidationRun;
+import de.palsoftware.scim.validator.ui.model.ValidationRunPublication;
 import de.palsoftware.scim.validator.ui.model.ValidationTestResult;
+import de.palsoftware.scim.validator.ui.model.spec.CompliancePublicationResult;
+import de.palsoftware.scim.validator.ui.model.spec.CompliancePublishRequest;
 import de.palsoftware.scim.validator.ui.repo.ValidationMgmtUserRepository;
 import de.palsoftware.scim.validator.ui.repo.ValidationHttpExchangeRepository;
+import de.palsoftware.scim.validator.ui.repo.ValidationRunPublicationRepository;
 import de.palsoftware.scim.validator.ui.repo.ValidationRunRepository;
 import de.palsoftware.scim.validator.ui.repo.ValidationTestResultRepository;
 import de.palsoftware.scim.validator.ui.security.TargetUrlPolicy;
+import de.palsoftware.scim.validator.ui.util.Slugifier;
 import org.junit.platform.engine.TestExecutionResult;
 import org.junit.platform.engine.support.descriptor.MethodSource;
 import org.junit.platform.launcher.Launcher;
@@ -30,52 +35,58 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 import static org.junit.platform.engine.discovery.DiscoverySelectors.selectClass;
 
+/**
+ * Service managing SCIM validation run execution, persistence, and compliance publication reservations.
+ *
+ * <p><strong>Concurrency &amp; Deployment Assumption:</strong> Quota enforcement, product-slug ownership
+ * reservation locking ({@code reservationLock}), and in-memory reconciliation tracking
+ * ({@code reconciliationRequiredRunIds}, {@code pendingReconciliations}) are designed for a single
+ * application instance ({@code replicas: 1} in Kubernetes). Scaling horizontally beyond a single replica
+ * requires migrating these guards to database-level pessimistic locking ({@code SELECT ... FOR UPDATE})
+ * or distributed locks.</p>
+ */
 @Service
 @Transactional(readOnly = true)
 public class ValidationRunService {
 
     private static final Logger log = LoggerFactory.getLogger(ValidationRunService.class);
 
-    private static final List<String> SPEC_CLASS_NAMES = List.of(
-            "de.palsoftware.scim.validator.specs.A1_ServiceDiscoverySpec",
-            "de.palsoftware.scim.validator.specs.A2_SchemaValidationSpec",
-            "de.palsoftware.scim.validator.specs.A3_UserCrudSpec",
-            "de.palsoftware.scim.validator.specs.A4_PatchOperationsSpec",
-            "de.palsoftware.scim.validator.specs.A5_FilteringSpec",
-            "de.palsoftware.scim.validator.specs.A5_PaginationSpec",
-            "de.palsoftware.scim.validator.specs.A5_SortingSpec",
-            "de.palsoftware.scim.validator.specs.A6_GroupLifecycleSpec",
-            "de.palsoftware.scim.validator.specs.A7_BulkOperationsSpec",
-            "de.palsoftware.scim.validator.specs.A8_SecurityAndRobustnessSpec",
-            "de.palsoftware.scim.validator.specs.A9_NegativeAndEdgeCasesSpec",
-            "de.palsoftware.scim.validator.specs.A10_CursorPaginationSpec",
-            "de.palsoftware.scim.validator.specs.A11_AsyncOperationsSpec");
-
     private final ValidationRunRepository runRepository;
     private final ValidationMgmtUserRepository mgmtUserRepository;
     private final ValidationTestResultRepository testResultRepository;
     private final ValidationHttpExchangeRepository exchangeRepository;
+    private final ValidationRunPublicationRepository publicationRepository;
     private final ValidationProgressTracker progressTracker;
     private final ExecutorService executorService;
 
@@ -83,16 +94,15 @@ public class ValidationRunService {
             ValidationMgmtUserRepository mgmtUserRepository,
             ValidationTestResultRepository testResultRepository,
             ValidationHttpExchangeRepository exchangeRepository) {
-        this(runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, new ValidationProgressTracker(), Executors.newCachedThreadPool());
+        this(runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, null, new ValidationProgressTracker(), Executors.newCachedThreadPool());
     }
 
-    @Autowired
     public ValidationRunService(ValidationRunRepository runRepository,
             ValidationMgmtUserRepository mgmtUserRepository,
             ValidationTestResultRepository testResultRepository,
             ValidationHttpExchangeRepository exchangeRepository,
             ValidationProgressTracker progressTracker) {
-        this(runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, progressTracker, Executors.newCachedThreadPool());
+        this(runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, null, progressTracker, Executors.newCachedThreadPool());
     }
 
     public ValidationRunService(ValidationRunRepository runRepository,
@@ -101,10 +111,31 @@ public class ValidationRunService {
             ValidationHttpExchangeRepository exchangeRepository,
             ValidationProgressTracker progressTracker,
             ExecutorService executorService) {
+        this(runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, null, progressTracker, executorService);
+    }
+
+    @Autowired
+    public ValidationRunService(ValidationRunRepository runRepository,
+            ValidationMgmtUserRepository mgmtUserRepository,
+            ValidationTestResultRepository testResultRepository,
+            ValidationHttpExchangeRepository exchangeRepository,
+            ValidationRunPublicationRepository publicationRepository,
+            ValidationProgressTracker progressTracker) {
+        this(runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, publicationRepository, progressTracker, Executors.newCachedThreadPool());
+    }
+
+    public ValidationRunService(ValidationRunRepository runRepository,
+            ValidationMgmtUserRepository mgmtUserRepository,
+            ValidationTestResultRepository testResultRepository,
+            ValidationHttpExchangeRepository exchangeRepository,
+            ValidationRunPublicationRepository publicationRepository,
+            ValidationProgressTracker progressTracker,
+            ExecutorService executorService) {
         this.runRepository = runRepository;
         this.mgmtUserRepository = mgmtUserRepository;
         this.testResultRepository = testResultRepository;
         this.exchangeRepository = exchangeRepository;
+        this.publicationRepository = publicationRepository;
         this.progressTracker = progressTracker != null ? progressTracker : new ValidationProgressTracker();
         this.executorService = executorService != null ? executorService : Executors.newCachedThreadPool();
     }
@@ -112,8 +143,150 @@ public class ValidationRunService {
     @Value("${app.runs.max-per-user:10}")
     private int maxRunsPerUser = 10;
 
+    @Value("${app.runs.max-published-per-user:50}")
+    private int maxPublishedRunsPerUser = 50;
+
+    @Value("${app.compliance.public-base-url:https://scimsandbox.net}")
+    private String publicBaseUrl = "https://scimsandbox.net";
+
+    @Value("${app.compliance.reservation-timeout-seconds:300}")
+    private long reservationTimeoutSeconds = 300;
+
+    @Autowired(required = false)
+    private PlatformTransactionManager transactionManager;
+
+    public record PendingReconciliation(
+            String actorEmail,
+            CompliancePublishRequest request,
+            CompliancePublicationResult result
+    ) {}
+
+    private final Set<UUID> reconciliationRequiredRunIds = ConcurrentHashMap.newKeySet();
+    private final Map<UUID, PendingReconciliation> pendingReconciliations = new ConcurrentHashMap<>();
+
+    public void setTransactionManager(PlatformTransactionManager transactionManager) {
+        this.transactionManager = transactionManager;
+    }
+
+    public void markReconciliationRequired(UUID runId) {
+        if (runId != null) {
+            reconciliationRequiredRunIds.add(runId);
+        }
+    }
+
+    public void markReconciliationRequired(
+            UUID runId,
+            String actorEmail,
+            CompliancePublishRequest request,
+            CompliancePublicationResult result) {
+        if (runId != null) {
+            reconciliationRequiredRunIds.add(runId);
+            if (request != null && result != null) {
+                pendingReconciliations.put(runId, new PendingReconciliation(actorEmail, request, result));
+            }
+        }
+    }
+
+    public boolean isReconciliationRequired(UUID runId) {
+        return runId != null && reconciliationRequiredRunIds.contains(runId);
+    }
+
+    public void clearReconciliationRequired(UUID runId) {
+        if (runId != null) {
+            reconciliationRequiredRunIds.remove(runId);
+            pendingReconciliations.remove(runId);
+        }
+    }
+
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    public Optional<CompliancePublicationResult> tryReconcilePendingPublication(ValidationRun run) {
+        if (run == null || run.getId() == null) {
+            return Optional.empty();
+        }
+        synchronized (reservationLock) {
+            UUID runId = run.getId();
+            PendingReconciliation pending = pendingReconciliations.get(runId);
+            return executeInIsolatedTransaction(() -> {
+                ValidationRun managed = resolveManagedRun(run);
+                ValidationRunPublication existing = findExistingPublicationOrReservation(managed);
+                if (run.isPublished() || managed.isPublished()
+                        || (existing != null && !existing.isPendingReservation())) {
+                    clearReconciliationRequired(runId);
+                    if (existing != null && !existing.isPendingReservation()) {
+                        run.setPublication(existing);
+                    }
+                    if (pending != null && pending.result() != null) {
+                        return Optional.of(pending.result());
+                    }
+                    if (existing != null && !existing.isPendingReservation()) {
+                        return Optional.of(CompliancePublicationResult.succeeded(
+                                runId,
+                                existing.getPrUrl(),
+                                existing.getReportUrl(),
+                                existing.getBadgeUrl(),
+                                "reconciled",
+                                existing.getPublishedAt()
+                        ));
+                    }
+                    return Optional.empty();
+                }
+                if (pending == null) {
+                    return Optional.empty();
+                }
+                recordPublication(managed, pending.actorEmail(), pending.request(), pending.result());
+                if (managed != run && managed.getPublication() != null) {
+                    run.setPublication(managed.getPublication());
+                }
+                return Optional.of(pending.result());
+            });
+        }
+    }
+
+    private <T> T executeInIsolatedTransaction(java.util.function.Supplier<T> action) {
+        if (transactionManager != null) {
+            TransactionTemplate txTemplate = new TransactionTemplate(transactionManager);
+            txTemplate.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+            txTemplate.setReadOnly(false);
+            return txTemplate.execute(status -> action.get());
+        }
+        return action.get();
+    }
+
     public int getMaxRunsPerUser() {
         return maxRunsPerUser;
+    }
+
+    public int getMaxPublishedRunsPerUser() {
+        return maxPublishedRunsPerUser;
+    }
+
+    public String getEffectivePublicBaseUrl() {
+        String url = (publicBaseUrl != null && !publicBaseUrl.isBlank()) ? publicBaseUrl.trim() : "https://scimsandbox.net";
+        return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
+    }
+
+    public void setPublicBaseUrl(String publicBaseUrl) {
+        this.publicBaseUrl = publicBaseUrl;
+    }
+
+    public long getReservationTimeoutSeconds() {
+        return reservationTimeoutSeconds;
+    }
+
+    public void setReservationTimeoutSeconds(long reservationTimeoutSeconds) {
+        this.reservationTimeoutSeconds = reservationTimeoutSeconds;
+    }
+
+    public Duration getReservationTimeout() {
+        return Duration.ofSeconds(Math.max(1L, reservationTimeoutSeconds));
+    }
+
+    public boolean isStaleReservation(ValidationRunPublication publication) {
+        if (publication != null && publication.getRunId() != null
+                && reconciliationRequiredRunIds.contains(publication.getRunId())) {
+            return false;
+        }
+        return publication != null && publication.isStalePendingReservation(getReservationTimeout());
     }
 
     public static class ExecutionResult {
@@ -132,19 +305,37 @@ public class ValidationRunService {
         public int getMaxRuns() { return maxRuns; }
     }
 
-    @Transactional
-    public ExecutionResult executeRun(ValidationRunForm form, String actorEmail) {
-        TargetUrlPolicy.validate(form.baseUrl());
+    private boolean pruneOldUnpublishedRuns(String actorEmail) {
         List<ValidationRun> userRuns = runRepository.findOwnedRuns(actorEmail, Sort.by(Sort.Direction.ASC, "executedAt"));
         boolean oldRunDeleted = false;
-        
+
         if (userRuns.size() >= maxRunsPerUser) {
             int toDelete = userRuns.size() - maxRunsPerUser + 1;
             for (int i = 0; i < toDelete; i++) {
-                runRepository.delete(userRuns.get(i));
+                ValidationRun runToDelete = userRuns.get(i);
+                if (runToDelete.isPublished()) {
+                    log.warn("Skipping deletion of published run {} during auto-pruning", runToDelete.getId());
+                    continue;
+                }
+                if (runToDelete.hasPendingReservation()) {
+                    if (!isStaleReservation(runToDelete.getPublication())) {
+                        log.warn("Skipping deletion of run {} with active publication reservation during auto-pruning", runToDelete.getId());
+                        continue;
+                    }
+                    releasePublicationReservation(runToDelete);
+                }
+                clearReconciliationRequired(runToDelete.getId());
+                runRepository.delete(runToDelete);
                 oldRunDeleted = true;
             }
         }
+        return oldRunDeleted;
+    }
+
+    @Transactional
+    public ExecutionResult executeRun(ValidationRunForm form, String actorEmail) {
+        TargetUrlPolicy.validate(form.baseUrl());
+        boolean oldRunDeleted = pruneOldUnpublishedRuns(actorEmail);
 
         int plannedTotal = discoverTestCount(form.baseUrl(), form.authToken());
 
@@ -177,8 +368,7 @@ public class ValidationRunService {
             listener = new ValidationExecutionListener(run, plannedTotal, progressTracker, testResultRepository,
                     exchangeRepository);
             Launcher launcher = LauncherFactory.create();
-            launcher.registerTestExecutionListeners(listener);
-            launcher.execute(buildRequest());
+            executeLauncher(launcher, buildRequest(), listener);
 
             run.setTotalTests(listener.total);
             run.setPassedTests(listener.passed);
@@ -213,16 +403,7 @@ public class ValidationRunService {
     @Transactional
     public ExecutionResult executeRunAsync(ValidationRunForm form, String actorEmail) {
         TargetUrlPolicy.validate(form.baseUrl());
-        List<ValidationRun> userRuns = runRepository.findOwnedRuns(actorEmail, Sort.by(Sort.Direction.ASC, "executedAt"));
-        boolean oldRunDeleted = false;
-        
-        if (userRuns.size() >= maxRunsPerUser) {
-            int toDelete = userRuns.size() - maxRunsPerUser + 1;
-            for (int i = 0; i < toDelete; i++) {
-                runRepository.delete(userRuns.get(i));
-                oldRunDeleted = true;
-            }
-        }
+        boolean oldRunDeleted = pruneOldUnpublishedRuns(actorEmail);
 
         int plannedTotal = discoverTestCount(form.baseUrl(), form.authToken());
 
@@ -293,8 +474,7 @@ public class ValidationRunService {
             );
 
             Launcher launcher = LauncherFactory.create();
-            launcher.registerTestExecutionListeners(listener);
-            launcher.execute(buildRequest());
+            executeLauncher(launcher, buildRequest(), listener);
 
             run.setTotalTests(listener.total);
             run.setPassedTests(listener.passed);
@@ -340,13 +520,13 @@ public class ValidationRunService {
         }
         return runs
                 .stream()
-                .map(ValidationRunView::from)
+                .map(r -> ValidationRunView.from(r, getReservationTimeout()))
                 .toList();
     }
 
     public ValidationRunView getRun(UUID runId, String actorEmail, boolean admin) {
         ValidationRun run = requireRunAccess(runId, actorEmail, admin);
-        return ValidationRunView.from(run);
+        return ValidationRunView.from(run, getReservationTimeout());
     }
 
     public List<ValidationTestResultView> getTestResults(UUID runId, String actorEmail, boolean admin) {
@@ -366,8 +546,453 @@ public class ValidationRunService {
 
     @Transactional
     public void deleteRun(UUID runId, String actorEmail, boolean admin) {
-        requireRunAccess(runId, actorEmail, admin);
+        ValidationRun run = requireRunAccess(runId, actorEmail, admin);
+        boolean publishedInDb = publicationRepository != null
+                && publicationRepository.findById(runId).filter(p -> !p.isPendingReservation()).isPresent();
+        if (run.isPublished() || publishedInDb) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Published compliance runs cannot be deleted because they are linked from the public compliance directory.");
+        }
+        if (isReconciliationRequired(runId)
+                || (run.hasPendingReservation() && !isStaleReservation(run.getPublication()))) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Run publication is currently in progress");
+        }
+        if (publicationRepository != null && (run.getPublication() != null || publicationRepository.existsById(runId))) {
+            if (run.getPublication() != null) {
+                publicationRepository.delete(run.getPublication());
+            } else {
+                publicationRepository.deleteById(runId);
+            }
+            run.setPublication(null);
+        }
+        clearReconciliationRequired(runId);
         runRepository.deleteById(runId);
+    }
+
+    public long countOwnedPublications(String actorEmail) {
+        if (actorEmail == null || publicationRepository == null) {
+            return 0;
+        }
+        return publicationRepository.countOwnedPublications(actorEmail);
+    }
+
+    public List<ValidationRunPublication> listPublishedRuns(String actorEmail, boolean admin) {
+        if (publicationRepository == null) {
+            return List.of();
+        }
+        Sort sort = Sort.by(Sort.Direction.DESC, "publishedAt");
+        List<ValidationRunPublication> raw = admin
+                ? publicationRepository.findAll(sort)
+                : publicationRepository.findOwnedPublications(actorEmail, sort);
+        return raw.stream()
+                .filter(p -> !p.isPendingReservation())
+                .toList();
+    }
+
+    public static final String PENDING_RESERVATION_PR_URL = ValidationRunPublication.PENDING_RESERVATION_PR_URL;
+
+    @EventListener(ApplicationReadyEvent.class)
+    @Scheduled(fixedDelayString = "${app.compliance.reservation-cleanup-interval-ms:60000}")
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    public void cleanupStalePendingReservations() {
+        for (Map.Entry<UUID, PendingReconciliation> entry : pendingReconciliations.entrySet()) {
+            UUID runId = entry.getKey();
+            try {
+                if (runRepository == null) {
+                    continue;
+                }
+                ValidationRun run = runRepository.findById(runId).orElse(null);
+                if (run == null) {
+                    clearReconciliationRequired(runId);
+                    continue;
+                }
+                if (tryReconcilePendingPublication(run).isPresent()) {
+                    log.info("Successfully reconciled pending compliance publication for runId={}", runId);
+                }
+            } catch (Exception ex) {
+                log.debug("Background reconciliation attempt for runId={} did not succeed yet: {}", runId, ex.getMessage());
+            }
+        }
+        try {
+            int purged = purgeStalePendingReservations();
+            if (purged > 0) {
+                log.info("Purged {} stale pending compliance publication reservation(s)", purged);
+            }
+        } catch (Exception ex) {
+            log.debug("Could not purge stale pending compliance publication reservations: {}", ex.getMessage());
+        }
+    }
+
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    public int purgeStalePendingReservations() {
+        if (publicationRepository == null) {
+            return 0;
+        }
+        return executeInIsolatedTransaction(() -> {
+            OffsetDateTime cutoff = OffsetDateTime.now(ZoneOffset.UTC).minus(getReservationTimeout());
+            List<ValidationRunPublication> staleList = publicationRepository.findStalePendingReservations(
+                    PENDING_RESERVATION_PR_URL, cutoff);
+            if (staleList == null || staleList.isEmpty()) {
+                return 0;
+            }
+            int purged = 0;
+            for (ValidationRunPublication stale : staleList) {
+                UUID runId = stale.getRunId();
+                if (runId == null || reconciliationRequiredRunIds.contains(runId)) {
+                    continue;
+                }
+                int deleted = publicationRepository.deleteStalePendingReservationById(
+                        runId, PENDING_RESERVATION_PR_URL, cutoff);
+                if (deleted > 0) {
+                    purged += deleted;
+                    if (runRepository != null) {
+                        runRepository.findById(runId).ifPresent(r -> {
+                            if (r.hasPendingReservation()) {
+                                r.setPublication(null);
+                                runRepository.save(r);
+                            }
+                        });
+                    }
+                }
+            }
+            publicationRepository.flush();
+            return purged;
+        });
+    }
+
+    private final Object reservationLock = new Object();
+
+    public void validatePublishQuota(String actorEmail) {
+        validatePublishQuota(actorEmail, null);
+    }
+
+    public void validatePublishQuota(String actorEmail, UUID excludeRunId) {
+        long currentPublishedCount = countOwnedPublications(actorEmail);
+        long activePendingCount = countActivePendingReservations(actorEmail, excludeRunId);
+        if (currentPublishedCount + activePendingCount >= maxPublishedRunsPerUser) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "User has reached maximum published compliance runs cap (" + maxPublishedRunsPerUser + ").");
+        }
+    }
+
+    private long countActivePendingReservations(String actorEmail, UUID excludeRunId) {
+        if (publicationRepository == null || actorEmail == null || actorEmail.isBlank()) {
+            return 0;
+        }
+        List<ValidationRunPublication> allForUser = publicationRepository
+                .findByCreatedByEmailOrderByPublishedAtDesc(actorEmail);
+        if (allForUser == null) {
+            return 0;
+        }
+        long count = 0;
+        for (ValidationRunPublication p : allForUser) {
+            if (excludeRunId != null && excludeRunId.equals(p.getRunId())) {
+                continue;
+            }
+            if (p.isPendingReservation() && !isStaleReservation(p)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    public void validateProductSlugOwnership(String productSlug, String ownerEmail) {
+        validateProductSlugOwnership(productSlug, ownerEmail, null);
+    }
+
+    public void validateProductSlugOwnership(String productSlug, String ownerEmail, UUID currentRunId) {
+        if (productSlug != null && Slugifier.isUuidFormatted(productSlug)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Product slug '" + productSlug + "' cannot use a UUID format reserved for run badge identifiers.");
+        }
+        if (publicationRepository == null || productSlug == null || productSlug.isBlank()
+                || ownerEmail == null || ownerEmail.isBlank()) {
+            return;
+        }
+        List<ValidationRunPublication> existing = publicationRepository
+                .findByProductSlugIgnoreCaseOrderByPublishedAtDesc(productSlug);
+        if (existing != null) {
+            for (ValidationRunPublication p : existing) {
+                if (currentRunId != null && currentRunId.equals(p.getRunId())) {
+                    continue;
+                }
+                if (p.isPendingReservation() && isStaleReservation(p)) {
+                    continue;
+                }
+                if (p.getCreatedByEmail() != null && !p.getCreatedByEmail().equalsIgnoreCase(ownerEmail)) {
+                    throw new ResponseStatusException(HttpStatus.CONFLICT,
+                            "Product slug '" + productSlug + "' is already owned by another publisher.");
+                }
+            }
+        }
+    }
+
+    public ValidationRun getRunEntity(UUID runId, String actorEmail, boolean admin) {
+        return requireRunAccess(runId, actorEmail, admin);
+    }
+
+    public List<ValidationTestResult> getRawTestResults(UUID runId) {
+        if (testResultRepository == null) {
+            return List.of();
+        }
+        return testResultRepository.findByRunIdOrderByStartedAtAsc(runId);
+    }
+
+    public List<ValidationHttpExchange> getRawExchanges(UUID runId) {
+        if (exchangeRepository == null) {
+            return List.of();
+        }
+        List<ValidationHttpExchange> exchanges = exchangeRepository.findServiceProviderConfigExchangesByRunId(runId);
+        return exchanges != null ? exchanges : List.of();
+    }
+
+    public Optional<ValidationRunPublication> getPublication(UUID runId) {
+        if (publicationRepository == null) {
+            return Optional.empty();
+        }
+        return publicationRepository.findById(runId)
+                .filter(p -> !p.isPendingReservation());
+    }
+
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    public ValidationRunPublication reservePublication(
+            ValidationRun run,
+            String actorEmail,
+            CompliancePublishRequest request) {
+        synchronized (reservationLock) {
+            return executeInIsolatedTransaction(() -> doReservePublication(run, actorEmail, request));
+        }
+    }
+
+    private ValidationRunPublication doReservePublication(
+            ValidationRun run,
+            String actorEmail,
+            CompliancePublishRequest request) {
+        ValidationRun managedRun = resolveManagedRun(run);
+        ValidationRunPublication existing = findExistingPublicationOrReservation(managedRun);
+
+        if (run.isPublished() || managedRun.isPublished()
+                || (existing != null && !existing.isPendingReservation())) {
+            throw new IllegalStateException("Validation run has already been published: " + managedRun.getId());
+        }
+        if (existing != null && existing.isPendingReservation() && !isStaleReservation(existing)) {
+            throw new IllegalStateException("Validation run publication is already in progress: " + managedRun.getId());
+        }
+
+        String ownerEmail = resolveOwnerEmail(managedRun, run, actorEmail);
+        validateOwnerQuotaAndSlug(ownerEmail, request.productSlug(), managedRun.getId());
+
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        ValidationRunPublication reservation;
+        if (existing != null) {
+            OffsetDateTime stalePublishedAt = existing.getPublishedAt();
+            if (publicationRepository != null) {
+                OffsetDateTime cutoff = now.minus(getReservationTimeout());
+                int claimed = publicationRepository.claimStalePendingReservationById(
+                        managedRun.getId(), PENDING_RESERVATION_PR_URL, cutoff, now);
+                if (claimed == 0) {
+                    throw new IllegalStateException("Validation run publication is already in progress: " + managedRun.getId());
+                }
+                managedRun = resolveManagedRun(run);
+                existing = findExistingPublicationOrReservation(managedRun);
+            }
+            log.warn("Reclaiming stale pending publication reservation for runId={} (reserved at {})",
+                    managedRun.getId(), stalePublishedAt);
+            reservation = existing != null ? existing : new ValidationRunPublication();
+            if (existing != null) {
+                reservation.markNotNew();
+            }
+        } else {
+            reservation = new ValidationRunPublication();
+        }
+        populatePublicationMetadata(reservation, managedRun, ownerEmail, request);
+        String baseUrl = getEffectivePublicBaseUrl();
+        reservation.setReportUrl(baseUrl + "/compliance/?run=" + managedRun.getId());
+        reservation.setBadgeUrl(baseUrl + "/compliance/badges/" + managedRun.getId() + ".svg");
+        reservation.setPrUrl(PENDING_RESERVATION_PR_URL);
+        reservation.setPublishedAt(now);
+
+        return persistPublicationAndSyncRun(reservation, managedRun, run);
+    }
+
+    @Transactional
+    public void releasePublicationReservation(ValidationRun run) {
+        if (run == null || run.getId() == null || reconciliationRequiredRunIds.contains(run.getId())) {
+            return;
+        }
+        UUID runId = run.getId();
+        if (runRepository != null) {
+            runRepository.findById(runId).ifPresent(managedRun -> {
+                if (managedRun.hasPendingReservation()) {
+                    managedRun.setPublication(null);
+                    runRepository.save(managedRun);
+                }
+            });
+        }
+        if (publicationRepository != null) {
+            publicationRepository.findById(runId).ifPresent(existing -> {
+                if (existing.isPendingReservation()) {
+                    publicationRepository.deleteById(runId);
+                }
+            });
+        }
+        if (run.hasPendingReservation()) {
+            run.setPublication(null);
+        }
+    }
+
+    @Transactional
+    public boolean touchPublicationReservation(UUID runId) {
+        if (runId == null || publicationRepository == null) {
+            return false;
+        }
+        return publicationRepository.findById(runId)
+                .filter(ValidationRunPublication::isPendingReservation)
+                .map(pub -> {
+                    pub.setPublishedAt(OffsetDateTime.now(ZoneOffset.UTC));
+                    publicationRepository.save(pub);
+                    return true;
+                })
+                .orElse(false);
+    }
+
+    @Transactional
+    public ValidationRunPublication recordPublication(
+            ValidationRun run,
+            String actorEmail,
+            CompliancePublishRequest request,
+            CompliancePublicationResult result) {
+        ValidationRun managedRun = resolveManagedRun(run);
+        ValidationRunPublication existing = findExistingPublicationOrReservation(managedRun);
+        String ownerEmail = resolveOwnerEmail(managedRun, run, actorEmail);
+
+        if (existing != null && existing.isPendingReservation()) {
+            boolean originalShowSubmitter = existing.isShowSubmitter();
+            populatePublicationMetadata(existing, managedRun, ownerEmail, request);
+            if (result != null && result.reconciledCatalogEntry() != null) {
+                applyReconciledCatalogMetadata(existing, result.reconciledCatalogEntry(), originalShowSubmitter);
+            }
+            existing.markNotNew();
+            existing.setReportUrl(result.reportUrl());
+            existing.setBadgeUrl(result.badgeUrl());
+            existing.setPrUrl(result.prUrl());
+            existing.setPublishedAt(result.publishedAt() != null ? result.publishedAt() : OffsetDateTime.now(ZoneOffset.UTC));
+            ValidationRunPublication saved = persistPublicationAndSyncRun(existing, managedRun, run);
+            clearReconciliationRequired(managedRun.getId());
+            return saved;
+        }
+
+        if (run.isPublished() || managedRun.isPublished() || existing != null) {
+            throw new IllegalStateException("Validation run has already been published: " + managedRun.getId());
+        }
+        String effectiveSlug = (result != null && result.reconciledCatalogEntry() != null
+                && result.reconciledCatalogEntry().productSlug() != null)
+                ? result.reconciledCatalogEntry().productSlug()
+                : request.productSlug();
+        validateOwnerQuotaAndSlug(ownerEmail, effectiveSlug, managedRun.getId());
+
+        ValidationRunPublication publication = new ValidationRunPublication();
+        populatePublicationMetadata(publication, managedRun, ownerEmail, request);
+        if (result != null && result.reconciledCatalogEntry() != null) {
+            applyReconciledCatalogMetadata(publication, result.reconciledCatalogEntry(), request.showSubmitter());
+        }
+        publication.setReportUrl(result.reportUrl());
+        publication.setBadgeUrl(result.badgeUrl());
+        publication.setPrUrl(result.prUrl());
+        publication.setPublishedAt(result.publishedAt() != null ? result.publishedAt() : OffsetDateTime.now(ZoneOffset.UTC));
+
+        ValidationRunPublication saved = persistPublicationAndSyncRun(publication, managedRun, run);
+        clearReconciliationRequired(managedRun.getId());
+        return saved;
+    }
+
+    private void applyReconciledCatalogMetadata(
+            ValidationRunPublication target,
+            de.palsoftware.scim.validator.ui.model.spec.ComplianceCatalogEntry entry,
+            boolean fallbackShowSubmitter) {
+        if (entry.productName() != null) {
+            target.setProductName(entry.productName());
+        }
+        if (entry.productSlug() != null) {
+            target.setProductSlug(entry.productSlug());
+        }
+        if (entry.productVersion() != null) {
+            target.setProductVersion(entry.productVersion());
+        }
+        target.setVendorName(entry.vendorName());
+        target.setProjectUrl(entry.projectUrl());
+        if (entry.licenseType() != null) {
+            target.setLicenseType(entry.licenseType());
+        }
+        target.setShowSubmitter(fallbackShowSubmitter);
+        target.setCoreScore(entry.coreScore());
+        target.setSupportedCapabilities(entry.supportedCapabilities());
+        target.setTotalCapabilities(entry.totalCapabilities());
+    }
+
+    private ValidationRun resolveManagedRun(ValidationRun run) {
+        return (runRepository != null && run.getId() != null)
+                ? runRepository.findById(run.getId()).orElse(run)
+                : run;
+    }
+
+    private ValidationRunPublication findExistingPublicationOrReservation(ValidationRun managedRun) {
+        if (publicationRepository != null && managedRun.getId() != null) {
+            return publicationRepository.findById(managedRun.getId()).orElse(null);
+        }
+        return managedRun.getPublication();
+    }
+
+    private String resolveOwnerEmail(ValidationRun managedRun, ValidationRun detachedRun, String actorEmail) {
+        if (managedRun.getCreatedByEmail() != null && !managedRun.getCreatedByEmail().isBlank()) {
+            return managedRun.getCreatedByEmail();
+        }
+        if (detachedRun.getCreatedByEmail() != null && !detachedRun.getCreatedByEmail().isBlank()) {
+            return detachedRun.getCreatedByEmail();
+        }
+        return actorEmail;
+    }
+
+    private void validateOwnerQuotaAndSlug(String ownerEmail, String productSlug, UUID runId) {
+        validatePublishQuota(ownerEmail, runId);
+        validateProductSlugOwnership(productSlug, ownerEmail, runId);
+    }
+
+    private void populatePublicationMetadata(
+            ValidationRunPublication target,
+            ValidationRun managedRun,
+            String ownerEmail,
+            CompliancePublishRequest request) {
+        target.setRun(managedRun);
+        target.setCreatedByEmail(ownerEmail);
+        target.setProductName(request.productName());
+        target.setProductSlug(request.productSlug());
+        target.setProductVersion(request.productVersion());
+        target.setVendorName(request.vendorName());
+        target.setProjectUrl(request.projectUrl());
+        target.setLicenseType(request.licenseType());
+        target.setShowSubmitter(request.showSubmitter());
+        target.setCoreScore(request.coreScore());
+        target.setSupportedCapabilities(request.supportedCapabilities());
+        target.setTotalCapabilities(request.totalCapabilities());
+    }
+
+    private ValidationRunPublication persistPublicationAndSyncRun(
+            ValidationRunPublication publication,
+            ValidationRun managedRun,
+            ValidationRun callerRun) {
+        managedRun.setPublication(publication);
+        if (publicationRepository != null) {
+            publication = publicationRepository.save(publication);
+            publicationRepository.flush();
+        }
+        if (runRepository != null) {
+            runRepository.save(managedRun);
+        }
+        if (managedRun != callerRun) {
+            callerRun.setPublication(publication);
+        }
+        return publication;
     }
 
     private ValidationRun requireRunAccess(UUID runId, String actorEmail, boolean admin) {
@@ -405,12 +1030,17 @@ public class ValidationRunService {
         LauncherDiscoveryRequestBuilder builder = LauncherDiscoveryRequestBuilder.request()
                 .configurationParameter("junit.jupiter.execution.parallel.enabled", "false");
 
-        for (String className : SPEC_CLASS_NAMES) {
+        for (String className : SpecCatalogService.discoverValidatorSpecClassNames()) {
             Class<?> specClass = Class.forName(className);
             builder.selectors(selectClass(specClass));
         }
 
         return builder.build();
+    }
+
+    void executeLauncher(Launcher launcher, LauncherDiscoveryRequest request, TestExecutionListener listener) {
+        launcher.registerTestExecutionListeners(listener);
+        launcher.execute(request);
     }
 
     static class ValidationExecutionListener implements TestExecutionListener {

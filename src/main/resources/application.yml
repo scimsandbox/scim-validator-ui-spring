@@ -83,7 +83,25 @@ app:
       user-role: user
 
   runs:
-    max-per-user: 10
+    max-per-user: ${APP_RUNS_MAX_PER_USER:10}
+    max-published-per-user: ${APP_RUNS_MAX_PUBLISHED_PER_USER:50}
+
+  compliance:
+    public-base-url: ${APP_COMPLIANCE_PUBLIC_BASE_URL:https://scimsandbox.net}
+    min-publish-score: ${APP_COMPLIANCE_MIN_PUBLISH_SCORE:50}
+    min-core-coverage-percent: ${APP_COMPLIANCE_MIN_CORE_COVERAGE_PERCENT:50}
+    reservation-timeout-seconds: ${APP_COMPLIANCE_RESERVATION_TIMEOUT_SECONDS:300}
+    reservation-cleanup-interval-ms: ${APP_COMPLIANCE_RESERVATION_CLEANUP_INTERVAL_MS:60000}
+    sample-run-ids: ${APP_COMPLIANCE_SAMPLE_RUN_IDS:11111111-1111-1111-1111-111111111111,22222222-2222-2222-2222-222222222222}
+
+  github:
+    publish-enabled: ${APP_GITHUB_PUBLISH_ENABLED:false}
+    repo: ${APP_GITHUB_REPO:scimsandbox/scim-website}
+    branch: ${APP_GITHUB_BRANCH:main}
+    api-url: ${APP_GITHUB_API_URL:https://api.github.com}
+    app-id: ${APP_GITHUB_APP_ID:}
+    installation-id: ${APP_GITHUB_INSTALLATION_ID:}
+    private-key: ${APP_GITHUB_PRIVATE_KEY:}
 
   server-manager:
     url: http://localhost:8080
