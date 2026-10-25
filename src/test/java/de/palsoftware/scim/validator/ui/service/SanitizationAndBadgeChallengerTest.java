@@ -340,6 +340,72 @@ class SanitizationAndBadgeChallengerTest {
                         .isInstanceOf(SecurityException.class);
             }
         }
+
+        @Test
+        @DisplayName("Adversarial Zero-Leak: Sensitive query parameters and diverse credential headers are scrubbed")
+        void testAdversarialCredentialsAndQuerySecretsSanitization() {
+            String targetUrl = "https://idp.example.com/scim/v2";
+            List<String> rawErrorsWithCredentials = List.of(
+                    "Failure calling https://idp.example.com/Users?apiKey=SECRET_API_KEY_VALUE_12345",
+                    "Auth failed at https://idp.example.com/Users?access_token=ya29.a0AfH6SMB_secretAccessToken123",
+                    "Token expired: https://idp.example.com/Users?token=super_secret_session_token_xyz",
+                    "Client rejected: https://idp.example.com/Users?client_secret=TOP_SECRET_CLIENT_SECRET_987",
+                    "Invalid password parameter: https://idp.example.com/Users?password=SuperSecretPassword!#1",
+                    "Header Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signatureValue123",
+                    "Header Authorization: Basic dXNlcjpwYXNzd29yZDEyMzQ1Ng==",
+                    "Raw Authorization: Bearer ghs_someVeryLongRandomInstallationTokenString9876543210"
+            );
+
+            for (String raw : rawErrorsWithCredentials) {
+                String sanitized = ComplianceReportGenerator.sanitizeErrorMessage(raw, targetUrl);
+                assertThat(sanitized).doesNotContain("SECRET_API_KEY_VALUE_12345");
+                assertThat(sanitized).doesNotContain("ya29.a0AfH6SMB_secretAccessToken123");
+                assertThat(sanitized).doesNotContain("super_secret_session_token_xyz");
+                assertThat(sanitized).doesNotContain("TOP_SECRET_CLIENT_SECRET_987");
+                assertThat(sanitized).doesNotContain("SuperSecretPassword!#1");
+                assertThat(sanitized).doesNotContain("signatureValue123");
+                assertThat(sanitized).doesNotContain("dXNlcjpwYXNzd29yZDEyMzQ1Ng==");
+                assertThat(sanitized).doesNotContain("ghs_someVeryLongRandomInstallationTokenString9876543210");
+            }
+        }
+
+        @Test
+        @DisplayName("Adversarial Zero-Leak: PEM private keys of various formats are scrubbed from error messages")
+        void testAdversarialPemPrivateKeyBlockSanitization() {
+            String targetUrl = "https://scim.company.internal";
+            String rsaKey = "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEAz7...rsaPrivateData...\n-----END RSA PRIVATE KEY-----";
+            String ecKey = "-----BEGIN EC PRIVATE KEY-----\nMHcCAQEEIIg...ecPrivateData...\n-----END EC PRIVATE KEY-----";
+            String pkcs8Key = "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADAN...pkcs8Data...\n-----END PRIVATE KEY-----";
+
+            String rawMsg = "TLS handshake failed with keys:\n" + rsaKey + "\n" + ecKey + "\n" + pkcs8Key;
+            String sanitized = ComplianceReportGenerator.sanitizeErrorMessage(rawMsg, targetUrl);
+
+            assertThat(sanitized).doesNotContain("rsaPrivateData");
+            assertThat(sanitized).doesNotContain("ecPrivateData");
+            assertThat(sanitized).doesNotContain("pkcs8Data");
+            assertThat(sanitized).doesNotContain("BEGIN RSA PRIVATE KEY");
+            assertThat(sanitized).doesNotContain("BEGIN EC PRIVATE KEY");
+            assertThat(sanitized).doesNotContain("BEGIN PRIVATE KEY");
+
+            // assertSanitized rejects any JSON containing private key header
+            for (String header : List.of("-----BEGIN RSA PRIVATE KEY-----", "-----BEGIN PRIVATE KEY-----")) {
+                assertThatThrownBy(() -> ComplianceReportGenerator.assertSanitized("{\"key\":\"" + header + "\"}", targetUrl))
+                        .isInstanceOf(SecurityException.class)
+                        .hasMessageContaining("private key pattern detected");
+            }
+        }
+
+        @Test
+        @DisplayName("Adversarial Zero-Leak: Raw HTTP exchange properties in report JSON are rejected by assertSanitized")
+        void testAdversarialRawPayloadLeakDetection() {
+            String targetUrl = "https://scim.example.com";
+            for (String payloadField : List.of("\"requestBody\"", "\"responseBody\"", "\"requestHeaders\"", "\"responseHeaders\"")) {
+                String leakingJson = "{\"status\":\"ok\"," + payloadField + ":\"leaked\"}";
+                assertThatThrownBy(() -> ComplianceReportGenerator.assertSanitized(leakingJson, targetUrl))
+                        .isInstanceOf(SecurityException.class)
+                        .hasMessageContaining("raw HTTP exchange payload detected");
+            }
+        }
     }
 
     // =========================================================================
@@ -602,6 +668,121 @@ class SanitizationAndBadgeChallengerTest {
                 }
             }
             return null;
+        }
+    }
+
+    // =========================================================================
+    // 4. Sample Fixture Run IDs & Badge Generation Invariants
+    // =========================================================================
+    @Nested
+    @DisplayName("Sample Fixture Run IDs & Badge Generation Invariants")
+    class SampleFixtureAndBadgeInvariantsTests {
+
+        @Test
+        @DisplayName("Sample badge must generate exact text 'SCIM 2.0 | 98% · 9/10 sample' and sample aria-label")
+        void testSampleFixtureBadgeGenerationExactTextAndVisual() throws Exception {
+            String badgeSvg = badgeGenerator.generate(98, 9, 10, "fixture-run-1", true);
+            assertThat(badgeSvg).isNotBlank();
+
+            Document doc = documentBuilder.parse(new ByteArrayInputStream(badgeSvg.getBytes(StandardCharsets.UTF_8)));
+            Element root = doc.getDocumentElement();
+
+            // 1. Accessibility attributes
+            assertThat(root.getAttribute("aria-label")).isEqualTo("SCIM 2.0 (sample): 98% · 9/10");
+
+            NodeList titleList = root.getElementsByTagName("title");
+            assertThat(titleList.getLength()).isEqualTo(1);
+            assertThat(titleList.item(0).getTextContent()).isEqualTo("SCIM 2.0 (sample): 98% · 9/10");
+
+            NodeList descList = root.getElementsByTagName("desc");
+            assertThat(descList.getLength()).isEqualTo(1);
+            assertThat(descList.item(0).getTextContent())
+                    .isEqualTo("SCIM 2.0 sample compliance scorecard fixture: 98% Core Conformance, 9/10 capabilities");
+
+            // 2. Visible text elements: Left='SCIM 2.0', Right='98% · 9/10 sample'
+            NodeList textNodes = root.getElementsByTagName("text");
+            assertThat(textNodes.getLength()).isEqualTo(4); // 2 shadow + 2 main
+            assertThat(textNodes.item(0).getTextContent()).isEqualTo("SCIM 2.0");
+            assertThat(textNodes.item(1).getTextContent()).isEqualTo("SCIM 2.0");
+            assertThat(textNodes.item(2).getTextContent()).isEqualTo("98% · 9/10 sample");
+            assertThat(textNodes.item(3).getTextContent()).isEqualTo("98% · 9/10 sample");
+        }
+
+        @Test
+        @DisplayName("Non-sample badge must generate 'SCIM 2.0 | 98% · 9/10 caps' without 'sample' tag")
+        void testNonSampleFixtureBadgeGenerationText() throws Exception {
+            String badgeSvg = badgeGenerator.generate(98, 9, 10, "fixture-run-2", false);
+            assertThat(badgeSvg).isNotBlank();
+
+            Document doc = documentBuilder.parse(new ByteArrayInputStream(badgeSvg.getBytes(StandardCharsets.UTF_8)));
+            Element root = doc.getDocumentElement();
+
+            assertThat(root.getAttribute("aria-label")).isEqualTo("SCIM 2.0: 98% · 9/10 caps");
+
+            NodeList textNodes = root.getElementsByTagName("text");
+            assertThat(textNodes.item(2).getTextContent()).isEqualTo("98% · 9/10 caps");
+            assertThat(textNodes.item(3).getTextContent()).isEqualTo("98% · 9/10 caps");
+            assertThat(badgeSvg).doesNotContain("sample");
+        }
+
+        @Test
+        @DisplayName("Configurable sample run IDs recognition adheres to app.compliance.sample-run-ids")
+        void testSampleFixtureRunIdRecognitionAndConfig() {
+            UUID default1 = UUID.fromString("11111111-1111-1111-1111-111111111111");
+            UUID default2 = UUID.fromString("22222222-2222-2222-2222-222222222222");
+            UUID nonSample = UUID.fromString("33333333-3333-3333-3333-333333333333");
+
+            // 1. Default sample IDs
+            assertThat(ComplianceReportGenerator.isSampleRun(default1)).isTrue();
+            assertThat(ComplianceReportGenerator.isSampleRun(default2)).isTrue();
+            assertThat(ComplianceReportGenerator.isSampleRun(nonSample)).isFalse();
+
+            // 2. Custom CSV matching
+            String customCsv = "44444444-4444-4444-4444-444444444444, 55555555-5555-5555-5555-555555555555";
+            UUID custom1 = UUID.fromString("44444444-4444-4444-4444-444444444444");
+            assertThat(ComplianceReportGenerator.isConfiguredSampleRun(custom1, customCsv)).isTrue();
+            assertThat(ComplianceReportGenerator.isConfiguredSampleRun(default1, customCsv)).isFalse();
+            assertThat(ComplianceReportGenerator.isConfiguredSampleRun(null, customCsv)).isFalse();
+            assertThat(ComplianceReportGenerator.isConfiguredSampleRun(custom1, null)).isFalse();
+            assertThat(ComplianceReportGenerator.isConfiguredSampleRun(custom1, "  ")).isFalse();
+        }
+
+        @Test
+        @DisplayName("Serialized report JSON includes isSampleFixture only when true")
+        void testSampleReportSerializationMetadataAndJson() throws Exception {
+            UUID sampleId = UUID.fromString("11111111-1111-1111-1111-111111111111");
+            UUID standardId = UUID.randomUUID();
+
+            ValidationRun runSample = new ValidationRun();
+            org.springframework.test.util.ReflectionTestUtils.setField(runSample, "id", sampleId);
+            runSample.setTargetUrl("https://scim.example.com");
+
+            ValidationRun runStandard = new ValidationRun();
+            org.springframework.test.util.ReflectionTestUtils.setField(runStandard, "id", standardId);
+            runStandard.setTargetUrl("https://scim.example.com");
+
+            ComplianceScorecardView scorecard = new ComplianceScorecardView(
+                    sampleId, "Sample Run", "https://scim.example.com", OffsetDateTime.now(ZoneOffset.UTC),
+                    "PASSED", 98, ColourGradient.EMERALD, true, null,
+                    null, null, null, Collections.emptyList(), 9, 9, 10,
+                    157, 140, 17, 0, Collections.emptyMap(), Collections.emptyList()
+            );
+
+            // Sample run generates isSampleFixture = true in metadata and JSON
+            SanitizedComplianceReport sampleReport = ComplianceReportGenerator.buildSanitizedReport(
+                    runSample, null, scorecard, Collections.emptyList()
+            );
+            assertThat(sampleReport.metadata().isSampleFixture()).isEqualTo(Boolean.TRUE);
+            String sampleJson = objectMapper.writeValueAsString(sampleReport);
+            assertThat(sampleJson).contains("\"isSampleFixture\":true");
+
+            // Standard run has null isSampleFixture and omits field from JSON
+            SanitizedComplianceReport standardReport = ComplianceReportGenerator.buildSanitizedReport(
+                    runStandard, null, scorecard, Collections.emptyList()
+            );
+            assertThat(standardReport.metadata().isSampleFixture()).isNull();
+            String standardJson = objectMapper.writeValueAsString(standardReport);
+            assertThat(standardJson).doesNotContain("\"isSampleFixture\"");
         }
     }
 }
