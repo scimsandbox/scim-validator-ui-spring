@@ -822,6 +822,8 @@
         .req-id-cell { font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 12px; color: #60a5fa; white-space: nowrap; }
         .req-title-cell { font-size: 13px; line-height: 1.45; color: #e2e8f0; max-width: 460px; }
         .req-rfc-section { font-size: 11px; color: #94a3b8; margin-top: 2px; }
+        .req-rfc-link { color: #94a3b8; text-decoration: none; display: inline-flex; align-items: center; gap: 3px; transition: color 0.15s ease; }
+        .req-rfc-link:hover { color: #38bdf8; text-decoration: underline; }
         .normative-tag {
             display: inline-block;
             padding: 2px 7px;
@@ -833,7 +835,7 @@
         }
         .normative-tag.must { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }
         .normative-tag.should { background: rgba(245, 158, 11, 0.15); color: #facc15; border: 1px solid rgba(245, 158, 11, 0.3); }
-        .normative-tag.may { background: rgba(59, 130, 246, 0.15); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.3); }
+        .normative-tag.may, .normative-tag.optional { background: rgba(59, 130, 246, 0.15); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.3); }
 
         .test-id-pills { display: flex; flex-wrap: wrap; gap: 4px; }
         .test-id-pill {
@@ -1711,7 +1713,19 @@
                                 th:attr="data-rfc=${req.rfc}, data-status=${req.status}">
                                 <td class="req-id-cell">
                                     <span th:text="${req.id}">RFC7644-4-R1</span>
-                                    <div class="req-rfc-section" th:text="${'RFC ' + req.rfc + ' §' + req.section}">RFC 7644 §4</div>
+                                    <div class="req-rfc-section">
+                                        <a th:if="${req.rfcUrl() != null}"
+                                           th:href="${req.rfcUrl()}"
+                                           target="_blank"
+                                           rel="noopener noreferrer"
+                                           class="req-rfc-link"
+                                           th:title="${'Open RFC ' + req.rfc + ' §' + req.section + ' on IETF RFC Editor'}">
+                                            <span th:text="${'RFC ' + req.rfc + ' §' + req.section}">RFC 7644 §4</span>
+                                            <span aria-hidden="true">↗</span>
+                                        </a>
+                                        <span th:if="${req.rfcUrl() == null}"
+                                              th:text="${'RFC ' + req.rfc + ' §' + req.section}">RFC 7644 §4</span>
+                                    </div>
                                 </td>
                                 <td class="req-title-cell" th:text="${req.title}">
                                     Service providers MUST support discovery endpoints...

@@ -19,4 +19,12 @@ public record RequirementTraceResult(
         double earnedWeight,
         String status,
         List<String> mappedTestIds
-) {}
+) {
+    public String rfcUrl() {
+        if (rfc == null || rfc.isBlank()) return null;
+        if (section == null || section.isBlank()) {
+            return "https://www.rfc-editor.org/rfc/rfc" + rfc;
+        }
+        return "https://www.rfc-editor.org/rfc/rfc" + rfc + "#section-" + section;
+    }
+}

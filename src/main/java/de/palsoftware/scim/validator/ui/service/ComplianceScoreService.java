@@ -189,8 +189,20 @@ public class ComplianceScoreService {
                 }
             }
 
+            if (capActive && executedTestsForReq == 0 && abortedTestsForReq > 0 && !mappedTestIds.isEmpty()) {
+                boolean allMappedTestsBlockedByInactiveCapability = mappedTestIds.stream().allMatch(tid -> {
+                    List<String> testCaps = specCatalogService.getTestMapping(tid)
+                            .map(TestSpecMapping::requiredCapabilities)
+                            .orElse(Collections.emptyList());
+                    return testCaps.stream().anyMatch(c -> !"none".equalsIgnoreCase(c) && !activeCapabilities.contains(c));
+                });
+                if (allMappedTestsBlockedByInactiveCapability) {
+                    capActive = false;
+                }
+            }
+
             boolean isNaDisposition = "na".equalsIgnoreCase(req.disposition());
-            if (isCore && !isNaDisposition && totalTestsForReq > 0) {
+            if (capActive && isCore && !isNaDisposition && totalTestsForReq > 0) {
                 testableCoreReqs++;
                 if (executedTestsForReq > 0) {
                     executedCoreReqs++;
@@ -353,7 +365,7 @@ public class ComplianceScoreService {
                 boolean isNaDisposition = specCatalogService.getRequirement(r.id())
                         .map(spec -> "na".equalsIgnoreCase(spec.disposition()))
                         .orElse(false);
-                if (isCore && !isNaDisposition && r.totalTests() > 0) {
+                if (isCore && !isNaDisposition && r.totalTests() > 0 && !"EXCLUDED_CAPABILITY".equals(r.status())) {
                     testableCore++;
                     if (r.executedTests() > 0) {
                         executedCore++;
@@ -454,6 +466,7 @@ public class ComplianceScoreService {
     private Boolean discoverChangePassword(List<ValidationHttpExchange> exchanges) {
         if (exchanges == null) return false;
         for (ValidationHttpExchange ex : exchanges) {
+            if (ex == null) continue;
             String url = ex.getUrl();
             if (url != null && url.contains("/ServiceProviderConfig") &&
                     ex.getResponseStatus() != null && ex.getResponseStatus() == 200 &&

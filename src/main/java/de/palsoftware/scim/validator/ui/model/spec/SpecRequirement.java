@@ -74,4 +74,12 @@ public record SpecRequirement(
     public boolean isTested() {
         return "tested".equalsIgnoreCase(disposition);
     }
+
+    public String rfcUrl() {
+        if (rfc == null || rfc.isBlank()) return null;
+        if (section == null || section.isBlank()) {
+            return "https://www.rfc-editor.org/rfc/rfc" + rfc;
+        }
+        return "https://www.rfc-editor.org/rfc/rfc" + rfc + "#section-" + section;
+    }
 }

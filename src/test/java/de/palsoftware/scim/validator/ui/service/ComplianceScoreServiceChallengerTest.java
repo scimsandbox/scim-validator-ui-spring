@@ -343,11 +343,11 @@ public class ComplianceScoreServiceChallengerTest {
             assertThat(scorecard.supportedCapabilitiesCount()).isEqualTo(0);
             assertThat(scorecard.compliantCapabilitiesCount()).isEqualTo(0);
 
-            // All 158 requirements must be partitioned into EXCLUDED_CAPABILITY or UNTESTED
+            // All 159 requirements must be partitioned into EXCLUDED_CAPABILITY or UNTESTED
             assertThat(scorecard.activeRequirementsCount() +
                     scorecard.excludedRequirementsCount() +
                     scorecard.untestedRequirementsCount())
-                    .isEqualTo(158);
+                    .isEqualTo(159);
 
             // All 10 capabilities must be UNSUPPORTED with passRate = 0.0
             for (CapabilityStatus cap : scorecard.capabilities()) {
@@ -384,9 +384,9 @@ public class ComplianceScoreServiceChallengerTest {
             assertThat(scorecard.publishEligible()).isFalse();
             assertThat(scorecard.publishIneligibilityReason())
                     .contains("Core requirement execution coverage");
-            // filter AND search are both supported due to composite tests FLT_17 and FLT_40
-            assertThat(scorecard.supportedCapabilitiesCount()).isEqualTo(2);
-            assertThat(scorecard.compliantCapabilitiesCount()).isEqualTo(2);
+            // filter, search, and enterprise are supported due to composite tests in A5_FilteringSpec
+            assertThat(scorecard.supportedCapabilitiesCount()).isEqualTo(3);
+            assertThat(scorecard.compliantCapabilitiesCount()).isEqualTo(3);
 
             Optional<CapabilityStatus> filterCap = scorecard.capabilities().stream()
                     .filter(c -> "filter".equals(c.capability())).findFirst();
@@ -688,7 +688,7 @@ public class ComplianceScoreServiceChallengerTest {
                 int totalReqs = scorecard.activeRequirementsCount() +
                         scorecard.excludedRequirementsCount() +
                         scorecard.untestedRequirementsCount();
-                assertThat(totalReqs).isEqualTo(158);
+                assertThat(totalReqs).isEqualTo(159);
 
                 // Invariant 5: Capabilities list size is always 10
                 assertThat(scorecard.capabilities()).hasSize(10);
@@ -711,7 +711,7 @@ public class ComplianceScoreServiceChallengerTest {
                 ("PASSED".equalsIgnoreCase(status) || "FAILED".equalsIgnoreCase(status)) && score >= 50,
                 null, null, null, null,
                 Collections.emptyList(), 0, 0, 10,
-                158, 100, 0, 10,
+                159, 100, 0, 10,
                 Collections.emptyMap(), Collections.emptyList()
         );
     }

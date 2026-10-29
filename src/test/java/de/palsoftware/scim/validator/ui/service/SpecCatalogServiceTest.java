@@ -24,11 +24,11 @@ class SpecCatalogServiceTest {
     }
 
     @Test
-    @DisplayName("Loads all 4 RFC catalogs with exactly 158 unique requirements")
-    void testCatalogsLoaded_Exactly158Requirements() {
+    @DisplayName("Loads all 4 RFC catalogs with exactly 159 unique requirements")
+    void testCatalogsLoaded_Exactly159Requirements() {
         Map<String, SpecRequirement> reqs = service.getRequirements();
-        assertThat(reqs).hasSize(158);
-        assertThat(service.getTotalRequirementsCount()).isEqualTo(158);
+        assertThat(reqs).hasSize(159);
+        assertThat(service.getTotalRequirementsCount()).isEqualTo(159);
     }
 
     @Test
@@ -41,7 +41,7 @@ class SpecCatalogServiceTest {
         long rfc9865Count = reqs.values().stream().filter(r -> "9865".equals(r.rfc())).count();
         long rfc9967Count = reqs.values().stream().filter(r -> "9967".equals(r.rfc())).count();
 
-        assertThat(rfc7643Count).isEqualTo(49);
+        assertThat(rfc7643Count).isEqualTo(50);
         assertThat(rfc7644Count).isEqualTo(96);
         assertThat(rfc9865Count).isEqualTo(8);
         assertThat(rfc9967Count).isEqualTo(5);
@@ -56,12 +56,12 @@ class SpecCatalogServiceTest {
         long shouldCount = reqs.values().stream().filter(SpecRequirement::isShould).count();
         long mayOrOptCount = reqs.values().stream().filter(SpecRequirement::isMayOrOptional).count();
 
-        assertThat(mustCount).isEqualTo(135);
-        assertThat(shouldCount).isEqualTo(9);
+        assertThat(mustCount).isEqualTo(132);
+        assertThat(shouldCount).isEqualTo(13);
         assertThat(mayOrOptCount).isEqualTo(14); // 13 MAY + 1 OPTIONAL
 
         int totalWeight = reqs.values().stream().mapToInt(SpecRequirement::getWeight).sum();
-        assertThat(totalWeight).isEqualTo(135 * 3 + 9 * 2 + 14 * 1); // 405 + 18 + 14 = 437
+        assertThat(totalWeight).isEqualTo(132 * 3 + 13 * 2 + 14 * 1); // 396 + 26 + 14 = 436
     }
 
     @Test
@@ -75,11 +75,11 @@ class SpecCatalogServiceTest {
     }
 
     @Test
-    @DisplayName("Reflective inspection of the 13 Spock specs discovers exactly 254 test methods")
-    void testSpockReflection_Discovers254Tests() {
+    @DisplayName("Reflective inspection of the 13 Spock specs discovers exactly 274 test methods")
+    void testSpockReflection_Discovers274Tests() {
         Map<String, TestSpecMapping> testMappings = service.getAllTestMappings();
-        assertThat(testMappings).hasSize(254);
-        assertThat(service.getTotalTestsCount()).isEqualTo(254);
+        assertThat(testMappings).hasSize(274);
+        assertThat(service.getTotalTestsCount()).isEqualTo(274);
 
         // Every test method must have a valid identifier, display name, class name, and >= 1 spec ref
         for (TestSpecMapping mapping : testMappings.values()) {
@@ -97,7 +97,7 @@ class SpecCatalogServiceTest {
         assertThat(bulkTests).hasSize(23);
 
         List<String> patchTests = service.getTestsForCapability("patch");
-        assertThat(patchTests).hasSize(31);
+        assertThat(patchTests).hasSize(41);
 
         List<String> sortTests = service.getTestsForCapability("sort");
         assertThat(sortTests).hasSize(7);
@@ -109,17 +109,17 @@ class SpecCatalogServiceTest {
         assertThat(asyncTests).hasSize(3);
 
         List<String> enterpriseTests = service.getTestsForCapability("enterprise");
-        assertThat(enterpriseTests).containsExactlyInAnyOrder("SCH_07", "USR_02", "USR_24");
+        assertThat(enterpriseTests).containsExactlyInAnyOrder("SCH_07", "USR_02", "USR_24", "PAT_10", "FLT_19", "FLT_34");
 
         List<String> searchTests = service.getTestsForCapability("search");
-        assertThat(searchTests).containsExactlyInAnyOrder("FLT_17", "FLT_40", "CUR_05");
+        assertThat(searchTests).containsExactlyInAnyOrder("FLT_16", "FLT_17", "FLT_33", "FLT_40", "PAG_07", "CUR_05");
 
         List<String> etagTests = service.getTestsForCapability("etag");
         assertThat(etagTests).hasSize(13);
         assertThat(etagTests).contains("USR_16", "PAT_20", "GRP_17", "GRP_19", "NEG_21");
 
         List<String> changePasswordTests = service.getTestsForCapability("changePassword");
-        assertThat(changePasswordTests).containsExactly("USR_25");
+        assertThat(changePasswordTests).containsExactlyInAnyOrder("USR_25", "PAT_32");
 
         Optional<TestSpecMapping> usr25Opt = service.getTestMapping("USR_25");
         assertThat(usr25Opt).isPresent();
@@ -165,5 +165,14 @@ class SpecCatalogServiceTest {
         // RFC7644-7.2-R1 (TLS enforcement) is untestable via HTTP
         List<String> testsFor72R1 = service.getTestsForRequirement("RFC7644-7.2-R1");
         assertThat(testsFor72R1).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Every catalog requirement generates a valid RFC Editor section URL")
+    void testRfcUrlGeneration() {
+        for (SpecRequirement req : service.getRequirements().values()) {
+            assertThat(req.rfcUrl())
+                    .isEqualTo("https://www.rfc-editor.org/rfc/rfc" + req.rfc() + "#section-" + req.section());
+        }
     }
 }
