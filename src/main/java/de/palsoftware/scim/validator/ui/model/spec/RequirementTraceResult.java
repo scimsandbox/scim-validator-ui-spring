@@ -19,4 +19,12 @@ public record RequirementTraceResult(
         double earnedWeight,
         String status,
         List<String> mappedTestIds
-) {}
+) {
+    public String rfcUrl() {
+        return SpecRequirement.formatRfcUrl(rfc, section);
+    }
+
+    public String rfcLabel() {
+        return SpecRequirement.formatRfcLabel(rfc, section);
+    }
+}

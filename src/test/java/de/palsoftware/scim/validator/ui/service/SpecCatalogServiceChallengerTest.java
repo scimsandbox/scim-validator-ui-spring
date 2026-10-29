@@ -26,7 +26,7 @@ import static org.assertj.core.api.Assertions.*;
 /**
  * Empirical Adversarial Challenger Test Suite for Milestone 2:
  * 1. SpecCatalogService reflection stability and classloading safety (verifying initialize=false prevents ScimBaseSpec crash).
- * 2. Catalog completeness invariants (157 requirements across 4 RFCs, normative levels & weights).
+ * 2. Catalog completeness invariants (159 requirements across 4 RFCs, normative levels & weights).
  * 3. Composite capabilities extraction and scoring (PAT_20, FLT_17, FLT_40, CUR_05).
  * 4. Safe handling of vintage runs without HTTP exchanges (zero NPEs).
  */
@@ -156,8 +156,8 @@ public class SpecCatalogServiceChallengerTest {
         void testSpecCatalogServiceInit_UnconfiguredEnvironment() {
             SpecCatalogService fresh = new SpecCatalogService(resolver);
             assertThatCode(fresh::init).doesNotThrowAnyException();
-            assertThat(fresh.getTotalRequirementsCount()).isEqualTo(157);
-            assertThat(fresh.getTotalTestsCount()).isEqualTo(250);
+            assertThat(fresh.getTotalRequirementsCount()).isEqualTo(159);
+            assertThat(fresh.getTotalTestsCount()).isEqualTo(274);
         }
 
         @Test
@@ -168,8 +168,8 @@ public class SpecCatalogServiceChallengerTest {
                 Thread.currentThread().setContextClassLoader(null);
                 SpecCatalogService fallbackService = new SpecCatalogService(resolver);
                 assertThatCode(fallbackService::init).doesNotThrowAnyException();
-                assertThat(fallbackService.getTotalRequirementsCount()).isEqualTo(157);
-                assertThat(fallbackService.getTotalTestsCount()).isEqualTo(250);
+                assertThat(fallbackService.getTotalRequirementsCount()).isEqualTo(159);
+                assertThat(fallbackService.getTotalTestsCount()).isEqualTo(274);
             } finally {
                 Thread.currentThread().setContextClassLoader(originalCl);
             }
@@ -184,12 +184,16 @@ public class SpecCatalogServiceChallengerTest {
     class CatalogCompletenessTests {
 
         @Test
-        @DisplayName("INVARIANT: Raw YAML files contain exactly 157 unique requirement definitions (zero duplicate IDs)")
+        @DisplayName("INVARIANT: Raw YAML files contain exactly 159 unique requirement definitions (zero duplicate IDs)")
         void testRawYamlCountAndNoDuplicateIds() throws Exception {
             Yaml yaml = new Yaml();
+            // Note: rfc7643-requirements.yaml has 49 entries and rfc7644-requirements.yaml has 97 entries,
+            // while runtime rfc attribute distribution is 50 ("7643") and 96 ("7644") because RFC7644-4-R4 in
+            // rfc7644-requirements.yaml declares rfc: "7643", section: "5" (referencing the ServiceProviderConfig
+            // schema definition in RFC 7643 §5).
             Map<String, Integer> expectedFileCounts = Map.of(
-                    "classpath:spec/rfc7643-requirements.yaml", 48,
-                    "classpath:spec/rfc7644-requirements.yaml", 96,
+                    "classpath:spec/rfc7643-requirements.yaml", 49,
+                    "classpath:spec/rfc7644-requirements.yaml", 97,
                     "classpath:spec/rfc9865-requirements.yaml", 8,
                     "classpath:spec/rfc9967-requirements.yaml", 5
             );
@@ -215,15 +219,15 @@ public class SpecCatalogServiceChallengerTest {
                 }
             }
 
-            assertThat(totalParsed).isEqualTo(157);
-            assertThat(seenIds).hasSize(157);
+            assertThat(totalParsed).isEqualTo(159);
+            assertThat(seenIds).hasSize(159);
         }
 
         @Test
-        @DisplayName("INVARIANT: Normative levels strictly evaluate MUST=3, SHOULD=2, MAY/OPTIONAL=1 for total weight 434")
+        @DisplayName("INVARIANT: Normative levels strictly evaluate MUST=3, SHOULD=2, MAY/OPTIONAL=1 for total weight 436")
         void testNormativeWeightIntegrity() {
             Map<String, SpecRequirement> reqs = service.getRequirements();
-            assertThat(reqs).hasSize(157);
+            assertThat(reqs).hasSize(159);
 
             int mustCount = 0;
             int shouldCount = 0;
@@ -260,11 +264,11 @@ public class SpecCatalogServiceChallengerTest {
                 totalPoints += w;
             }
 
-            assertThat(mustCount).isEqualTo(134);
-            assertThat(shouldCount).isEqualTo(9);
+            assertThat(mustCount).isEqualTo(132);
+            assertThat(shouldCount).isEqualTo(13);
             assertThat(mayCount).isEqualTo(13);
             assertThat(optionalCount).isEqualTo(1);
-            assertThat(totalPoints).isEqualTo(434);
+            assertThat(totalPoints).isEqualTo(436);
         }
 
         @Test
@@ -290,7 +294,7 @@ public class SpecCatalogServiceChallengerTest {
         }
 
         @Test
-        @DisplayName("INVARIANT: Exactly 10 catalog requirements are untested; all other 147 have >= 1 mapped test")
+        @DisplayName("INVARIANT: Exactly 2 catalog requirements are untested; all other 157 have >= 1 mapped test")
         void testUntestedVsTestedRequirements() {
             Map<String, SpecRequirement> reqs = service.getRequirements();
             List<String> untestedIds = new ArrayList<>();
@@ -305,8 +309,8 @@ public class SpecCatalogServiceChallengerTest {
                 }
             }
 
-            assertThat(untestedIds).hasSize(10);
-            assertThat(testedIds).hasSize(147);
+            assertThat(untestedIds).hasSize(2);
+            assertThat(testedIds).hasSize(157);
 
             // Specifically verify non-observable requirements are in the untested set
             assertThat(untestedIds).contains(
@@ -339,11 +343,11 @@ public class SpecCatalogServiceChallengerTest {
     class SpockTestDiscoveryTests {
 
         @Test
-        @DisplayName("INVARIANT: Discovers exactly 250 feature methods across 13 Spock specifications")
-        void testExactly250FeatureMethods() {
+        @DisplayName("INVARIANT: Discovers exactly 274 feature methods across 13 Spock specifications")
+        void testExactly274FeatureMethods() {
             Map<String, TestSpecMapping> mappings = service.getAllTestMappings();
-            assertThat(mappings).hasSize(250);
-            assertThat(service.getAllMappings()).hasSize(250);
+            assertThat(mappings).hasSize(274);
+            assertThat(service.getAllMappings()).hasSize(274);
 
             // Verify test distribution across spec classes
             Map<String, Long> countByClass = mappings.values().stream()
@@ -351,7 +355,7 @@ public class SpecCatalogServiceChallengerTest {
 
             assertThat(countByClass).containsKeys(SpecCatalogService.SPEC_CLASS_NAMES.toArray(new String[0]));
             long totalFromClasses = countByClass.values().stream().mapToLong(Long::longValue).sum();
-            assertThat(totalFromClasses).isEqualTo(250);
+            assertThat(totalFromClasses).isEqualTo(274);
         }
 
         @Test
@@ -367,7 +371,7 @@ public class SpecCatalogServiceChallengerTest {
                 assertThat(mapping.requiredCapabilities()).isNotEmpty();
                 assertThat(mapping.specRefs()).isNotEmpty();
 
-                // Every specRef must exist in the 157 catalog requirements
+                // Every specRef must exist in the 159 catalog requirements
                 for (String refId : mapping.specRefs()) {
                     assertThat(service.getRequirement(refId))
                             .as("Test %s references requirement %s which must exist in catalog", mapping.testId(), refId)
@@ -671,14 +675,15 @@ public class SpecCatalogServiceChallengerTest {
         }
 
         @Test
-        @DisplayName("ADVERSARIAL EDGE CASE: Discovered vulnerability - exchange list with null element throws NPE")
-        void testExchangeListWithNullElement_VulnerabilityDocumented() {
+        @DisplayName("EDGE CASE: Discovered vulnerability fixed - exchange list with null element handled gracefully without NPE")
+        void testExchangeListWithNullElement_VulnerabilityFixed() {
             ValidationRun run = createRun("PASSED");
             List<ValidationHttpExchange> listWithNull = new ArrayList<>();
             listWithNull.add(null);
-            // Empirical proof: discoverChangePassword assumes non-null elements in exchanges list
-            assertThatThrownBy(() -> scoreService.computeScorecard(run, Collections.emptyList(), listWithNull))
-                    .isInstanceOf(NullPointerException.class);
+            assertThatCode(() -> {
+                ComplianceScorecardView view = scoreService.computeScorecard(run, Collections.emptyList(), listWithNull);
+                assertThat(view).isNotNull();
+            }).doesNotThrowAnyException();
         }
 
         private ValidationHttpExchange createExchange(String url, Integer status, String body) {
@@ -687,6 +692,198 @@ public class SpecCatalogServiceChallengerTest {
             ex.setResponseStatus(status);
             ex.setResponseBody(body);
             return ex;
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // 6. PHASE 1 TRACEABILITY & ADVERSARIAL INTEGRITY CHALLENGE
+    // ─────────────────────────────────────────────────────────────────────────────
+    @Nested
+    @DisplayName("6. Phase 1 Traceability & Requirement Counts Challenge")
+    class Phase1TraceabilityChallengeTests {
+
+        @Test
+        @DisplayName("CHALLENGE 1: Exactly 159 requirements and 274 Spock test methods mapped")
+        void testRequirementAndTestCountsExact() {
+            assertThat(service.getTotalRequirementsCount()).isEqualTo(159);
+            assertThat(service.getRequirements()).hasSize(159);
+            assertThat(service.getTotalTestsCount()).isEqualTo(274);
+            assertThat(service.getAllTestMappings()).hasSize(274);
+            assertThat(service.getAllMappings()).hasSize(274);
+        }
+
+        @Test
+        @DisplayName("CHALLENGE 2: All 8 Phase 1 requirements have executable @SpecRef mappings and exact dispositions (tested for core, optional for capability-gated)")
+        void testAll8Phase1RequirementsMapped() {
+            Map<String, List<String>> expectedMappings = Map.of(
+                    "RFC7643-2.2-R7", List.of("SCH_16"),
+                    "RFC7643-2.3.7-R2", List.of("GRP_13", "GRP_15"),
+                    "RFC7643-4.2-R3", List.of("GRP_16"),
+                    "RFC7644-3.4.2.2-R15", List.of("FLT_44"),
+                    "RFC7644-3.4.2.3-R4", List.of("SRT_06"),
+                    "RFC7644-3.4.2.3-R5", List.of("SRT_07"),
+                    "RFC7644-3.5.2-R4", List.of("PAT_01", "PAT_28"),
+                    "RFC7644-3.5.2.1-R3", List.of("PAT_31")
+            );
+            Set<String> expectedCoreRequirements = Set.of(
+                    "RFC7643-2.2-R7", "RFC7643-2.3.7-R2", "RFC7643-4.2-R3"
+            );
+
+            for (Map.Entry<String, List<String>> entry : expectedMappings.entrySet()) {
+                String reqId = entry.getKey();
+                List<String> expectedTestIds = entry.getValue();
+
+                // Requirement exists in catalog; core requirements have disposition 'tested' and capability-gated requirements have 'optional'
+                Optional<SpecRequirement> reqOpt = service.getRequirement(reqId);
+                assertThat(reqOpt).as("Requirement %s must exist in catalog", reqId).isPresent();
+                SpecRequirement req = reqOpt.get();
+                assertThat(req.isCore()).isEqualTo(expectedCoreRequirements.contains(reqId));
+                String expectedDisposition = req.isCore() ? "tested" : "optional";
+                assertThat(req.disposition())
+                        .as("Requirement %s (core=%s) disposition must be '%s'", reqId, req.isCore(), expectedDisposition)
+                        .isEqualTo(expectedDisposition);
+
+                // Mapped test list contains expected tests
+                List<String> mappedTests = service.getTestsForRequirement(reqId);
+                assertThat(mappedTests).as("Requirement %s must map to tests %s", reqId, expectedTestIds)
+                        .containsAll(expectedTestIds);
+
+                // Verify each test method mapping has valid @SpecRef and exists on target class
+                for (String testId : expectedTestIds) {
+                    Optional<TestSpecMapping> mappingOpt = service.getTestMapping(testId);
+                    assertThat(mappingOpt).as("Test mapping for %s must exist", testId).isPresent();
+                    TestSpecMapping mapping = mappingOpt.get();
+                    assertThat(mapping.specRefs()).as("Test %s must declare @SpecRef(%s)", testId, reqId)
+                            .contains(reqId);
+                    assertThat(mapping.className()).isNotBlank();
+                    assertThat(mapping.lineNumber()).isGreaterThan(0);
+                }
+            }
+        }
+
+        @Test
+        @DisplayName("CHALLENGE 3: GRP_16 nested group test is properly discovered and mapped to RFC7643-4.2-R3")
+        void testGRP16NestedGroupMappingIntegrity() {
+            Optional<TestSpecMapping> grp16Opt = service.getTestMapping("GRP_16");
+            assertThat(grp16Opt).as("GRP_16 must be discovered as a mapped test in SpecCatalogService").isPresent();
+
+            TestSpecMapping grp16 = grp16Opt.get();
+            assertThat(grp16.testId()).isEqualTo("GRP_16");
+            assertThat(grp16.className()).isEqualTo("de.palsoftware.scim.validator.specs.A6_GroupLifecycleSpec");
+            assertThat(grp16.displayName()).startsWith("GRP_16:");
+            assertThat(grp16.specRefs()).containsExactly("RFC7643-4.2-R3");
+
+            // Verify reverse lookup
+            List<String> testsFor42R3 = service.getTestsForRequirement("RFC7643-4.2-R3");
+            assertThat(testsFor42R3).contains("GRP_16");
+
+            // Verify GRP_17 does NOT falsely claim RFC7643-4.2-R3 in runtime catalog
+            Optional<TestSpecMapping> grp17Opt = service.getTestMapping("GRP_17");
+            assertThat(grp17Opt).isPresent();
+            assertThat(grp17Opt.get().specRefs()).doesNotContain("RFC7643-4.2-R3");
+        }
+
+        @Test
+        @DisplayName("CHALLENGE 4: Untested requirements count is exactly 0 when all active tests pass")
+        void testUntestedRequirementsCountZeroWhenAllPass() {
+            ValidationRun run = new ValidationRun();
+            run.setName("Phase 1 Full Pass Run");
+            run.setStatus("PASSED");
+            run.setExecutedAt(OffsetDateTime.now());
+
+            List<ValidationTestResult> testResults = new ArrayList<>();
+            for (TestSpecMapping mapping : service.getAllMappings()) {
+                ValidationTestResult tr = new ValidationTestResult();
+                tr.setTestIdentifier(mapping.testId());
+                tr.setDisplayName(mapping.displayName());
+                tr.setTestName(mapping.displayName());
+                tr.setStatus("SUCCESS");
+                testResults.add(tr);
+            }
+
+            ValidationHttpExchange spcExchange = new ValidationHttpExchange();
+            spcExchange.setUrl("https://example.com/scim/v2/ServiceProviderConfig");
+            spcExchange.setResponseStatus(200);
+            spcExchange.setResponseBody("{\"changePassword\":{\"supported\":true}}");
+
+            ComplianceScorecardView scorecard = scoreService.computeScorecard(run, testResults, List.of(spcExchange));
+
+            assertThat(scorecard.coreScore()).isEqualTo(100);
+            assertThat(scorecard.catalogRequirementsTotal()).isEqualTo(159);
+            assertThat(scorecard.activeRequirementsCount()).isEqualTo(157);
+            assertThat(scorecard.untestedRequirementsCount()).isEqualTo(0);
+            assertThat(scorecard.excludedRequirementsCount()).isEqualTo(2);
+
+            // Verify that all 157 active requirements are COMPLIANT
+            long compliantCount = scorecard.requirementMatrix().stream()
+                    .filter(r -> "COMPLIANT".equals(r.status())).count();
+            assertThat(compliantCount).isEqualTo(157);
+
+            // Verify that 0 requirements in the matrix are UNTESTED
+            long untestedMatrixCount = scorecard.requirementMatrix().stream()
+                    .filter(r -> "UNTESTED".equals(r.status())).count();
+            assertThat(untestedMatrixCount).isEqualTo(0);
+        }
+
+        @Test
+        @DisplayName("CHALLENGE 5: Non-API-observable requirements (disposition: na) are excluded from Core Score denominator")
+        void testDispositionNaGuaranteedExcludedFromCoreDenominator() {
+            // RFC7643-9.2-R1 and RFC7644-7.2-R1 both have level: MUST (weight 3)
+            SpecRequirement rfc7643_92r1 = service.getRequirement("RFC7643-9.2-R1").orElseThrow();
+            SpecRequirement rfc7644_72r1 = service.getRequirement("RFC7644-7.2-R1").orElseThrow();
+
+            assertThat(rfc7643_92r1.disposition()).isEqualTo("na");
+            assertThat(rfc7644_72r1.disposition()).isEqualTo("na");
+            assertThat(rfc7643_92r1.getWeight()).isEqualTo(3);
+            assertThat(rfc7644_72r1.getWeight()).isEqualTo(3);
+
+            // Total weight across all 159 catalog items: 436
+            int totalCatalogWeight = service.getRequirements().values().stream()
+                    .mapToInt(SpecRequirement::getWeight).sum();
+            assertThat(totalCatalogWeight).isEqualTo(436);
+
+            // With all active tests passing, denominator (mustTotal + shouldTotal + mayTotal)
+            // must equal 436 - 3 - 3 = 430
+            ValidationRun run = new ValidationRun();
+            run.setName("Denominator Verification Run");
+            run.setStatus("PASSED");
+            run.setExecutedAt(OffsetDateTime.now());
+
+            List<ValidationTestResult> testResults = new ArrayList<>();
+            for (TestSpecMapping mapping : service.getAllMappings()) {
+                ValidationTestResult tr = new ValidationTestResult();
+                tr.setTestIdentifier(mapping.testId());
+                tr.setDisplayName(mapping.displayName());
+                tr.setTestName(mapping.displayName());
+                tr.setStatus("SUCCESS");
+                testResults.add(tr);
+            }
+
+            ValidationHttpExchange spcExchange = new ValidationHttpExchange();
+            spcExchange.setUrl("https://example.com/scim/v2/ServiceProviderConfig");
+            spcExchange.setResponseStatus(200);
+            spcExchange.setResponseBody("{\"changePassword\":{\"supported\":true}}");
+
+            ComplianceScorecardView scorecard = scoreService.computeScorecard(run, testResults, List.of(spcExchange));
+
+            double activeDenominator = scorecard.mustBreakdown().totalPoints()
+                    + scorecard.shouldBreakdown().totalPoints()
+                    + scorecard.mayBreakdown().totalPoints();
+            assertThat(activeDenominator).isEqualTo(430.0);
+            assertThat(scorecard.mustBreakdown().totalPoints()).isEqualTo(130 * 3.0); // 132 - 2 na MUSTs = 130 MUSTs = 390.0
+
+            // Adding an unmapped test result (DUMMY_NA_TEST) must not cause na requirements
+            // (RFC7643-9.2-R1, RFC7644-7.2-R1) to be counted as active or untested
+            ValidationTestResult dummyNaResult = new ValidationTestResult();
+            dummyNaResult.setTestIdentifier("DUMMY_NA_TEST");
+            dummyNaResult.setStatus("FAILED");
+            List<ValidationTestResult> resultsWithDummy = new ArrayList<>(testResults);
+            resultsWithDummy.add(dummyNaResult);
+
+            ComplianceScorecardView scorecardWithDummy = scoreService.computeScorecard(run, resultsWithDummy, List.of(spcExchange));
+            assertThat(scorecardWithDummy.untestedRequirementsCount()).isEqualTo(0);
+            assertThat(scorecardWithDummy.excludedRequirementsCount()).isEqualTo(2);
+            assertThat(scorecardWithDummy.coreScore()).isEqualTo(100);
         }
     }
 }

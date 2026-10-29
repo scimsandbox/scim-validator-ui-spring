@@ -74,4 +74,34 @@ public record SpecRequirement(
     public boolean isTested() {
         return "tested".equalsIgnoreCase(disposition);
     }
+
+    public String rfcUrl() {
+        return formatRfcUrl(rfc, section);
+    }
+
+    public String rfcLabel() {
+        return formatRfcLabel(rfc, section);
+    }
+
+    public static String formatRfcUrl(String rfc, String section) {
+        if (rfc == null || rfc.isBlank()) {
+            return null;
+        }
+        String trimmedRfc = rfc.trim();
+        if (section == null || section.isBlank()) {
+            return "https://www.rfc-editor.org/rfc/rfc" + trimmedRfc;
+        }
+        return "https://www.rfc-editor.org/rfc/rfc" + trimmedRfc + "#section-" + section.trim();
+    }
+
+    public static String formatRfcLabel(String rfc, String section) {
+        if (rfc == null || rfc.isBlank()) {
+            return "";
+        }
+        String trimmedRfc = rfc.trim();
+        if (section == null || section.isBlank()) {
+            return "RFC " + trimmedRfc;
+        }
+        return "RFC " + trimmedRfc + " §" + section.trim();
+    }
 }

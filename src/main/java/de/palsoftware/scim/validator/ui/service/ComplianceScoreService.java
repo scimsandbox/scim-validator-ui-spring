@@ -189,7 +189,20 @@ public class ComplianceScoreService {
                 }
             }
 
-            if (isCore && totalTestsForReq > 0) {
+            if (capActive && executedTestsForReq == 0 && abortedTestsForReq > 0 && !mappedTestIds.isEmpty()) {
+                boolean allMappedTestsBlockedByInactiveCapability = mappedTestIds.stream().allMatch(tid -> {
+                    List<String> testCaps = specCatalogService.getTestMapping(tid)
+                            .map(TestSpecMapping::requiredCapabilities)
+                            .orElse(Collections.emptyList());
+                    return testCaps.stream().anyMatch(c -> !"none".equalsIgnoreCase(c) && !activeCapabilities.contains(c));
+                });
+                if (allMappedTestsBlockedByInactiveCapability) {
+                    capActive = false;
+                }
+            }
+
+            boolean isNaDisposition = "na".equalsIgnoreCase(req.disposition());
+            if (capActive && isCore && !isNaDisposition && totalTestsForReq > 0) {
                 testableCoreReqs++;
                 if (executedTestsForReq > 0) {
                     executedCoreReqs++;
@@ -201,7 +214,6 @@ public class ComplianceScoreService {
             int w = req.getWeight();
             String status;
 
-            boolean isNaDisposition = "na".equalsIgnoreCase(req.disposition());
             if (!capActive || (isNaDisposition && executedTestsForReq == 0)) {
                 status = "EXCLUDED_CAPABILITY";
                 excludedCount++;
@@ -350,7 +362,10 @@ public class ComplianceScoreService {
             for (RequirementTraceResult r : matrix) {
                 String cap = r.capability() != null ? r.capability().trim() : "none";
                 boolean isCore = "none".equalsIgnoreCase(cap) || cap.isEmpty();
-                if (isCore && r.totalTests() > 0) {
+                boolean isNaDisposition = specCatalogService.getRequirement(r.id())
+                        .map(spec -> "na".equalsIgnoreCase(spec.disposition()))
+                        .orElse(false);
+                if (isCore && !isNaDisposition && r.totalTests() > 0 && !"EXCLUDED_CAPABILITY".equals(r.status())) {
                     testableCore++;
                     if (r.executedTests() > 0) {
                         executedCore++;
@@ -373,22 +388,35 @@ public class ComplianceScoreService {
 
         for (String cap : OPTIONAL_CAPABILITIES) {
             if ("changePassword".equals(cap)) {
-                boolean supported = Boolean.TRUE.equals(changePasswordSupported);
-                CapabilitySupportLevel lvl = supported
-                        ? CapabilitySupportLevel.SUPPORTED_COMPLIANT
-                        : CapabilitySupportLevel.UNSUPPORTED;
-                result.put(cap, CapabilityStatus.of(
-                        cap,
-                        CAPABILITY_TITLES.get(cap),
-                        CAPABILITY_SECTIONS.get(cap),
-                        lvl,
-                        1,
-                        supported ? 1 : 0,
-                        supported ? 1 : 0,
-                        0,
-                        supported ? 0 : 1
-                ));
-                continue;
+                List<String> cpTestIds = specCatalogService.getTestsForCapability("changePassword");
+                boolean hasTestResults = false;
+                if (cpTestIds != null && !cpTestIds.isEmpty()) {
+                    for (String tid : cpTestIds) {
+                        if (resultsByTestId.containsKey(tid)) {
+                            hasTestResults = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!hasTestResults) {
+                    boolean supported = Boolean.TRUE.equals(changePasswordSupported);
+                    CapabilitySupportLevel lvl = supported
+                            ? CapabilitySupportLevel.SUPPORTED_COMPLIANT
+                            : CapabilitySupportLevel.UNSUPPORTED;
+                    result.put(cap, CapabilityStatus.of(
+                            cap,
+                            CAPABILITY_TITLES.get(cap),
+                            CAPABILITY_SECTIONS.get(cap),
+                            lvl,
+                            1,
+                            supported ? 1 : 0,
+                            supported ? 1 : 0,
+                            0,
+                            supported ? 0 : 1
+                    ));
+                    continue;
+                }
             }
 
             List<String> capTestIds = specCatalogService.getTestsForCapability(cap);
@@ -438,6 +466,7 @@ public class ComplianceScoreService {
     private Boolean discoverChangePassword(List<ValidationHttpExchange> exchanges) {
         if (exchanges == null) return false;
         for (ValidationHttpExchange ex : exchanges) {
+            if (ex == null) continue;
             String url = ex.getUrl();
             if (url != null && url.contains("/ServiceProviderConfig") &&
                     ex.getResponseStatus() != null && ex.getResponseStatus() == 200 &&
