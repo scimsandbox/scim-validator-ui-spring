@@ -155,6 +155,11 @@ public class ValidationRunService {
     @Autowired(required = false)
     private PlatformTransactionManager transactionManager;
 
+    @Autowired(required = false)
+    private SpecCatalogService specCatalogService;
+
+    public static final int DEFAULT_DISCOVERED_TEST_COUNT = 274;
+
     public record PendingReconciliation(
             String actorEmail,
             CompliancePublishRequest request,
@@ -1009,6 +1014,9 @@ public class ValidationRunService {
     }
 
     int discoverTestCount(String baseUrl, String authToken) {
+        int fallbackCount = specCatalogService != null && specCatalogService.getTotalTestsCount() > 0
+                ? specCatalogService.getTotalTestsCount()
+                : DEFAULT_DISCOVERED_TEST_COUNT;
         try {
             if (baseUrl != null && !baseUrl.isBlank()) {
                 ValidatorConfiguration.useRunOverrides(baseUrl, authToken);
@@ -1017,10 +1025,10 @@ public class ValidationRunService {
             LauncherDiscoveryRequest request = buildRequest();
             TestPlan plan = launcher.discover(request);
             long count = plan.countTestIdentifiers(TestIdentifier::isTest);
-            return count > 0 ? (int) count : 250;
+            return count > 0 ? (int) count : fallbackCount;
         } catch (Throwable ex) {
             log.warn("Could not discover test plan count", ex);
-            return 250;
+            return fallbackCount;
         } finally {
             ValidatorConfiguration.clearRunOverrides();
         }

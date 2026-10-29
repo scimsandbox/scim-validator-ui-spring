@@ -1499,7 +1499,7 @@
                             <div class="score-stat-key">Core Conformance</div>
                         </div>
                         <div class="score-stat-box">
-                            <div class="score-stat-val" th:text="${scorecard.activeRequirementsCount + ' / ' + scorecard.catalogRequirementsTotal}">147 / 157</div>
+                            <div class="score-stat-val" th:text="${scorecard.activeRequirementsCount + ' / ' + scorecard.catalogRequirementsTotal}">157 / 159</div>
                             <div class="score-stat-key">Active Requirements</div>
                         </div>
                         <div class="score-stat-box">
@@ -1507,7 +1507,7 @@
                             <div class="score-stat-key">Capabilities Compliant</div>
                         </div>
                         <div class="score-stat-box">
-                            <div class="score-stat-val" th:text="${#numbers.formatDecimal((scorecard.mustBreakdown.earnedPoints + scorecard.shouldBreakdown.earnedPoints + scorecard.mayBreakdown.earnedPoints), 1, 0) + ' / ' + #numbers.formatDecimal((scorecard.mustBreakdown.totalPoints + scorecard.shouldBreakdown.totalPoints + scorecard.mayBreakdown.totalPoints), 1, 0)}">434 / 434</div>
+                            <div class="score-stat-val" th:text="${#numbers.formatDecimal((scorecard.mustBreakdown.earnedPoints + scorecard.shouldBreakdown.earnedPoints + scorecard.mayBreakdown.earnedPoints), 1, 0) + ' / ' + #numbers.formatDecimal((scorecard.mustBreakdown.totalPoints + scorecard.shouldBreakdown.totalPoints + scorecard.mayBreakdown.totalPoints), 1, 0)}">430 / 430</div>
                             <div class="score-stat-key">Normative Points</div>
                         </div>
                     </div>
@@ -1637,12 +1637,12 @@
                 <summary class="matrix-summary">
                     <div class="matrix-summary-content">
                         <svg class="matrix-chevron" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
-                        <span>RFC Requirement Traceability Matrix (<span th:text="${scorecard.catalogRequirementsTotal}">157</span> Requirements)</span>
+                        <span>RFC Requirement Traceability Matrix (<span th:text="${scorecard.catalogRequirementsTotal}">159</span> Requirements)</span>
                     </div>
                     <div style="display: flex; gap: 8px; font-size: 11.5px;">
-                        <span class="status-badge status-success" th:text="${scorecard.activeRequirementsCount + ' Active'}">147 Active</span>
-                        <span class="status-badge status-aborted" th:text="${scorecard.untestedRequirementsCount + ' Untested'}">10 Untested</span>
-                        <span class="status-badge status-error" th:if="${scorecard.excludedRequirementsCount > 0}" th:text="${scorecard.excludedRequirementsCount + ' Excluded'}">0 Excluded</span>
+                        <span class="status-badge status-success" th:text="${scorecard.activeRequirementsCount + ' Active'}">157 Active</span>
+                        <span class="status-badge status-aborted" th:text="${scorecard.untestedRequirementsCount + ' Untested'}">0 Untested</span>
+                        <span class="status-badge status-error" th:if="${scorecard.excludedRequirementsCount > 0}" th:text="${scorecard.excludedRequirementsCount + ' Excluded'}">2 Excluded</span>
                     </div>
                 </summary>
                 <div class="matrix-body">
@@ -1651,27 +1651,27 @@
                         <div class="rfc-summary-card active" onclick="filterMatrixByRfc('ALL', this)">
                             <div class="rfc-card-title">All RFC Catalogs</div>
                             <div class="rfc-card-score" th:text="${scorecard.activeRequirementsCount > 0 ? scorecard.coreScore + '%' : 'N/A'}">100%</div>
-                            <div class="rfc-card-sub" th:text="${scorecard.catalogRequirementsTotal + ' total requirements'}">157 total requirements</div>
+                            <div class="rfc-card-sub" th:text="${scorecard.catalogRequirementsTotal + ' total requirements'}">159 total requirements</div>
                         </div>
                         <div class="rfc-summary-card" th:if="${scorecard.rfcSummaries.containsKey('7643')}" onclick="filterMatrixByRfc('7643', this)">
                             <div class="rfc-card-title">RFC 7643: Schemas</div>
                             <div class="rfc-card-score" th:text="${scorecard.rfcSummaries.get('7643').activeRequirements > 0 ? scorecard.rfcSummaries.get('7643').conformancePercent + '%' : 'N/A'}">100%</div>
-                            <div class="rfc-card-sub" th:text="${scorecard.rfcSummaries.get('7643').activeRequirements + '/' + scorecard.rfcSummaries.get('7643').totalRequirements + ' active reqs'}">48 active reqs</div>
+                            <div class="rfc-card-sub" th:text="${scorecard.rfcSummaries.get('7643').activeRequirements + '/' + scorecard.rfcSummaries.get('7643').totalRequirements + ' active reqs'}">49/50 active reqs</div>
                         </div>
                         <div class="rfc-summary-card" th:if="${scorecard.rfcSummaries.containsKey('7644')}" onclick="filterMatrixByRfc('7644', this)">
                             <div class="rfc-card-title">RFC 7644: Protocol</div>
                             <div class="rfc-card-score" th:text="${scorecard.rfcSummaries.get('7644').activeRequirements > 0 ? scorecard.rfcSummaries.get('7644').conformancePercent + '%' : 'N/A'}">100%</div>
-                            <div class="rfc-card-sub" th:text="${scorecard.rfcSummaries.get('7644').activeRequirements + '/' + scorecard.rfcSummaries.get('7644').totalRequirements + ' active reqs'}">96 active reqs</div>
+                            <div class="rfc-card-sub" th:text="${scorecard.rfcSummaries.get('7644').activeRequirements + '/' + scorecard.rfcSummaries.get('7644').totalRequirements + ' active reqs'}">95/96 active reqs</div>
                         </div>
                         <div class="rfc-summary-card" th:if="${scorecard.rfcSummaries.containsKey('9865')}" onclick="filterMatrixByRfc('9865', this)">
                             <div class="rfc-card-title">RFC 9865: Cursor</div>
                             <div class="rfc-card-score" th:text="${scorecard.rfcSummaries.get('9865').activeRequirements > 0 ? scorecard.rfcSummaries.get('9865').conformancePercent + '%' : 'N/A'}">100%</div>
-                            <div class="rfc-card-sub" th:text="${scorecard.rfcSummaries.get('9865').activeRequirements + '/' + scorecard.rfcSummaries.get('9865').totalRequirements + ' active reqs'}">8 active reqs</div>
+                            <div class="rfc-card-sub" th:text="${scorecard.rfcSummaries.get('9865').activeRequirements + '/' + scorecard.rfcSummaries.get('9865').totalRequirements + ' active reqs'}">8/8 active reqs</div>
                         </div>
                         <div class="rfc-summary-card" th:if="${scorecard.rfcSummaries.containsKey('9967')}" onclick="filterMatrixByRfc('9967', this)">
                             <div class="rfc-card-title">RFC 9967: Async</div>
                             <div class="rfc-card-score" th:text="${scorecard.rfcSummaries.get('9967').activeRequirements > 0 ? scorecard.rfcSummaries.get('9967').conformancePercent + '%' : 'N/A'}">100%</div>
-                            <div class="rfc-card-sub" th:text="${scorecard.rfcSummaries.get('9967').activeRequirements + '/' + scorecard.rfcSummaries.get('9967').totalRequirements + ' active reqs'}">5 active reqs</div>
+                            <div class="rfc-card-sub" th:text="${scorecard.rfcSummaries.get('9967').activeRequirements + '/' + scorecard.rfcSummaries.get('9967').totalRequirements + ' active reqs'}">5/5 active reqs</div>
                         </div>
                     </div>
 
@@ -1719,12 +1719,12 @@
                                            target="_blank"
                                            rel="noopener noreferrer"
                                            class="req-rfc-link"
-                                           th:title="${'Open RFC ' + req.rfc + ' §' + req.section + ' on IETF RFC Editor'}">
-                                            <span th:text="${'RFC ' + req.rfc + ' §' + req.section}">RFC 7644 §4</span>
+                                           th:title="${'Open ' + req.rfcLabel() + ' on IETF RFC Editor'}">
+                                            <span th:text="${req.rfcLabel()}">RFC 7644 §4</span>
                                             <span aria-hidden="true">↗</span>
                                         </a>
                                         <span th:if="${req.rfcUrl() == null}"
-                                              th:text="${'RFC ' + req.rfc + ' §' + req.section}">RFC 7644 §4</span>
+                                              th:text="${req.rfcLabel()}">RFC 7644 §4</span>
                                     </div>
                                 </td>
                                 <td class="req-title-cell" th:text="${req.title}">

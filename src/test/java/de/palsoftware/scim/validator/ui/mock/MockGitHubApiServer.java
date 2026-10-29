@@ -43,6 +43,7 @@ public class MockGitHubApiServer implements AutoCloseable {
     private int branchUpdateConflictRemainingCount = 0;
     private boolean simulateBranchExists = false;
     private boolean simulateAuthFailure = false;
+    private volatile java.util.function.Consumer<RecordedRequest> requestInterceptor = null;
 
     public record RecordedRequest(
             String method,
@@ -97,6 +98,11 @@ public class MockGitHubApiServer implements AutoCloseable {
         simulateBranchExists = false;
         simulateAuthFailure = false;
         existingIndexJsonContent = null;
+        requestInterceptor = null;
+    }
+
+    public void setRequestInterceptor(java.util.function.Consumer<RecordedRequest> requestInterceptor) {
+        this.requestInterceptor = requestInterceptor;
     }
 
     public void setExistingIndexJson(String json) {
@@ -176,7 +182,12 @@ public class MockGitHubApiServer implements AutoCloseable {
                 }
                 String body = new String(bodyBytes, StandardCharsets.UTF_8);
 
-                recordedRequests.add(new RecordedRequest(method, path, query, headers, body, Instant.now()));
+                RecordedRequest recordedRequest = new RecordedRequest(method, path, query, headers, body, Instant.now());
+                recordedRequests.add(recordedRequest);
+                var interceptor = requestInterceptor;
+                if (interceptor != null) {
+                    interceptor.accept(recordedRequest);
+                }
 
                 if (simulateAuthFailure) {
                     sendJson(exchange, 401, Map.of("message", "Bad credentials"));

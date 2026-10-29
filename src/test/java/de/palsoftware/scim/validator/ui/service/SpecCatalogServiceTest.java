@@ -1,5 +1,6 @@
 package de.palsoftware.scim.validator.ui.service;
 
+import de.palsoftware.scim.validator.ui.model.spec.RequirementTraceResult;
 import de.palsoftware.scim.validator.ui.model.spec.SpecRequirement;
 import de.palsoftware.scim.validator.ui.model.spec.TestSpecMapping;
 import org.junit.jupiter.api.BeforeAll;
@@ -36,6 +37,10 @@ class SpecCatalogServiceTest {
     void testRfcCatalogDistribution() {
         Map<String, SpecRequirement> reqs = service.getRequirements();
 
+        // Note: rfc7643-requirements.yaml contains 49 entries and rfc7644-requirements.yaml contains 97 entries,
+        // while the runtime rfc attribute distribution is 50 ("7643") and 96 ("7644") because RFC7644-4-R4 in
+        // rfc7644-requirements.yaml declares rfc: "7643", section: "5" (referencing the ServiceProviderConfig
+        // schema definition in RFC 7643 §5).
         long rfc7643Count = reqs.values().stream().filter(r -> "7643".equals(r.rfc())).count();
         long rfc7644Count = reqs.values().stream().filter(r -> "7644".equals(r.rfc())).count();
         long rfc9865Count = reqs.values().stream().filter(r -> "9865".equals(r.rfc())).count();
@@ -168,11 +173,49 @@ class SpecCatalogServiceTest {
     }
 
     @Test
-    @DisplayName("Every catalog requirement generates a valid RFC Editor section URL")
+    @DisplayName("Every catalog requirement generates a valid RFC Editor section URL and label")
     void testRfcUrlGeneration() {
         for (SpecRequirement req : service.getRequirements().values()) {
             assertThat(req.rfcUrl())
                     .isEqualTo("https://www.rfc-editor.org/rfc/rfc" + req.rfc() + "#section-" + req.section());
+            assertThat(req.rfcLabel())
+                    .isEqualTo("RFC " + req.rfc() + " §" + req.section());
         }
+    }
+
+    @Test
+    @DisplayName("rfcUrl() and rfcLabel() handle null and blank rfc or section safely")
+    void testRfcUrlAndLabelBlankSectionAndRfcSafety() {
+        // Blank or null section omits #section- and §
+        SpecRequirement noSectionNull = new SpecRequirement(
+                "REQ-1", "7644", null, "Title", "MUST", "none", "response", "tested", "");
+        assertThat(noSectionNull.rfcUrl()).isEqualTo("https://www.rfc-editor.org/rfc/rfc7644");
+        assertThat(noSectionNull.rfcLabel()).isEqualTo("RFC 7644");
+
+        SpecRequirement noSectionBlank = new SpecRequirement(
+                "REQ-2", " 7643 ", "   ", "Title", "MUST", "none", "response", "tested", "");
+        assertThat(noSectionBlank.rfcUrl()).isEqualTo("https://www.rfc-editor.org/rfc/rfc7643");
+        assertThat(noSectionBlank.rfcLabel()).isEqualTo("RFC 7643");
+
+        RequirementTraceResult traceBlankSection = new RequirementTraceResult(
+                "REQ-2", "7643", "", "Title", "MUST", 3, "none", true, 1, 1, 1, 0, 0, 3.0, "COMPLIANT", List.of("T1"));
+        assertThat(traceBlankSection.rfcUrl()).isEqualTo("https://www.rfc-editor.org/rfc/rfc7643");
+        assertThat(traceBlankSection.rfcLabel()).isEqualTo("RFC 7643");
+
+        // Blank or null rfc returns null for rfcUrl() and empty string for rfcLabel()
+        SpecRequirement noRfcNull = new SpecRequirement(
+                "REQ-3", null, "4", "Title", "MUST", "none", "response", "tested", "");
+        assertThat(noRfcNull.rfcUrl()).isNull();
+        assertThat(noRfcNull.rfcLabel()).isEmpty();
+
+        SpecRequirement noRfcBlank = new SpecRequirement(
+                "REQ-4", "   ", "4", "Title", "MUST", "none", "response", "tested", "");
+        assertThat(noRfcBlank.rfcUrl()).isNull();
+        assertThat(noRfcBlank.rfcLabel()).isEmpty();
+
+        RequirementTraceResult traceNullRfc = new RequirementTraceResult(
+                "REQ-3", null, null, "Title", "MUST", 3, "none", false, 0, 0, 0, 0, 0, 0.0, "UNTESTED", List.of());
+        assertThat(traceNullRfc.rfcUrl()).isNull();
+        assertThat(traceNullRfc.rfcLabel()).isEmpty();
     }
 }

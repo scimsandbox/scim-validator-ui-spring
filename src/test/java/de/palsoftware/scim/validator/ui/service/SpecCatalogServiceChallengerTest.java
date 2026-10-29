@@ -26,7 +26,7 @@ import static org.assertj.core.api.Assertions.*;
 /**
  * Empirical Adversarial Challenger Test Suite for Milestone 2:
  * 1. SpecCatalogService reflection stability and classloading safety (verifying initialize=false prevents ScimBaseSpec crash).
- * 2. Catalog completeness invariants (157 requirements across 4 RFCs, normative levels & weights).
+ * 2. Catalog completeness invariants (159 requirements across 4 RFCs, normative levels & weights).
  * 3. Composite capabilities extraction and scoring (PAT_20, FLT_17, FLT_40, CUR_05).
  * 4. Safe handling of vintage runs without HTTP exchanges (zero NPEs).
  */
@@ -187,6 +187,10 @@ public class SpecCatalogServiceChallengerTest {
         @DisplayName("INVARIANT: Raw YAML files contain exactly 159 unique requirement definitions (zero duplicate IDs)")
         void testRawYamlCountAndNoDuplicateIds() throws Exception {
             Yaml yaml = new Yaml();
+            // Note: rfc7643-requirements.yaml has 49 entries and rfc7644-requirements.yaml has 97 entries,
+            // while runtime rfc attribute distribution is 50 ("7643") and 96 ("7644") because RFC7644-4-R4 in
+            // rfc7644-requirements.yaml declares rfc: "7643", section: "5" (referencing the ServiceProviderConfig
+            // schema definition in RFC 7643 §5).
             Map<String, Integer> expectedFileCounts = Map.of(
                     "classpath:spec/rfc7643-requirements.yaml", 49,
                     "classpath:spec/rfc7644-requirements.yaml", 97,
@@ -709,7 +713,7 @@ public class SpecCatalogServiceChallengerTest {
         }
 
         @Test
-        @DisplayName("CHALLENGE 2: All 8 Phase 1 requirements have executable @SpecRef mappings")
+        @DisplayName("CHALLENGE 2: All 8 Phase 1 requirements have executable @SpecRef mappings and exact dispositions (tested for core, optional for capability-gated)")
         void testAll8Phase1RequirementsMapped() {
             Map<String, List<String>> expectedMappings = Map.of(
                     "RFC7643-2.2-R7", List.of("SCH_16"),
@@ -721,16 +725,23 @@ public class SpecCatalogServiceChallengerTest {
                     "RFC7644-3.5.2-R4", List.of("PAT_01", "PAT_28"),
                     "RFC7644-3.5.2.1-R3", List.of("PAT_31")
             );
+            Set<String> expectedCoreRequirements = Set.of(
+                    "RFC7643-2.2-R7", "RFC7643-2.3.7-R2", "RFC7643-4.2-R3"
+            );
 
             for (Map.Entry<String, List<String>> entry : expectedMappings.entrySet()) {
                 String reqId = entry.getKey();
                 List<String> expectedTestIds = entry.getValue();
 
-                // Requirement exists in catalog
+                // Requirement exists in catalog; core requirements have disposition 'tested' and capability-gated requirements have 'optional'
                 Optional<SpecRequirement> reqOpt = service.getRequirement(reqId);
                 assertThat(reqOpt).as("Requirement %s must exist in catalog", reqId).isPresent();
                 SpecRequirement req = reqOpt.get();
-                assertThat(req.disposition()).as("Requirement %s disposition must be 'tested' or 'optional'", reqId).isIn("tested", "optional");
+                assertThat(req.isCore()).isEqualTo(expectedCoreRequirements.contains(reqId));
+                String expectedDisposition = req.isCore() ? "tested" : "optional";
+                assertThat(req.disposition())
+                        .as("Requirement %s (core=%s) disposition must be '%s'", reqId, req.isCore(), expectedDisposition)
+                        .isEqualTo(expectedDisposition);
 
                 // Mapped test list contains expected tests
                 List<String> mappedTests = service.getTestsForRequirement(reqId);
@@ -861,7 +872,8 @@ public class SpecCatalogServiceChallengerTest {
             assertThat(activeDenominator).isEqualTo(430.0);
             assertThat(scorecard.mustBreakdown().totalPoints()).isEqualTo(130 * 3.0); // 132 - 2 na MUSTs = 130 MUSTs = 390.0
 
-            // Adding a bogus test result for RFC7643-9.2-R1 must NOT be counted as active or untested
+            // Adding an unmapped test result (DUMMY_NA_TEST) must not cause na requirements
+            // (RFC7643-9.2-R1, RFC7644-7.2-R1) to be counted as active or untested
             ValidationTestResult dummyNaResult = new ValidationTestResult();
             dummyNaResult.setTestIdentifier("DUMMY_NA_TEST");
             dummyNaResult.setStatus("FAILED");
@@ -875,4 +887,3 @@ public class SpecCatalogServiceChallengerTest {
         }
     }
 }
-

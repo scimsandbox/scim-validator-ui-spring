@@ -473,7 +473,28 @@ class GitHubCompliancePublisherChallengerTest {
         UUID run2 = UUID.randomUUID();
 
         CountDownLatch startLatch = new CountDownLatch(1);
+        CountDownLatch bothInFlightAtTreeStep = new CountDownLatch(2);
         CountDownLatch doneLatch = new CountDownLatch(2);
+        AtomicInteger inFlightTrees = new AtomicInteger(0);
+        AtomicInteger maxConcurrentTrees = new AtomicInteger(0);
+        java.util.concurrent.atomic.AtomicBoolean overlapVerified = new java.util.concurrent.atomic.AtomicBoolean(false);
+
+        mockServer.setRequestInterceptor(req -> {
+            if ("POST".equalsIgnoreCase(req.method()) && req.path().endsWith("/git/trees")) {
+                int current = inFlightTrees.incrementAndGet();
+                maxConcurrentTrees.accumulateAndGet(current, Math::max);
+                bothInFlightAtTreeStep.countDown();
+                try {
+                    if (bothInFlightAtTreeStep.await(5, TimeUnit.SECONDS)) {
+                        overlapVerified.set(true);
+                    }
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                } finally {
+                    inFlightTrees.decrementAndGet();
+                }
+            }
+        });
 
         List<CompliancePublicationResult> results = new CopyOnWriteArrayList<>();
         List<Throwable> errors = new CopyOnWriteArrayList<>();
@@ -515,6 +536,10 @@ class GitHubCompliancePublisherChallengerTest {
         executor.shutdown();
 
         assertThat(errors).isEmpty();
+        assertThat(overlapVerified.get())
+                .as("Both distinct publications must execute GitHub API requests concurrently in-flight")
+                .isTrue();
+        assertThat(maxConcurrentTrees.get()).isEqualTo(2);
         assertThat(results).hasSize(2);
         assertThat(results.get(0).success()).isTrue();
         assertThat(results.get(1).success()).isTrue();
@@ -931,40 +956,86 @@ class GitHubCompliancePublisherChallengerTest {
     @DisplayName("Post-Merge Reconciliation: When PR merges on GitHub and DB finalization fails, tryReconcilePendingPublication completes publication")
     void testPostMergeReconciliationWorkflow() {
         UUID runId = UUID.randomUUID();
+        ValidationRunServiceChallengerTest.InMemoryRunRepository runRepository =
+                new ValidationRunServiceChallengerTest.InMemoryRunRepository();
+        ValidationRunServiceChallengerTest.InMemoryUserRepository userRepository =
+                new ValidationRunServiceChallengerTest.InMemoryUserRepository();
+        java.util.concurrent.atomic.AtomicBoolean dbOutageDuringFinalization =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+        ValidationRunServiceChallengerTest.InMemoryPublicationRepository publicationRepository =
+                new ValidationRunServiceChallengerTest.InMemoryPublicationRepository() {
+                    @Override
+                    public Optional<de.palsoftware.scim.validator.ui.model.ValidationRunPublication> findById(UUID uuid) {
+                        if (dbOutageDuringFinalization.get()) {
+                            throw new RuntimeException("Simulated transient DB failure during post-merge finalization");
+                        }
+                        return super.findById(uuid);
+                    }
+
+                    @Override
+                    public <S extends de.palsoftware.scim.validator.ui.model.ValidationRunPublication> S save(S entity) {
+                        if (dbOutageDuringFinalization.get()) {
+                            throw new RuntimeException("Simulated transient DB failure during post-merge finalization");
+                        }
+                        return super.save(entity);
+                    }
+                };
+
+        de.palsoftware.scim.validator.ui.model.ValidationMgmtUser owner =
+                new de.palsoftware.scim.validator.ui.model.ValidationMgmtUser("actor@example.com", OffsetDateTime.now(ZoneOffset.UTC));
+        userRepository.save(owner);
+
         de.palsoftware.scim.validator.ui.model.ValidationRun run = new de.palsoftware.scim.validator.ui.model.ValidationRun();
         org.springframework.test.util.ReflectionTestUtils.setField(run, "id", runId);
         run.setName("Reconciliation Run");
         run.setTargetUrl("https://scim.example.com");
         run.setStatus("PASSED");
+        run.setCreatedByUser(owner);
+        runRepository.save(run);
 
         CompliancePublishRequest request = new CompliancePublishRequest(
                 runId, "Reconciled Prod", "reconciled-prod", "1.0.0",
                 "Vendor", "https://example.com", "MIT", 95, "EMERALD", 10, 10
         );
 
-        CompliancePublicationResult ghResult = CompliancePublicationResult.success(
-                runId,
-                "https://github.com/scimsandbox/scim-website/pull/99",
-                "https://scimsandbox.net/compliance/?run=" + runId,
-                "https://scimsandbox.net/compliance/badges/" + runId + ".svg",
-                "commitSha123456",
-                OffsetDateTime.now(ZoneOffset.UTC)
-        );
+        ValidationRunService runService = new ValidationRunService(
+                runRepository, userRepository, null, null, publicationRepository, null, null);
 
-        ValidationRunService runService = new ValidationRunService(null, null, null, null, null, null, null);
+        // 1. Reserve pending publication slot prior to GitHub merge
+        runService.reservePublication(run, "actor@example.com", request);
+        assertThat(run.hasPendingReservation()).isTrue();
+        assertThat(run.isPublished()).isFalse();
+
+        // 2. GitHub publish succeeds and merges PR
+        CompliancePublicationResult ghResult = publisherService.publish(request);
+        assertThat(ghResult.success()).isTrue();
+
+        // 3. Initial post-merge DB finalization fails due to transient DB outage -> triggers markReconciliationRequired
+        dbOutageDuringFinalization.set(true);
+        assertThatThrownBy(() -> runService.recordPublication(run, "actor@example.com", request, ghResult))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("Simulated transient DB failure");
         runService.markReconciliationRequired(runId, "actor@example.com", request, ghResult);
 
-        // Invariant 1: run is flagged as requiring reconciliation
+        // Invariant 1: run is flagged as requiring reconciliation and is not yet marked published
+        dbOutageDuringFinalization.set(false);
         assertThat(runService.isReconciliationRequired(runId)).isTrue();
+        assertThat(run.isPublished()).isFalse();
+        assertThat(runService.getPublication(runId)).isEmpty();
 
-        // Invariant 2: tryReconcilePendingPublication succeeds and returns the pending publication result
+        // 4. DB recovers; tryReconcilePendingPublication succeeds, persists the publication, and marks run as published
         Optional<CompliancePublicationResult> reconciled = runService.tryReconcilePendingPublication(run);
         assertThat(reconciled).isPresent();
         assertThat(reconciled.get().runId()).isEqualTo(runId);
         assertThat(reconciled.get().prUrl()).isEqualTo(ghResult.prUrl());
 
-        // Invariant 3: reconciliationRequired flag is cleared
+        // Invariant 3: reconciliationRequired flag is cleared and publication is persisted
         assertThat(runService.isReconciliationRequired(runId)).isFalse();
+        assertThat(run.isPublished()).isTrue();
+        assertThat(runService.getPublication(runId)).isPresent();
+        assertThat(runService.getPublication(runId).get().isPendingReservation()).isFalse();
+        assertThat(runService.getPublication(runId).get().getPrUrl()).isEqualTo(ghResult.prUrl());
+        assertThat(runService.getPublication(runId).get().getProductSlug()).isEqualTo("reconciled-prod");
     }
 
     // =========================================================================
