@@ -376,17 +376,18 @@ public class ComplianceScoreServiceChallengerTest {
 
             ComplianceScorecardView scorecard = scoreService.computeScorecard(run, testResults, Collections.emptyList());
 
-            // Active scope includes filter requirements and search requirements (exercised by composite tests FLT_17 and FLT_40)
+            // Active scope includes filter requirements; aborted core requirements remain in denominator
             assertThat(scorecard.activeRequirementsCount()).isGreaterThan(0);
-            assertThat(scorecard.coreScore()).isEqualTo(100);
-            assertThat(scorecard.colourGradient()).isEqualTo(ColourGradient.EMERALD);
-            // Because < 50% of core requirements were executed, run is not eligible for publishing
+            assertThat(scorecard.coreScore()).isEqualTo(23);
+            assertThat(scorecard.colourGradient()).isEqualTo(ColourGradient.RED);
+            // Because core score is below threshold and < 50% of core requirements were executed, run is not eligible
+            assertThat(scorecard.coreCoveragePercent()).isLessThan(50);
             assertThat(scorecard.publishEligible()).isFalse();
             assertThat(scorecard.publishIneligibilityReason())
-                    .contains("Core requirement execution coverage");
+                    .contains("publishing threshold");
             // filter, search, and enterprise are supported due to composite tests in A5_FilteringSpec
             assertThat(scorecard.supportedCapabilitiesCount()).isEqualTo(3);
-            assertThat(scorecard.compliantCapabilitiesCount()).isEqualTo(3);
+            assertThat(scorecard.compliantCapabilitiesCount()).isEqualTo(1);
 
             Optional<CapabilityStatus> filterCap = scorecard.capabilities().stream()
                     .filter(c -> "filter".equals(c.capability())).findFirst();
@@ -397,7 +398,7 @@ public class ComplianceScoreServiceChallengerTest {
             Optional<CapabilityStatus> searchCap = scorecard.capabilities().stream()
                     .filter(c -> "search".equals(c.capability())).findFirst();
             assertThat(searchCap).isPresent();
-            assertThat(searchCap.get().status()).isEqualTo(CapabilitySupportLevel.SUPPORTED_COMPLIANT);
+            assertThat(searchCap.get().status()).isEqualTo(CapabilitySupportLevel.SUPPORTED_PARTIAL);
         }
 
         @Test
@@ -511,8 +512,8 @@ public class ComplianceScoreServiceChallengerTest {
 
             // REQ-MUST: weight 3, mapped to T1, T2, T3, T4.
             // Outcome: 2 SUCCESS, 1 FAILED, 1 ABORTED.
-            // Executed tests = 3. Passed = 2.
-            // Earned = 3 * (2 / 3) = 2.0.
+            // All-inclusive denominator: total mapped tests = 4. Passed = 2.
+            // Earned = 3 * (2 / 4) = 1.5.
             SpecRequirement reqMust = new SpecRequirement(
                     "REQ-MUST", "7644", "3.1", "Must Req", "MUST", "none", "response", "tested", "");
 
@@ -544,15 +545,15 @@ public class ComplianceScoreServiceChallengerTest {
 
             ComplianceScorecardView scorecard = service.computeScorecard(run, results, Collections.emptyList());
 
-            // Total earned = 2.0 + 1.0 = 3.0. Total weight = 3 + 2 = 5.0.
-            // Score = round(100 * 3.0 / 5.0) = 60%.
-            assertThat(scorecard.coreScore()).isEqualTo(60);
+            // Total earned = 1.5 + 1.0 = 2.5. Total weight = 3 + 2 = 5.0.
+            // Score = round(100 * 2.5 / 5.0) = 50%.
+            assertThat(scorecard.coreScore()).isEqualTo(50);
             assertThat(scorecard.colourGradient()).isEqualTo(ColourGradient.ORANGE);
             assertThat(scorecard.publishEligible()).isTrue();
 
-            assertThat(scorecard.mustBreakdown().earnedPoints()).isEqualTo(2.0);
+            assertThat(scorecard.mustBreakdown().earnedPoints()).isEqualTo(1.5);
             assertThat(scorecard.mustBreakdown().totalPoints()).isEqualTo(3.0);
-            assertThat(scorecard.mustBreakdown().conformancePercent()).isEqualTo(67); // round(200 / 3) = 67%
+            assertThat(scorecard.mustBreakdown().conformancePercent()).isEqualTo(50); // round(150 / 3) = 50%
             assertThat(scorecard.mustBreakdown().partialRequirements()).isEqualTo(1);
 
             assertThat(scorecard.shouldBreakdown().earnedPoints()).isEqualTo(1.0);
@@ -622,7 +623,16 @@ public class ComplianceScoreServiceChallengerTest {
                 "'SCHEMA_03', 'SCHEMA_03'",
                 "'  GRP_01: Add Member  ', 'GRP_01'",
                 "'PAG_05: Cursor next', 'PAG_05'",
-                "'DSC_01: ServiceProviderConfig', 'DSC_01'"
+                "'DSC_01: ServiceProviderConfig', 'DSC_01'",
+                "'SCH_13a: User schema attributes', 'SCH_13a'",
+                "'SCH_13b: User schema complex', 'SCH_13b'",
+                "'SCH_13c: Group schema attributes', 'SCH_13c'",
+                "'SCH_13d: EnterpriseUser schema', 'SCH_13d'",
+                "'SCH_13e: ServiceProviderConfig schema', 'SCH_13e'",
+                "'SCH_13f: ResourceType and Schema', 'SCH_13f'",
+                "'ASY_01b: Async polling status', 'ASY_01b'",
+                "'SCH_13a', 'SCH_13a'",
+                "'ASY_01b', 'ASY_01b'"
         })
         void testValidIdExtraction(String text, String expectedId) {
             assertThat(ComplianceScoreService.extractTestId(text)).isEqualTo(expectedId);

@@ -94,6 +94,15 @@ class ComplianceScoreServiceTest {
 
         assertThat(scorecard.getScoreBadgeText()).isEqualTo("100%");
         assertThat(scorecard.getCapabilityBadgeText()).isEqualTo("10/10 caps");
+        assertThat(scorecard.coreOnlyScore()).isEqualTo(100);
+        assertThat(scorecard.coreOnlyEarnedPoints()).isEqualTo(238.0);
+        assertThat(scorecard.coreOnlyTotalPoints()).isEqualTo(238.0);
+        assertThat(scorecard.coreCoveragePercent()).isEqualTo(100);
+        assertThat(scorecard.conformanceTierLabel()).isEqualTo("Certified RFC Compliant");
+        assertThat(scoreService.computeCoreOnlyScore(scorecard)).isEqualTo(100);
+        assertThat(scoreService.computeCoreOnlyEarnedPoints(scorecard)).isEqualTo(238.0);
+        assertThat(scoreService.computeCoreOnlyTotalPoints(scorecard)).isEqualTo(238.0);
+        assertThat(scoreService.computeActiveScopeScore(scorecard)).isEqualTo(100);
 
         for (RequirementTraceResult trace : scorecard.requirementMatrix()) {
             assertThat(trace.rfcUrl())
@@ -275,8 +284,8 @@ class ComplianceScoreServiceTest {
         Optional<CapabilityStatus> cpTrue = cardTrue.capabilities().stream()
                 .filter(c -> "changePassword".equals(c.capability())).findFirst();
         assertThat(cpTrue).isPresent();
-        assertThat(cpTrue.get().status()).isEqualTo(CapabilitySupportLevel.SUPPORTED_COMPLIANT);
-        assertThat(cpTrue.get().isSupported()).isTrue();
+        assertThat(cpTrue.get().status()).isEqualTo(CapabilitySupportLevel.UNSUPPORTED);
+        assertThat(cpTrue.get().isSupported()).isFalse();
 
         ValidationHttpExchange exFalse = createExchange(
                 "https://example.com/scim/v2/ServiceProviderConfig",
@@ -662,6 +671,441 @@ class ComplianceScoreServiceTest {
                 .orElseThrow();
         assertThat(trace343R1BothActive.status()).isEqualTo("UNTESTED");
         assertThat(bothActiveScorecard.untestedRequirementsCount()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("TASK-58: Requirement with mixed SUCCESS and ABORTED tests is marked PARTIAL and intra-requirement denominator is total mapped tests")
+    void testMixedSuccessAndAbortedRequirement_MarkedPartial_DenominatorMaintained() {
+        SpecCatalogService mockCatalog = mock(SpecCatalogService.class);
+        SpecRequirement req = new SpecRequirement(
+                "REQ-MIXED", "7644", "3.1", "Mixed Req", "MUST", "none", "response", "tested", "");
+
+        when(mockCatalog.getRequirements()).thenReturn(Map.of("REQ-MIXED", req));
+        when(mockCatalog.getTestsForRequirement("REQ-MIXED")).thenReturn(List.of("T_PASS", "T_ABORT"));
+        when(mockCatalog.getTestMapping("T_PASS")).thenReturn(Optional.of(new TestSpecMapping(
+                "T_PASS", "Pass", "Spec", 1, List.of("none"), List.of("REQ-MIXED"))));
+        when(mockCatalog.getTestMapping("T_ABORT")).thenReturn(Optional.of(new TestSpecMapping(
+                "T_ABORT", "Abort", "Spec", 1, List.of("none"), List.of("REQ-MIXED"))));
+        for (String cap : ComplianceScoreService.OPTIONAL_CAPABILITIES) {
+            when(mockCatalog.getTestsForCapability(cap)).thenReturn(Collections.emptyList());
+        }
+
+        ComplianceScoreService service = new ComplianceScoreService(mockCatalog);
+        ValidationRun run = createSampleRun("PASSED");
+
+        List<ValidationTestResult> testResults = List.of(
+                createTestResult("T_PASS", "T_PASS", "SUCCESS"),
+                createTestResult("T_ABORT", "T_ABORT", "ABORTED")
+        );
+
+        ComplianceScorecardView scorecard = service.computeScorecard(run, testResults, Collections.emptyList());
+        RequirementTraceResult trace = scorecard.requirementMatrix().get(0);
+
+        // TASK-58: Must be PARTIAL, not COMPLIANT
+        assertThat(trace.status()).isEqualTo("PARTIAL");
+        // TASK-57: Earned is 3 * (1 / 2) = 1.5, not 3 * (1 / 1) = 3.0
+        assertThat(trace.earnedWeight()).isEqualTo(1.5);
+        assertThat(scorecard.coreScore()).isEqualTo(50);
+        assertThat(scorecard.mustBreakdown().compliantRequirements()).isZero();
+        assertThat(scorecard.mustBreakdown().partialRequirements()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("TASK-57: Untested or aborted active requirements contribute 0.0 earned against fixed denominator")
+    void testUntestedRequirement_ContributesToDenominator_EarnsZeroPoints() {
+        SpecCatalogService mockCatalog = mock(SpecCatalogService.class);
+        SpecRequirement req1 = new SpecRequirement(
+                "REQ-1", "7644", "3.1", "Req 1", "MUST", "none", "response", "tested", "");
+        SpecRequirement req2 = new SpecRequirement(
+                "REQ-2", "7644", "3.2", "Req 2", "MUST", "none", "response", "tested", "");
+
+        when(mockCatalog.getRequirements()).thenReturn(Map.of("REQ-1", req1, "REQ-2", req2));
+        when(mockCatalog.getTestsForRequirement("REQ-1")).thenReturn(List.of("T1"));
+        when(mockCatalog.getTestsForRequirement("REQ-2")).thenReturn(List.of("T2"));
+        when(mockCatalog.getTestMapping("T1")).thenReturn(Optional.of(new TestSpecMapping(
+                "T1", "T1", "Spec", 1, List.of("none"), List.of("REQ-1"))));
+        when(mockCatalog.getTestMapping("T2")).thenReturn(Optional.of(new TestSpecMapping(
+                "T2", "T2", "Spec", 1, List.of("none"), List.of("REQ-2"))));
+        for (String cap : ComplianceScoreService.OPTIONAL_CAPABILITIES) {
+            when(mockCatalog.getTestsForCapability(cap)).thenReturn(Collections.emptyList());
+        }
+
+        ComplianceScoreService service = new ComplianceScoreService(mockCatalog);
+        ValidationRun run = createSampleRun("PASSED");
+
+        // T1 passes, T2 is aborted (executedTestsForReq == 0 for REQ-2)
+        List<ValidationTestResult> testResults = List.of(
+                createTestResult("T1", "T1", "SUCCESS"),
+                createTestResult("T2", "T2", "ABORTED")
+        );
+
+        ComplianceScorecardView scorecard = service.computeScorecard(run, testResults, Collections.emptyList());
+
+        // Without fixed denominator, REQ-2 would be dropped and score would be 100%.
+        // With fixed denominator, REQ-2 weight (3) is included in totalWeight (6), earning 0.0 -> score = 50%.
+        assertThat(scorecard.coreScore()).isEqualTo(50);
+        assertThat(scorecard.mustBreakdown().totalPoints()).isEqualTo(6.0);
+        assertThat(scorecard.mustBreakdown().earnedPoints()).isEqualTo(3.0);
+        assertThat(scorecard.mustBreakdown().conformancePercent()).isEqualTo(50);
+        assertThat(scorecard.untestedRequirementsCount()).isEqualTo(1);
+        assertThat(scorecard.activeRequirementsCount()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("TASK-61: Capability scoring requires all tests passing and zero aborts for SUPPORTED_COMPLIANT")
+    void testCapabilityRequiresAllTestsPassedAndZeroAborted_ForSupportedCompliant() {
+        ValidationRun run = createSampleRun("PASSED");
+
+        // 1. One pass and one abort -> SUPPORTED_PARTIAL
+        List<ValidationTestResult> mixedResults = List.of(
+                createTestResult("USR_25", "USR_25: Password update", "SUCCESS"),
+                createTestResult("PAT_32", "PAT_32: Password change via PATCH", "ABORTED")
+        );
+        ComplianceScorecardView mixedCard = scoreService.computeScorecard(run, mixedResults, Collections.emptyList());
+        CapabilityStatus cpMixed = mixedCard.capabilities().stream()
+                .filter(c -> "changePassword".equals(c.capability())).findFirst().orElseThrow();
+        assertThat(cpMixed.status()).isEqualTo(CapabilitySupportLevel.SUPPORTED_PARTIAL);
+        assertThat(cpMixed.passRate()).isEqualTo(50.0);
+        assertThat(cpMixed.isSupported()).isTrue();
+
+        // 2. Both pass -> SUPPORTED_COMPLIANT
+        List<ValidationTestResult> allPassResults = List.of(
+                createTestResult("USR_25", "USR_25: Password update", "SUCCESS"),
+                createTestResult("PAT_32", "PAT_32: Password change via PATCH", "SUCCESS")
+        );
+        ComplianceScorecardView compliantCard = scoreService.computeScorecard(run, allPassResults, Collections.emptyList());
+        CapabilityStatus cpCompliant = compliantCard.capabilities().stream()
+                .filter(c -> "changePassword".equals(c.capability())).findFirst().orElseThrow();
+        assertThat(cpCompliant.status()).isEqualTo(CapabilitySupportLevel.SUPPORTED_COMPLIANT);
+        assertThat(cpCompliant.passRate()).isEqualTo(100.0);
+        assertThat(cpCompliant.isSupported()).isTrue();
+    }
+
+    @Test
+    @DisplayName("TASK-62 (a): One MAY failure (430/431 = 99.77%) caps coreScore at 99 and mayBreakdown at 99 while MUST/SHOULD stay 100")
+    void test99PercentCap_OneMayFailure_CapsCoreScoreAndMayBreakdownAt99() {
+        ValidationRun run = createSampleRun("FAILED");
+
+        // 1. Real catalog: fail SCH_16 (mapped solely to MAY requirement RFC7643-2.2-R7, weight 1 -> 430 / 431 = 99.77%)
+        List<ValidationTestResult> realResults = new ArrayList<>();
+        for (TestSpecMapping mapping : catalogService.getAllMappings()) {
+            String status = "SCH_16".equals(mapping.testId()) ? "FAILED" : "SUCCESS";
+            realResults.add(createTestResult(mapping.testId(), mapping.displayName(), status));
+        }
+
+        ComplianceScorecardView realCard = scoreService.computeScorecard(run, realResults, Collections.emptyList());
+        assertThat(realCard.coreScore()).isEqualTo(99);
+        assertThat(realCard.mustBreakdown().conformancePercent()).isEqualTo(100);
+        assertThat(realCard.shouldBreakdown().conformancePercent()).isEqualTo(100);
+        assertThat(realCard.conformanceTierLabel()).isEqualTo("Excellent Conformance");
+        assertThat(realCard.formattedNormativePoints()).isEqualTo("430 / 431");
+
+        // 2. Custom catalog where MAY total is 200 and 1 MAY fails (199/200 = 99.5% -> rounds to 100, capped at 99)
+        SpecCatalogService mockCatalog = mock(SpecCatalogService.class);
+        Map<String, SpecRequirement> reqMap = new LinkedHashMap<>();
+        SpecRequirement rMust = new SpecRequirement("R-MUST", "7644", "3.1", "Must", "MUST", "none", "response", "tested", "");
+        SpecRequirement rShould = new SpecRequirement("R-SHOULD", "7644", "3.2", "Should", "SHOULD", "none", "response", "tested", "");
+        reqMap.put(rMust.id(), rMust);
+        reqMap.put(rShould.id(), rShould);
+        when(mockCatalog.getTestsForRequirement("R-MUST")).thenReturn(List.of("TM"));
+        when(mockCatalog.getTestsForRequirement("R-SHOULD")).thenReturn(List.of("TS"));
+
+        List<ValidationTestResult> customResults = new ArrayList<>();
+        customResults.add(createTestResult("TM", "TM: Must", "SUCCESS"));
+        customResults.add(createTestResult("TS", "TS: Should", "SUCCESS"));
+        for (int i = 1; i <= 200; i++) {
+            String id = "R-MAY-" + i;
+            String tid = "TMAY_" + i;
+            reqMap.put(id, new SpecRequirement(id, "7644", "3.3", "May " + i, "MAY", "none", "response", "tested", ""));
+            when(mockCatalog.getTestsForRequirement(id)).thenReturn(List.of(tid));
+            customResults.add(createTestResult(tid, tid + ": May", i == 200 ? "FAILED" : "SUCCESS"));
+        }
+        when(mockCatalog.getRequirements()).thenReturn(reqMap);
+        for (String cap : ComplianceScoreService.OPTIONAL_CAPABILITIES) {
+            when(mockCatalog.getTestsForCapability(cap)).thenReturn(Collections.emptyList());
+        }
+
+        ComplianceScoreService customService = new ComplianceScoreService(mockCatalog);
+        ComplianceScorecardView customCard = customService.computeScorecard(run, customResults, Collections.emptyList());
+        assertThat(customCard.coreScore()).isEqualTo(99);
+        assertThat(customCard.mayBreakdown().conformancePercent()).isEqualTo(99);
+        assertThat(customCard.mustBreakdown().conformancePercent()).isEqualTo(100);
+        assertThat(customCard.shouldBreakdown().conformancePercent()).isEqualTo(100);
+    }
+
+    @Test
+    @DisplayName("TASK-62 (b): One SHOULD failure (429/431 = 99.54%) caps coreScore at 99 and shouldBreakdown below 100")
+    void test99PercentCap_OneShouldFailure_CapsCoreScoreAt99AndShouldBelow100() {
+        ValidationRun run = createSampleRun("FAILED");
+
+        // Fail USR_22 (mapped solely to SHOULD requirement RFC7643-2.4-R3, weight 2 -> 429 / 431 = 99.54%)
+        List<ValidationTestResult> results = new ArrayList<>();
+        for (TestSpecMapping mapping : catalogService.getAllMappings()) {
+            String status = "USR_22".equals(mapping.testId()) ? "FAILED" : "SUCCESS";
+            results.add(createTestResult(mapping.testId(), mapping.displayName(), status));
+        }
+
+        ComplianceScorecardView scorecard = scoreService.computeScorecard(run, results, Collections.emptyList());
+        assertThat(scorecard.coreScore()).isEqualTo(99);
+        assertThat(scorecard.shouldBreakdown().conformancePercent()).isLessThan(100);
+        assertThat(scorecard.mustBreakdown().conformancePercent()).isEqualTo(100);
+        assertThat(scorecard.mayBreakdown().conformancePercent()).isEqualTo(100);
+        assertThat(scorecard.conformanceTierLabel()).isEqualTo("Excellent Conformance");
+    }
+
+    @Test
+    @DisplayName("TASK-62 (c): RfcSectionSummary 99% cap when earned < total and Math.round would be 100")
+    void test99PercentCap_RfcSectionSummary_CappedAt99WhenEarnedLessThanTotal() {
+        ValidationRun run = createSampleRun("FAILED");
+
+        // Find a test mapping to a single RFC 7644 requirement where failing that 1 test loses <= 1.0 point
+        String targetTestId = catalogService.getAllMappings().stream()
+                .filter(m -> m.specRefs().size() == 1)
+                .filter(m -> {
+                    SpecRequirement req = catalogService.getRequirement(m.specRefs().get(0)).orElse(null);
+                    int testCount = catalogService.getTestsForRequirement(m.specRefs().get(0)).size();
+                    return req != null && "7644".equals(req.rfc()) && testCount > 0 && ((double) req.getWeight() / testCount) <= 1.0;
+                })
+                .map(TestSpecMapping::testId)
+                .findFirst()
+                .orElseThrow();
+
+        List<ValidationTestResult> results = new ArrayList<>();
+        for (TestSpecMapping mapping : catalogService.getAllMappings()) {
+            String status = targetTestId.equals(mapping.testId()) ? "FAILED" : "SUCCESS";
+            results.add(createTestResult(mapping.testId(), mapping.displayName(), status));
+        }
+
+        ComplianceScorecardView scorecard = scoreService.computeScorecard(run, results, Collections.emptyList());
+        RfcSectionSummary rfc7644Summary = scorecard.rfcSummaries().get("7644");
+        assertThat(rfc7644Summary).isNotNull();
+        assertThat(rfc7644Summary.earnedPoints()).isLessThan(rfc7644Summary.totalPoints());
+        assertThat(Math.round((100.0 * rfc7644Summary.earnedPoints()) / rfc7644Summary.totalPoints())).isEqualTo(100L);
+        assertThat(rfc7644Summary.conformancePercent()).isEqualTo(99);
+    }
+
+    @Test
+    @DisplayName("TASK-62 (d): NormativeBreakdown.of caps 429.9/430.0 at 99% and keeps 430.0/430.0 at 100%")
+    void test99PercentCap_NormativeBreakdownOf_429_9Of430Is99_And430Of430Is100() {
+        NormativeBreakdown partial = NormativeBreakdown.of("MUST", 3, 143, 142, 1, 0, 429.9, 430.0);
+        assertThat(partial.conformancePercent()).isEqualTo(99);
+
+        NormativeBreakdown perfect = NormativeBreakdown.of("MUST", 3, 143, 143, 0, 0, 430.0, 430.0);
+        assertThat(perfect.conformancePercent()).isEqualTo(100);
+    }
+
+    @Test
+    @DisplayName("TASK-59 (e): Aborted optional-disposition core requirements do not penalize coreCoveragePercent")
+    void testTask59_OptionalDispositionCoreRequirementAbort_DoesNotPenalizeCoreCoverage() {
+        ValidationRun run = createSampleRun("PARTIAL");
+
+        // SCH_16 (RFC7643-2.2-R7, disposition: optional) and GRP_13, GRP_15 (RFC7643-2.3.7-R2, disposition: optional) abort
+        Set<String> abortedOptionalCoreTests = Set.of("SCH_16", "GRP_13", "GRP_15");
+        List<ValidationTestResult> results = new ArrayList<>();
+        for (TestSpecMapping mapping : catalogService.getAllMappings()) {
+            String status = abortedOptionalCoreTests.contains(mapping.testId()) ? "ABORTED" : "SUCCESS";
+            results.add(createTestResult(mapping.testId(), mapping.displayName(), status));
+        }
+
+        ComplianceScorecardView scorecard = scoreService.computeScorecard(run, results, Collections.emptyList());
+        assertThat(scorecard.coreCoveragePercent()).isEqualTo(100);
+        assertThat(scorecard.publishEligible()).isTrue();
+        assertThat(scoreService.isEligibleForPublish(scorecard, run)).isTrue();
+    }
+
+    @Test
+    @DisplayName("TASK-60 (f): SKIPPED test result status is treated identically to ABORTED in ComplianceScoreService")
+    void testSkippedStatus_TreatedIdenticallyToAbortedInScoring() {
+        ValidationRun run = createSampleRun("PARTIAL");
+
+        List<ValidationTestResult> abortedResults = new ArrayList<>();
+        List<ValidationTestResult> skippedResults = new ArrayList<>();
+        List<String> filterTests = catalogService.getTestsForCapability("filter");
+        for (TestSpecMapping mapping : catalogService.getAllMappings()) {
+            boolean isFilter = filterTests.contains(mapping.testId());
+            abortedResults.add(createTestResult(mapping.testId(), mapping.displayName(), isFilter ? "ABORTED" : "SUCCESS"));
+            skippedResults.add(createTestResult(mapping.testId(), mapping.displayName(), isFilter ? "SKIPPED" : "SUCCESS"));
+        }
+
+        ComplianceScorecardView abortedCard = scoreService.computeScorecard(run, abortedResults, Collections.emptyList());
+        ComplianceScorecardView skippedCard = scoreService.computeScorecard(run, skippedResults, Collections.emptyList());
+
+        assertThat(skippedCard.coreScore()).isEqualTo(abortedCard.coreScore());
+        assertThat(skippedCard.coreOnlyScore()).isEqualTo(abortedCard.coreOnlyScore());
+        assertThat(skippedCard.activeRequirementsCount()).isEqualTo(abortedCard.activeRequirementsCount());
+        assertThat(skippedCard.excludedRequirementsCount()).isEqualTo(abortedCard.excludedRequirementsCount());
+        assertThat(skippedCard.untestedRequirementsCount()).isEqualTo(abortedCard.untestedRequirementsCount());
+
+        CapabilityStatus filterAborted = abortedCard.capabilities().stream()
+                .filter(c -> "filter".equals(c.capability())).findFirst().orElseThrow();
+        CapabilityStatus filterSkipped = skippedCard.capabilities().stream()
+                .filter(c -> "filter".equals(c.capability())).findFirst().orElseThrow();
+        assertThat(filterSkipped.status()).isEqualTo(filterAborted.status());
+        assertThat(filterSkipped.abortedTests()).isEqualTo(filterAborted.abortedTests());
+    }
+
+    @Test
+    @DisplayName("(g): extractTestId in ComplianceScoreService and SpecCatalogService extracts SCH_13a..SCH_13f and ASY_01b")
+    void testExtractTestId_SCH13aToF_And_ASY01b() {
+        List<String> expectedIds = List.of("SCH_13a", "SCH_13b", "SCH_13c", "SCH_13d", "SCH_13e", "SCH_13f", "ASY_01b");
+        for (String id : expectedIds) {
+            assertThat(ComplianceScoreService.extractTestId(id)).isEqualTo(id);
+            assertThat(ComplianceScoreService.extractTestId(id + ": Feature description")).isEqualTo(id);
+            assertThat(catalogService.getTestMapping(id)).isPresent();
+            assertThat(catalogService.getTestMapping(id + ": Feature description")).isPresent();
+        }
+    }
+
+    @Test
+    @DisplayName("TASK-63 (h): computeCoreOnlyScore, computeCoreOnlyEarnedPoints, computeCoreOnlyTotalPoints use 238.0 denominator and 99% cap")
+    void testCoreOnlyScore_238Denominator_And99PercentCap() {
+        ValidationRun run = createSampleRun("PASSED");
+
+        // 1. Full passing run: 86 core-tested requirements = 238.0 points
+        List<ValidationTestResult> allPass = new ArrayList<>();
+        for (TestSpecMapping mapping : catalogService.getAllMappings()) {
+            allPass.add(createTestResult(mapping.testId(), mapping.displayName(), "SUCCESS"));
+        }
+        ComplianceScorecardView fullCard = scoreService.computeScorecard(run, allPass, Collections.emptyList());
+        assertThat(scoreService.computeCoreOnlyTotalPoints(fullCard)).isEqualTo(238.0);
+        assertThat(scoreService.computeCoreOnlyEarnedPoints(fullCard)).isEqualTo(238.0);
+        assertThat(scoreService.computeCoreOnlyScore(fullCard)).isEqualTo(100);
+        assertThat(fullCard.coreOnlyTotalPoints()).isEqualTo(238.0);
+        assertThat(fullCard.coreOnlyEarnedPoints()).isEqualTo(238.0);
+        assertThat(fullCard.coreOnlyScore()).isEqualTo(100);
+
+        // 2. Partial credit on a core-tested requirement that would round to 100 (loses <= 1.0 pt out of 238.0 -> >= 99.58%)
+        String targetCoreTestId = catalogService.getAllMappings().stream()
+                .filter(m -> m.specRefs().size() == 1 && m.requiredCapabilities().equals(List.of("none")))
+                .filter(m -> {
+                    SpecRequirement req = catalogService.getRequirement(m.specRefs().get(0)).orElse(null);
+                    int testCount = catalogService.getTestsForRequirement(m.specRefs().get(0)).size();
+                    return ComplianceScoreService.isCoreOnlyRequirement(req)
+                            && testCount > 0
+                            && ((double) req.getWeight() / testCount) <= 1.0;
+                })
+                .map(TestSpecMapping::testId)
+                .findFirst()
+                .orElseThrow();
+
+        List<ValidationTestResult> oneCoreSmallLoss = new ArrayList<>();
+        for (TestSpecMapping mapping : catalogService.getAllMappings()) {
+            String status = targetCoreTestId.equals(mapping.testId()) ? "FAILED" : "SUCCESS";
+            oneCoreSmallLoss.add(createTestResult(mapping.testId(), mapping.displayName(), status));
+        }
+        ComplianceScorecardView cappedCoreCard = scoreService.computeScorecard(run, oneCoreSmallLoss, Collections.emptyList());
+        assertThat(scoreService.computeCoreOnlyTotalPoints(cappedCoreCard)).isEqualTo(238.0);
+        assertThat(scoreService.computeCoreOnlyEarnedPoints(cappedCoreCard)).isGreaterThanOrEqualTo(237.0).isLessThan(238.0);
+        assertThat(scoreService.computeCoreOnlyScore(cappedCoreCard)).isEqualTo(99);
+        assertThat(cappedCoreCard.coreOnlyScore()).isEqualTo(99);
+    }
+
+    @Test
+    @DisplayName("Policy 3.3 (F3): Conformance Tier distinguishes 'Certified RFC Compliant' vs 'Excellent Conformance'")
+    void testConformanceTierLabel_CertifiedVsExcellent() {
+        NormativeBreakdown mustZeroFailed = NormativeBreakdown.of("MUST", 3, 129, 129, 0, 0, 387.0, 387.0);
+        NormativeBreakdown mustOneFailed = NormativeBreakdown.of("MUST", 3, 129, 128, 0, 1, 384.0, 387.0);
+
+        assertThat(ComplianceScorecardView.computeConformanceTierLabel(100, 100, mustZeroFailed))
+                .isEqualTo("Certified RFC Compliant");
+        assertThat(ComplianceScorecardView.computeConformanceTierLabel(99, 100, mustZeroFailed))
+                .isEqualTo("Excellent Conformance");
+        assertThat(ComplianceScorecardView.computeConformanceTierLabel(95, 100, mustZeroFailed))
+                .isEqualTo("Excellent Conformance");
+        assertThat(ComplianceScorecardView.computeConformanceTierLabel(100, 99, mustZeroFailed))
+                .isEqualTo("Excellent Conformance");
+        assertThat(ComplianceScorecardView.computeConformanceTierLabel(100, 100, mustOneFailed))
+                .isEqualTo("Excellent Conformance");
+        assertThat(ComplianceScorecardView.computeConformanceTierLabel(90, 100, mustZeroFailed))
+                .isEqualTo("Good");
+    }
+
+    @Test
+    @DisplayName("F4: Capability passRate, coreCoveragePercent, and formattedNormativePoints respect 99% cap")
+    void testRoundingSitesCappedAt99_CapabilityPassRate_CoreCoverage_FormattedPoints() {
+        // 1. Capability passRate: 199 / 200 = 99.5% -> capped at 99.0 so SUPPORTED_PARTIAL never shows 100%
+        CapabilityStatus partialCap = CapabilityStatus.of(
+                "filter", "Filtering", "RFC 7644 §3.4.2.2", CapabilitySupportLevel.SUPPORTED_PARTIAL,
+                200, 200, 199, 1, 0);
+        assertThat(partialCap.passRate()).isEqualTo(99.0);
+
+        CapabilityStatus fullCap = CapabilityStatus.of(
+                "filter", "Filtering", "RFC 7644 §3.4.2.2", CapabilitySupportLevel.SUPPORTED_COMPLIANT,
+                200, 200, 200, 0, 0);
+        assertThat(fullCap.passRate()).isEqualTo(100.0);
+
+        // 2. Formatted points pair never rounds fractional earned points up to total
+        assertThat(ComplianceScorecardView.formatPointsPair(431.0, 431.0)).isEqualTo("431 / 431");
+        assertThat(ComplianceScorecardView.formatPointsPair(430.0, 431.0)).isEqualTo("430 / 431");
+        assertThat(ComplianceScorecardView.formatPointsPair(430.6, 431.0)).isEqualTo("430.6 / 431");
+        assertThat(ComplianceScorecardView.formatPointsPair(430.99, 431.0)).isEqualTo("430.9 / 431");
+
+        // 3. coreCoveragePercent: 199 / 200 testable core requirements executed -> 99.5% capped at 99%
+        SpecCatalogService mockCatalog = mock(SpecCatalogService.class);
+        Map<String, SpecRequirement> reqMap = new LinkedHashMap<>();
+        List<ValidationTestResult> results = new ArrayList<>();
+        for (int i = 1; i <= 200; i++) {
+            String reqId = "REQ-CORE-" + i;
+            String tid = "TC_" + i;
+            SpecRequirement req = new SpecRequirement(reqId, "7644", "3.1", "Core " + i, "MUST", "none", "response", "tested", "");
+            reqMap.put(reqId, req);
+            when(mockCatalog.getRequirement(reqId)).thenReturn(Optional.of(req));
+            when(mockCatalog.getTestsForRequirement(reqId)).thenReturn(List.of(tid));
+            if (i < 200) {
+                results.add(createTestResult(tid, tid + ": Core", "SUCCESS"));
+            }
+        }
+        when(mockCatalog.getRequirements()).thenReturn(reqMap);
+        for (String cap : ComplianceScoreService.OPTIONAL_CAPABILITIES) {
+            when(mockCatalog.getTestsForCapability(cap)).thenReturn(Collections.emptyList());
+        }
+        ComplianceScoreService customService = new ComplianceScoreService(mockCatalog);
+        ComplianceScorecardView card = customService.computeScorecard(createSampleRun("PARTIAL"), results, Collections.emptyList());
+        assertThat(card.coreCoveragePercent()).isEqualTo(99);
+    }
+
+    @Test
+    @DisplayName("F5: Multi-test core requirement excludes tests whose required optional capability is inactive from totalTestsForReq")
+    void testMultiTestCoreRequirement_InactiveCapabilityTestExcludedFromDenominator() {
+        SpecCatalogService mockCatalog = mock(SpecCatalogService.class);
+        SpecRequirement coreReq = new SpecRequirement(
+                "REQ-CORE-MULTI", "7644", "3.4.2", "Core Query Req", "MUST", "none", "response", "tested", "");
+
+        when(mockCatalog.getRequirements()).thenReturn(Map.of("REQ-CORE-MULTI", coreReq));
+        when(mockCatalog.getRequirement("REQ-CORE-MULTI")).thenReturn(Optional.of(coreReq));
+        when(mockCatalog.getTestsForRequirement("REQ-CORE-MULTI")).thenReturn(List.of("T_CORE", "T_FILTER"));
+        when(mockCatalog.getTestMapping("T_CORE")).thenReturn(Optional.of(new TestSpecMapping(
+                "T_CORE", "T_CORE: Pagination test", "Spec", 1, List.of("none"), List.of("REQ-CORE-MULTI"))));
+        when(mockCatalog.getTestMapping("T_FILTER")).thenReturn(Optional.of(new TestSpecMapping(
+                "T_FILTER", "T_FILTER: Filter test", "Spec", 2, List.of("filter"), List.of("REQ-CORE-MULTI"))));
+
+        for (String cap : ComplianceScoreService.OPTIONAL_CAPABILITIES) {
+            if ("filter".equals(cap)) {
+                when(mockCatalog.getTestsForCapability(cap)).thenReturn(List.of("T_FILTER"));
+            } else {
+                when(mockCatalog.getTestsForCapability(cap)).thenReturn(Collections.emptyList());
+            }
+        }
+
+        ComplianceScoreService service = new ComplianceScoreService(mockCatalog);
+        ValidationRun run = createSampleRun("PASSED");
+
+        // T_CORE succeeds, T_FILTER aborts because filter capability is unsupported/inactive
+        List<ValidationTestResult> results = List.of(
+                createTestResult("T_CORE", "T_CORE: Pagination test", "SUCCESS"),
+                createTestResult("T_FILTER", "T_FILTER: Filter test", "ABORTED")
+        );
+
+        ComplianceScorecardView scorecard = service.computeScorecard(run, results, Collections.emptyList());
+        RequirementTraceResult trace = scorecard.requirementMatrix().get(0);
+
+        // T_FILTER is excluded from effectiveTestIds because "filter" capability is inactive
+        assertThat(trace.totalTests()).isEqualTo(1);
+        assertThat(trace.executedTests()).isEqualTo(1);
+        assertThat(trace.passedTests()).isEqualTo(1);
+        assertThat(trace.status()).isEqualTo("COMPLIANT");
+        assertThat(trace.earnedWeight()).isEqualTo(3.0);
+        assertThat(scorecard.coreScore()).isEqualTo(100);
     }
 
     private ComplianceScorecardView createMockScorecard(int score, String status) {

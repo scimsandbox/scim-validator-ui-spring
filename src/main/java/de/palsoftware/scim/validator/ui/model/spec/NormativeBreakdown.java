@@ -21,6 +21,9 @@ public record NormativeBreakdown(
             double earnedPoints,
             double totalPoints) {
         int percent = totalPoints > 0 ? (int) Math.round((100.0 * earnedPoints) / totalPoints) : 0;
+        if (earnedPoints < totalPoints && percent == 100) {
+            percent = 99;
+        }
         return new NormativeBreakdown(
                 level,
                 weight,

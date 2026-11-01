@@ -50,7 +50,8 @@ public class SpecCatalogService {
             "de.palsoftware.scim.validator.specs.A11_AsyncOperationsSpec"
     );
 
-    private static final Pattern TEST_ID_PATTERN = Pattern.compile("^([A-Z0-9_]+):\\s*(.*)");
+    public static final Pattern TEST_ID_PATTERN = Pattern.compile("^([A-Z][A-Za-z0-9_]*):\\s*(.*)");
+    public static final Pattern RAW_TEST_ID_SYNTAX = Pattern.compile("^[A-Z][A-Za-z0-9_]*$");
 
     private final ResourcePatternResolver resourceResolver;
     private final Map<String, SpecRequirement> requirements = new LinkedHashMap<>();
@@ -77,24 +78,28 @@ public class SpecCatalogService {
         for (String location : CATALOG_RESOURCES) {
             try (InputStream in = openResourceStream(location)) {
                 List<Map<String, Object>> rows = yaml.load(in);
-                if (rows != null) {
-                    for (Map<String, Object> map : rows) {
-                        String id = (String) map.get("id");
-                        String rfc = map.get("rfc") != null ? String.valueOf(map.get("rfc")) : "";
-                        String section = map.get("section") != null ? String.valueOf(map.get("section")) : "";
-                        String title = (String) map.get("title");
-                        String level = (String) map.get("level");
-                        String capability = (String) map.get("capability");
-                        String observability = (String) map.get("observability");
-                        String disposition = (String) map.get("disposition");
-                        String note = map.get("note") != null ? String.valueOf(map.get("note")) : "";
+                if (rows == null || rows.isEmpty()) {
+                    throw new IllegalStateException("Catalog at " + location + " is empty or malformed");
+                }
+                for (Map<String, Object> map : rows) {
+                    String id = (String) map.get("id");
+                    String rfc = map.get("rfc") != null ? String.valueOf(map.get("rfc")) : "";
+                    String section = map.get("section") != null ? String.valueOf(map.get("section")) : "";
+                    String title = (String) map.get("title");
+                    String level = (String) map.get("level");
+                    String capability = (String) map.get("capability");
+                    String observability = (String) map.get("observability");
+                    String disposition = (String) map.get("disposition");
+                    String note = map.get("note") != null ? String.valueOf(map.get("note")) : "";
 
-                        SpecRequirement req = new SpecRequirement(
-                                id, rfc, section, title, level, capability, observability, disposition, note
-                        );
-                        requirements.put(req.id(), req);
-                        requirementToTests.putIfAbsent(req.id(), new ArrayList<>());
+                    SpecRequirement req = new SpecRequirement(
+                            id, rfc, section, title, level, capability, observability, disposition, note
+                    );
+                    if (requirements.containsKey(req.id())) {
+                        throw new IllegalStateException("Duplicate requirement ID in catalog: " + req.id());
                     }
+                    requirements.put(req.id(), req);
+                    requirementToTests.putIfAbsent(req.id(), new ArrayList<>());
                 }
             } catch (Exception e) {
                 log.error("Failed to load spec requirement catalog from {}", location, e);
@@ -238,6 +243,9 @@ public class SpecCatalogService {
                             refIds
                     );
 
+                    if (testMappingsById.containsKey(testId)) {
+                        throw new IllegalStateException("Duplicate test mapping for test ID: " + testId);
+                    }
                     testMappingsById.put(testId, mapping);
                     testMappingsByDisplayName.put(displayName, mapping);
                     allMappings.add(mapping);
@@ -250,7 +258,8 @@ public class SpecCatalogService {
                     }
                 }
             } catch (ClassNotFoundException e) {
-                log.warn("Spock spec class not found on classpath: {}", className);
+                log.error("Spock spec class not found on classpath: {}", className, e);
+                throw new IllegalStateException("Required Spock spec class not found on classpath: " + className, e);
             }
         }
     }

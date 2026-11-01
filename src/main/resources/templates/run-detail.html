@@ -182,7 +182,7 @@
             color: #f87171;
             border: 1px solid rgba(239, 68, 68, 0.3);
         }
-        .status-aborted {
+        .status-aborted, .status-partial, .status-skipped {
             background: rgba(234, 179, 8, 0.15);
             color: #facc15;
             border: 1px solid rgba(234, 179, 8, 0.3);
@@ -1418,7 +1418,7 @@
                         Core RFC Conformance score is below the minimum publishing threshold.
                     </p>
                     <div style="margin-top: 10px; font-size: 12.5px; color: #94a3b8;">
-                        <span th:text="${'Directory Publication Criteria: (1) Run status must be completed (PASSED or FAILED), and (2) Core RFC Conformance score must be ≥ ' + (minPublishScore != null ? minPublishScore : 50) + '%.'}">Directory Publication Criteria: (1) Run status must be completed (PASSED or FAILED), and (2) Core RFC Conformance score must be &ge; 50%.</span>
+                        <span th:text="${'Directory Publication Criteria: (1) Run status must be completed (PASSED, PARTIAL, or FAILED), and (2) Core RFC Conformance score must be ≥ ' + (minPublishScore != null ? minPublishScore : 50) + '%.'}">Directory Publication Criteria: (1) Run status must be completed (PASSED, PARTIAL, or FAILED), and (2) Core RFC Conformance score must be &ge; 50%.</span>
                     </div>
                 </div>
             </div>
@@ -1482,32 +1482,36 @@
                      th:classappend="${scorecard.colourGradient != null ? 'gradient-' + #strings.toLowerCase(#strings.replace(scorecard.colourGradient.name(), '_', '-')) : 'gradient-emerald'}"
                      th:style="${scorecard.colourGradient != null ? 'background: ' + scorecard.colourGradient.cssLinearGradient() : ''}">
                     <span class="score-badge-number" th:text="${scorecard.coreScore + '%'}">100%</span>
-                    <span class="score-badge-label" th:text="${scorecard.colourGradient != null ? scorecard.colourGradient.getLabel() : 'Score'}">Excellent</span>
+                    <span class="score-badge-label" th:text="${scorecard.conformanceTierLabel != null ? scorecard.conformanceTierLabel : (scorecard.colourGradient != null ? scorecard.colourGradient.getLabel() : 'Score')}">Certified RFC Compliant</span>
                 </div>
 
                 <!-- Hero Details & Metadata -->
                 <div class="score-hero-details">
                     <h2 class="score-hero-title">SCIM 2.0 Compliance Scorecard</h2>
                     <p class="score-hero-subtitle">
-                        Requirement-weighted conformance across RFC 7643, RFC 7644, RFC 9865 &amp; RFC 9967
+                        Requirement-weighted conformance across RFC 7643, RFC 7644, RFC 9865 &amp; RFC 9967 · <strong th:text="${scorecard.conformanceTierLabel}">Certified RFC Compliant</strong>
                     </p>
 
                     <!-- Quick Stats Grid -->
                     <div class="score-stats-grid">
                         <div class="score-stat-box">
                             <div class="score-stat-val" th:text="${scorecard.coreScore + '%'}">100%</div>
-                            <div class="score-stat-key">Core Conformance</div>
+                            <div class="score-stat-key">Active-Scope Conformance</div>
+                        </div>
+                        <div class="score-stat-box">
+                            <div class="score-stat-val" th:text="${scorecard.coreOnlyScore + '%'}">100%</div>
+                            <div class="score-stat-key" th:text="${scorecard.coreOnlyTotalPoints > 0 ? ('Core-Only (' + scorecard.formattedCoreOnlyPoints + ' pts)') : 'Core-Only Conformance'}">Core-Only (238 / 238 pts)</div>
                         </div>
                         <div class="score-stat-box">
                             <div class="score-stat-val" th:text="${scorecard.activeRequirementsCount + ' / ' + scorecard.catalogRequirementsTotal}">157 / 159</div>
-                            <div class="score-stat-key">Active Requirements</div>
+                            <div class="score-stat-key">Executed Requirements</div>
                         </div>
                         <div class="score-stat-box">
                             <div class="score-stat-val" th:text="${scorecard.compliantCapabilitiesCount + ' / ' + scorecard.totalCapabilitiesCount}">10 / 10</div>
                             <div class="score-stat-key">Capabilities Compliant</div>
                         </div>
                         <div class="score-stat-box">
-                            <div class="score-stat-val" th:text="${#numbers.formatDecimal((scorecard.mustBreakdown.earnedPoints + scorecard.shouldBreakdown.earnedPoints + scorecard.mayBreakdown.earnedPoints), 1, 0) + ' / ' + #numbers.formatDecimal((scorecard.mustBreakdown.totalPoints + scorecard.shouldBreakdown.totalPoints + scorecard.mayBreakdown.totalPoints), 1, 0)}">430 / 430</div>
+                            <div class="score-stat-val" th:text="${scorecard.formattedNormativePoints}">431 / 431</div>
                             <div class="score-stat-key">Normative Points</div>
                         </div>
                     </div>
@@ -1534,18 +1538,18 @@
                     <div>
                         <div class="normative-header">
                             <span class="normative-pill must">MUST (Weight 3x)</span>
-                            <span class="normative-percent" th:text="${scorecard.mustBreakdown.activeRequirements > 0 ? scorecard.mustBreakdown.conformancePercent + '%' : 'N/A'}">100%</span>
+                            <span class="normative-percent" th:text="${(scorecard.mustBreakdown.totalPoints > 0 or scorecard.mustBreakdown.activeRequirements > 0) ? scorecard.mustBreakdown.conformancePercent + '%' : 'N/A'}">100%</span>
                         </div>
                         <div class="normative-progress-bg">
                             <div class="normative-progress-fill fill-must"
-                                 th:style="'width: ' + ${scorecard.mustBreakdown.activeRequirements > 0 ? scorecard.mustBreakdown.conformancePercent : 0} + '%;'"></div>
+                                 th:style="'width: ' + ${(scorecard.mustBreakdown.totalPoints > 0 or scorecard.mustBreakdown.activeRequirements > 0) ? scorecard.mustBreakdown.conformancePercent : 0} + '%;'"></div>
                         </div>
                     </div>
                     <div class="normative-details">
                         <span>Compliant: <strong th:text="${scorecard.mustBreakdown.compliantRequirements}">134</strong></span>
                         <span th:if="${scorecard.mustBreakdown.partialRequirements > 0}">Partial: <strong style="color: #facc15;" th:text="${scorecard.mustBreakdown.partialRequirements}">0</strong></span>
                         <span th:if="${scorecard.mustBreakdown.failedRequirements > 0}">Failed: <strong style="color: #f87171;" th:text="${scorecard.mustBreakdown.failedRequirements}">0</strong></span>
-                        <span>Active: <strong th:text="${scorecard.mustBreakdown.activeRequirements}">134</strong></span>
+                        <span>Executed: <strong th:text="${scorecard.mustBreakdown.activeRequirements}">134</strong></span>
                         <span>Points: <strong th:text="${#numbers.formatDecimal(scorecard.mustBreakdown.earnedPoints, 1, 1) + ' / ' + #numbers.formatDecimal(scorecard.mustBreakdown.totalPoints, 1, 1)}">402.0 / 402.0</strong></span>
                     </div>
                 </div>
@@ -1555,18 +1559,18 @@
                     <div>
                         <div class="normative-header">
                             <span class="normative-pill should">SHOULD (Weight 2x)</span>
-                            <span class="normative-percent" th:text="${scorecard.shouldBreakdown.activeRequirements > 0 ? scorecard.shouldBreakdown.conformancePercent + '%' : 'N/A'}">100%</span>
+                            <span class="normative-percent" th:text="${(scorecard.shouldBreakdown.totalPoints > 0 or scorecard.shouldBreakdown.activeRequirements > 0) ? scorecard.shouldBreakdown.conformancePercent + '%' : 'N/A'}">100%</span>
                         </div>
                         <div class="normative-progress-bg">
                             <div class="normative-progress-fill fill-should"
-                                 th:style="'width: ' + ${scorecard.shouldBreakdown.activeRequirements > 0 ? scorecard.shouldBreakdown.conformancePercent : 0} + '%;'"></div>
+                                 th:style="'width: ' + ${(scorecard.shouldBreakdown.totalPoints > 0 or scorecard.shouldBreakdown.activeRequirements > 0) ? scorecard.shouldBreakdown.conformancePercent : 0} + '%;'"></div>
                         </div>
                     </div>
                     <div class="normative-details">
                         <span>Compliant: <strong th:text="${scorecard.shouldBreakdown.compliantRequirements}">9</strong></span>
                         <span th:if="${scorecard.shouldBreakdown.partialRequirements > 0}">Partial: <strong style="color: #facc15;" th:text="${scorecard.shouldBreakdown.partialRequirements}">0</strong></span>
                         <span th:if="${scorecard.shouldBreakdown.failedRequirements > 0}">Failed: <strong style="color: #f87171;" th:text="${scorecard.shouldBreakdown.failedRequirements}">0</strong></span>
-                        <span>Active: <strong th:text="${scorecard.shouldBreakdown.activeRequirements}">9</strong></span>
+                        <span>Executed: <strong th:text="${scorecard.shouldBreakdown.activeRequirements}">9</strong></span>
                         <span>Points: <strong th:text="${#numbers.formatDecimal(scorecard.shouldBreakdown.earnedPoints, 1, 1) + ' / ' + #numbers.formatDecimal(scorecard.shouldBreakdown.totalPoints, 1, 1)}">18.0 / 18.0</strong></span>
                     </div>
                 </div>
@@ -1576,18 +1580,18 @@
                     <div>
                         <div class="normative-header">
                             <span class="normative-pill may">MAY (Weight 1x)</span>
-                            <span class="normative-percent" th:text="${scorecard.mayBreakdown.activeRequirements > 0 ? scorecard.mayBreakdown.conformancePercent + '%' : 'N/A'}">100%</span>
+                            <span class="normative-percent" th:text="${(scorecard.mayBreakdown.totalPoints > 0 or scorecard.mayBreakdown.activeRequirements > 0) ? scorecard.mayBreakdown.conformancePercent + '%' : 'N/A'}">100%</span>
                         </div>
                         <div class="normative-progress-bg">
                             <div class="normative-progress-fill fill-may"
-                                 th:style="'width: ' + ${scorecard.mayBreakdown.activeRequirements > 0 ? scorecard.mayBreakdown.conformancePercent : 0} + '%;'"></div>
+                                 th:style="'width: ' + ${(scorecard.mayBreakdown.totalPoints > 0 or scorecard.mayBreakdown.activeRequirements > 0) ? scorecard.mayBreakdown.conformancePercent : 0} + '%;'"></div>
                         </div>
                     </div>
                     <div class="normative-details">
                         <span>Compliant: <strong th:text="${scorecard.mayBreakdown.compliantRequirements}">4</strong></span>
                         <span th:if="${scorecard.mayBreakdown.partialRequirements > 0}">Partial: <strong style="color: #facc15;" th:text="${scorecard.mayBreakdown.partialRequirements}">0</strong></span>
                         <span th:if="${scorecard.mayBreakdown.failedRequirements > 0}">Failed: <strong style="color: #f87171;" th:text="${scorecard.mayBreakdown.failedRequirements}">0</strong></span>
-                        <span>Active: <strong th:text="${scorecard.mayBreakdown.activeRequirements}">4</strong></span>
+                        <span>Executed: <strong th:text="${scorecard.mayBreakdown.activeRequirements}">4</strong></span>
                         <span>Points: <strong th:text="${#numbers.formatDecimal(scorecard.mayBreakdown.earnedPoints, 1, 1) + ' / ' + #numbers.formatDecimal(scorecard.mayBreakdown.totalPoints, 1, 1)}">4.0 / 4.0</strong></span>
                     </div>
                 </div>
@@ -1597,7 +1601,7 @@
             <div class="capabilities-section" th:if="${scorecard.capabilities != null and !#lists.isEmpty(scorecard.capabilities)}">
                 <div class="section-subtitle">
                     <span>Optional SCIM Capabilities (<span th:text="${scorecard.compliantCapabilitiesCount + '/' + scorecard.totalCapabilitiesCount}">10/10</span> compliant · <span th:text="${scorecard.supportedCapabilitiesCount + '/' + scorecard.totalCapabilitiesCount}">10/10</span> supported)</span>
-                    <span>Non-executed capabilities do not penalize Core RFC Conformance %</span>
+                    <span>Non-executed capabilities do not penalize Active-Scope or Core-Only Conformance %</span>
                 </div>
                 <div class="capabilities-grid">
                     <div th:each="cap : ${scorecard.capabilities}" class="capability-tile">
@@ -1608,15 +1612,13 @@
                         <div>
                             <!-- Status Pill -->
                             <div>
-                                <span th:if="${cap.status.name() == 'SUPPORTED_COMPLIANT' or cap.status.name() == 'SUPPORTED'}"
+                                <span th:if="${cap.status.name() == 'SUPPORTED_COMPLIANT'}"
                                       class="cap-status-pill cap-compliant">✓ Supported &amp; Compliant</span>
                                 <span th:if="${cap.status.name() == 'SUPPORTED_PARTIAL'}"
                                       class="cap-status-pill cap-partial"
                                       th:text="'⚠ Supported (' + ${#numbers.formatDecimal(cap.passRate, 1, 0)} + '%)'">⚠ Supported (80%)</span>
-                                <span th:if="${cap.status.name() == 'UNSUPPORTED' or cap.status.name() == 'ABORTED'}"
+                                <span th:if="${cap.status.name() == 'UNSUPPORTED'}"
                                       class="cap-status-pill cap-unsupported">⊘ Unsupported (Skipped)</span>
-                                <span th:if="${cap.status.name() == 'NOT_EVALUATED'}"
-                                      class="cap-status-pill cap-unsupported">? Not Evaluated</span>
                             </div>
                             <!-- Meta Counts -->
                             <div class="cap-meta">
@@ -1640,7 +1642,7 @@
                         <span>RFC Requirement Traceability Matrix (<span th:text="${scorecard.catalogRequirementsTotal}">159</span> Requirements)</span>
                     </div>
                     <div style="display: flex; gap: 8px; font-size: 11.5px;">
-                        <span class="status-badge status-success" th:text="${scorecard.activeRequirementsCount + ' Active'}">157 Active</span>
+                        <span class="status-badge status-success" th:text="${scorecard.activeRequirementsCount + ' Executed'}">157 Executed</span>
                         <span class="status-badge status-aborted" th:text="${scorecard.untestedRequirementsCount + ' Untested'}">0 Untested</span>
                         <span class="status-badge status-error" th:if="${scorecard.excludedRequirementsCount > 0}" th:text="${scorecard.excludedRequirementsCount + ' Excluded'}">2 Excluded</span>
                     </div>
@@ -1656,22 +1658,22 @@
                         <div class="rfc-summary-card" th:if="${scorecard.rfcSummaries.containsKey('7643')}" onclick="filterMatrixByRfc('7643', this)">
                             <div class="rfc-card-title">RFC 7643: Schemas</div>
                             <div class="rfc-card-score" th:text="${scorecard.rfcSummaries.get('7643').activeRequirements > 0 ? scorecard.rfcSummaries.get('7643').conformancePercent + '%' : 'N/A'}">100%</div>
-                            <div class="rfc-card-sub" th:text="${scorecard.rfcSummaries.get('7643').activeRequirements + '/' + scorecard.rfcSummaries.get('7643').totalRequirements + ' active reqs'}">49/50 active reqs</div>
+                            <div class="rfc-card-sub" th:text="${scorecard.rfcSummaries.get('7643').activeRequirements + '/' + scorecard.rfcSummaries.get('7643').totalRequirements + ' in-scope reqs'}">49/50 in-scope reqs</div>
                         </div>
                         <div class="rfc-summary-card" th:if="${scorecard.rfcSummaries.containsKey('7644')}" onclick="filterMatrixByRfc('7644', this)">
                             <div class="rfc-card-title">RFC 7644: Protocol</div>
                             <div class="rfc-card-score" th:text="${scorecard.rfcSummaries.get('7644').activeRequirements > 0 ? scorecard.rfcSummaries.get('7644').conformancePercent + '%' : 'N/A'}">100%</div>
-                            <div class="rfc-card-sub" th:text="${scorecard.rfcSummaries.get('7644').activeRequirements + '/' + scorecard.rfcSummaries.get('7644').totalRequirements + ' active reqs'}">95/96 active reqs</div>
+                            <div class="rfc-card-sub" th:text="${scorecard.rfcSummaries.get('7644').activeRequirements + '/' + scorecard.rfcSummaries.get('7644').totalRequirements + ' in-scope reqs'}">95/96 in-scope reqs</div>
                         </div>
                         <div class="rfc-summary-card" th:if="${scorecard.rfcSummaries.containsKey('9865')}" onclick="filterMatrixByRfc('9865', this)">
                             <div class="rfc-card-title">RFC 9865: Cursor</div>
                             <div class="rfc-card-score" th:text="${scorecard.rfcSummaries.get('9865').activeRequirements > 0 ? scorecard.rfcSummaries.get('9865').conformancePercent + '%' : 'N/A'}">100%</div>
-                            <div class="rfc-card-sub" th:text="${scorecard.rfcSummaries.get('9865').activeRequirements + '/' + scorecard.rfcSummaries.get('9865').totalRequirements + ' active reqs'}">8/8 active reqs</div>
+                            <div class="rfc-card-sub" th:text="${scorecard.rfcSummaries.get('9865').activeRequirements + '/' + scorecard.rfcSummaries.get('9865').totalRequirements + ' in-scope reqs'}">8/8 in-scope reqs</div>
                         </div>
                         <div class="rfc-summary-card" th:if="${scorecard.rfcSummaries.containsKey('9967')}" onclick="filterMatrixByRfc('9967', this)">
                             <div class="rfc-card-title">RFC 9967: Async</div>
                             <div class="rfc-card-score" th:text="${scorecard.rfcSummaries.get('9967').activeRequirements > 0 ? scorecard.rfcSummaries.get('9967').conformancePercent + '%' : 'N/A'}">100%</div>
-                            <div class="rfc-card-sub" th:text="${scorecard.rfcSummaries.get('9967').activeRequirements + '/' + scorecard.rfcSummaries.get('9967').totalRequirements + ' active reqs'}">5/5 active reqs</div>
+                            <div class="rfc-card-sub" th:text="${scorecard.rfcSummaries.get('9967').activeRequirements + '/' + scorecard.rfcSummaries.get('9967').totalRequirements + ' in-scope reqs'}">5/5 in-scope reqs</div>
                         </div>
                     </div>
 
@@ -1818,11 +1820,11 @@
                                 </div>
 
                                 <div th:if="${test.errorMessage != null}" style="margin-bottom: 10px;">
-                                    <strong th:style="${test.status == 'ABORTED' ? 'color: #facc15; font-size: 11px; text-transform: uppercase;' : 'color: #f87171; font-size: 11px; text-transform: uppercase;'}" style="color: #f87171; font-size: 11px; text-transform: uppercase;" th:text="${test.status == 'ABORTED' ? 'Reason:' : 'Error:'}">Error:</strong>
+                                    <strong th:style="${(test.status == 'ABORTED' or test.status == 'SKIPPED') ? 'color: #facc15; font-size: 11px; text-transform: uppercase;' : 'color: #f87171; font-size: 11px; text-transform: uppercase;'}" style="color: #f87171; font-size: 11px; text-transform: uppercase;" th:text="${test.status == 'SKIPPED' ? 'Skipped:' : (test.status == 'ABORTED' ? 'Reason:' : 'Error:')}">Error:</strong>
                                     <pre th:text="${test.errorMessage}">error</pre>
                                 </div>
                                 <div th:if="${test.stackTrace != null}" style="margin-bottom: 10px;">
-                                    <strong th:style="${test.status == 'ABORTED' ? 'color: #facc15; font-size: 11px; text-transform: uppercase;' : 'color: #f87171; font-size: 11px; text-transform: uppercase;'}" style="color: #f87171; font-size: 11px; text-transform: uppercase;" th:text="${test.status == 'ABORTED' ? 'Stack Trace (Aborted):' : 'Stack Trace:'}">Stack Trace:</strong>
+                                    <strong th:style="${(test.status == 'ABORTED' or test.status == 'SKIPPED') ? 'color: #facc15; font-size: 11px; text-transform: uppercase;' : 'color: #f87171; font-size: 11px; text-transform: uppercase;'}" style="color: #f87171; font-size: 11px; text-transform: uppercase;" th:text="${test.status == 'SKIPPED' ? 'Stack Trace (Skipped):' : (test.status == 'ABORTED' ? 'Stack Trace (Aborted):' : 'Stack Trace:')}">Stack Trace:</strong>
                                     <pre th:text="${test.stackTrace}">stack</pre>
                                 </div>
 
@@ -2036,7 +2038,8 @@
                     if (matrixDetails && !matrixDetails.open) {
                         matrixDetails.open = true;
                     }
-                    const targetRow = document.querySelector(href);
+                    const targetId = href.startsWith('#') ? href.substring(1) : href;
+                    const targetRow = document.getElementById(targetId);
                     if (targetRow) {
                         targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
                         targetRow.classList.add('highlight-row');
@@ -2051,7 +2054,8 @@
             pill.addEventListener('click', (e) => {
                 const href = pill.getAttribute('href');
                 if (href && href.startsWith('#test-row-')) {
-                    const targetCell = document.querySelector(href);
+                    const targetId = href.startsWith('#') ? href.substring(1) : href;
+                    const targetCell = document.getElementById(targetId);
                     if (targetCell) {
                         const targetRow = targetCell.closest('tr');
                         if (targetRow) {

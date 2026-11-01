@@ -886,6 +886,266 @@ class ValidationControllerPublishChallengerTest {
 
             verify(gitHubCompliancePublisherService, never()).publish(any());
         }
+
+        @Test
+        void getStatus_whenRunStatusIsPartialAndProgressNotCached_reportsTerminalValidationCompleted() {
+            UUID runId = UUID.randomUUID();
+            ValidationRun partialRun = createSampleRun(runId, "developer@example.com", "PARTIAL");
+            when(validationRunService.getRun(runId, "developer@example.com", false))
+                    .thenReturn(de.palsoftware.scim.validator.ui.dto.ValidationRunView.from(partialRun));
+            when(validationProgressTracker.getProgress(runId)).thenReturn(null);
+
+            var response = controller.getStatus(runId, userAuth);
+
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+            assertThat(response.getBody()).isNotNull();
+            assertThat(response.getBody().status()).isEqualTo("PARTIAL");
+            assertThat(response.getBody().currentTestName()).isEqualTo("Validation completed");
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 7. JSON Schema Validation & Report Generator Hardening Tests (F1, F2, F3, F9)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("JSON Schema Draft 2020-12 Validation & Report Generator Tests")
+    class ReportJsonSchemaValidationTests {
+
+        private final com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        private final GitHubCompliancePublisherService realPublisher =
+                new GitHubCompliancePublisherService(null, new de.palsoftware.scim.validator.ui.service.ComplianceReportGenerator(), null);
+
+        private String buildValidReportJsonWithSkippedAndMatrix() throws Exception {
+            UUID runId = UUID.randomUUID();
+            ValidationRun run = createSampleRun(runId, "developer@example.com", "PARTIAL");
+            ValidationRunPublication pub = createSamplePublication(runId, "developer@example.com", 95);
+            pub.setProjectUrl("https://example.com/scim");
+
+            de.palsoftware.scim.validator.ui.model.spec.CapabilityStatus capItem =
+                    de.palsoftware.scim.validator.ui.model.spec.CapabilityStatus.of(
+                            "patch", "PATCH Operations", "RFC 7644 §3.5.2",
+                            de.palsoftware.scim.validator.ui.model.spec.CapabilitySupportLevel.SUPPORTED_COMPLIANT,
+                            10, 10, 10, 0, 0);
+
+            de.palsoftware.scim.validator.ui.model.spec.RequirementTraceResult reqRow =
+                    new de.palsoftware.scim.validator.ui.model.spec.RequirementTraceResult(
+                            "RFC7644-3.5.2-R1", "7644", "3.5.2", "PATCH support", "MUST",
+                            3, "patch", true, 2, 2, 2, 0, 0, 3.0, "COMPLIANT", List.of("PAT_01", "PAT_02"));
+
+            ComplianceScorecardView scorecard = new ComplianceScorecardView(
+                    runId, "Sample SCIM Validation", "https://scim.example.com", OffsetDateTime.now(ZoneOffset.UTC), "PARTIAL",
+                    95, ColourGradient.EMERALD, true, null,
+                    NormativeBreakdown.of("MUST", 3, 130, 128, 2, 0, 386.0, 390.0),
+                    NormativeBreakdown.of("SHOULD", 2, 16, 16, 0, 0, 32.0, 32.0),
+                    NormativeBreakdown.of("MAY", 1, 11, 10, 1, 0, 10.5, 11.0),
+                    List.of(capItem), 9, 8, 10,
+                    159, 157, 0, 2,
+                    Collections.emptyMap(), List.of(reqRow)
+            );
+
+            de.palsoftware.scim.validator.ui.model.ValidationTestResult trPass = new de.palsoftware.scim.validator.ui.model.ValidationTestResult();
+            trPass.setTestIdentifier("USR_01");
+            trPass.setDisplayName("USR_01: Create user");
+            trPass.setClassName("de.palsoftware.scim.validator.specs.A3_UserLifecycleSpec");
+            trPass.setTestName("USR_01: Create user");
+            trPass.setStatus("SUCCESS");
+
+            de.palsoftware.scim.validator.ui.model.ValidationTestResult trSkipped = new de.palsoftware.scim.validator.ui.model.ValidationTestResult();
+            trSkipped.setTestIdentifier("BLK_01");
+            trSkipped.setDisplayName("BLK_01: Bulk skipped");
+            trSkipped.setClassName("de.palsoftware.scim.validator.specs.A8_BulkOperationsSpec");
+            trSkipped.setTestName("BLK_01: Bulk skipped");
+            trSkipped.setStatus("SKIPPED");
+            trSkipped.setErrorMessage("Skipped optional capability");
+
+            de.palsoftware.scim.validator.ui.model.spec.SanitizedComplianceReport report =
+                    de.palsoftware.scim.validator.ui.service.ComplianceReportGenerator.buildSanitizedReport(
+                            run, pub, scorecard, List.of(trPass, trSkipped));
+            return mapper.writeValueAsString(report);
+        }
+
+        @Test
+        void validateReportSchema_acceptsValidFullReportWithSkippedTestsAndFallbackScorecard() throws Exception {
+            // 1. Full report with SKIPPED test result row
+            String fullJson = buildValidReportJsonWithSkippedAndMatrix();
+            org.assertj.core.api.Assertions.assertThatCode(() -> realPublisher.validateReportSchema(fullJson))
+                    .doesNotThrowAnyException();
+
+            // 2. Fallback scorecard report (when scorecard is null and totalCapabilities is 0)
+            de.palsoftware.scim.validator.ui.service.ComplianceReportGenerator generator =
+                    new de.palsoftware.scim.validator.ui.service.ComplianceReportGenerator();
+            CompliancePublishRequest fallbackReq = new CompliancePublishRequest(
+                    UUID.randomUUID(), "Fallback Product", "fallback-product", "1.0.0",
+                    "Fallback Vendor", "https://example.com", "Apache-2.0", false,
+                    85, "TEAL_GREEN", 0, 0, "dev@example.com", "https://scim.internal.example.com", null);
+            de.palsoftware.scim.validator.ui.model.spec.SanitizedComplianceReport fallbackReport =
+                    generator.generate(fallbackReq, OffsetDateTime.now(ZoneOffset.UTC));
+            String fallbackJson = mapper.writeValueAsString(fallbackReport);
+
+            org.assertj.core.api.Assertions.assertThatCode(() -> realPublisher.validateReportSchema(fallbackJson))
+                    .doesNotThrowAnyException();
+        }
+
+        @Test
+        void validateReportSchema_rejectsAdditionalPropertiesOnObjects() throws Exception {
+            String baseJson = buildValidReportJsonWithSkippedAndMatrix();
+
+            // Root additional property
+            com.fasterxml.jackson.databind.node.ObjectNode rootExtra =
+                    (com.fasterxml.jackson.databind.node.ObjectNode) mapper.readTree(baseJson);
+            rootExtra.put("unexpectedRootField", "evil");
+            org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                    realPublisher.validateReportSchema(mapper.writeValueAsString(rootExtra))
+            ).isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("Unknown additional property not allowed at $: unexpectedRootField");
+
+            // metadata additional property
+            com.fasterxml.jackson.databind.node.ObjectNode metaExtra =
+                    (com.fasterxml.jackson.databind.node.ObjectNode) mapper.readTree(baseJson);
+            ((com.fasterxml.jackson.databind.node.ObjectNode) metaExtra.get("metadata")).put("secretField", "leak");
+            org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                    realPublisher.validateReportSchema(mapper.writeValueAsString(metaExtra))
+            ).isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("Unknown additional property not allowed at $.metadata: secretField");
+
+            // scorecard additional property
+            com.fasterxml.jackson.databind.node.ObjectNode scExtra =
+                    (com.fasterxml.jackson.databind.node.ObjectNode) mapper.readTree(baseJson);
+            ((com.fasterxml.jackson.databind.node.ObjectNode) scExtra.get("scorecard")).put("extraScoreField", 123);
+            org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                    realPublisher.validateReportSchema(mapper.writeValueAsString(scExtra))
+            ).isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("Unknown additional property not allowed at $.scorecard: extraScoreField");
+
+            // requirementRow additional property
+            com.fasterxml.jackson.databind.node.ObjectNode reqExtra =
+                    (com.fasterxml.jackson.databind.node.ObjectNode) mapper.readTree(baseJson);
+            ((com.fasterxml.jackson.databind.node.ObjectNode) reqExtra.at("/scorecard/requirementMatrix/0")).put("extraReq", true);
+            org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                    realPublisher.validateReportSchema(mapper.writeValueAsString(reqExtra))
+            ).isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("Unknown additional property not allowed at $.scorecard.requirementMatrix[0]: extraReq");
+
+            // testResultRow additional property
+            com.fasterxml.jackson.databind.node.ObjectNode trExtra =
+                    (com.fasterxml.jackson.databind.node.ObjectNode) mapper.readTree(baseJson);
+            ((com.fasterxml.jackson.databind.node.ObjectNode) trExtra.at("/testResults/0")).put("requestBody", "leaked");
+            org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                    realPublisher.validateReportSchema(mapper.writeValueAsString(trExtra))
+            ).isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("Unknown additional property not allowed at $.testResults[0]: requestBody");
+        }
+
+        @Test
+        void validateReportSchema_rejectsInvalidTypesConstsEnumsPatternsAndAllOfConstraints() throws Exception {
+            String baseJson = buildValidReportJsonWithSkippedAndMatrix();
+
+            // 1. Non-integer coreScore (99.5)
+            com.fasterxml.jackson.databind.node.ObjectNode floatScore =
+                    (com.fasterxml.jackson.databind.node.ObjectNode) mapper.readTree(baseJson);
+            ((com.fasterxml.jackson.databind.node.ObjectNode) floatScore.get("scorecard")).put("coreScore", 99.5);
+            org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                    realPublisher.validateReportSchema(mapper.writeValueAsString(floatScore))
+            ).isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("$.scorecard.coreScore");
+
+            // 2. Wrong schemaVersion const
+            com.fasterxml.jackson.databind.node.ObjectNode badVersion =
+                    (com.fasterxml.jackson.databind.node.ObjectNode) mapper.readTree(baseJson);
+            badVersion.put("schemaVersion", "2.0.0");
+            org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                    realPublisher.validateReportSchema(mapper.writeValueAsString(badVersion))
+            ).isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("$.schemaVersion");
+
+            // 3. Missing rfcSummaries key "9967"
+            com.fasterxml.jackson.databind.node.ObjectNode missingRfc =
+                    (com.fasterxml.jackson.databind.node.ObjectNode) mapper.readTree(baseJson);
+            ((com.fasterxml.jackson.databind.node.ObjectNode) missingRfc.at("/scorecard/rfcSummaries")).remove("9967");
+            org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                    realPublisher.validateReportSchema(mapper.writeValueAsString(missingRfc))
+            ).isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("Missing required property at $.scorecard.rfcSummaries: 9967");
+
+            // 4. capabilitySummary.totalCount < 1
+            com.fasterxml.jackson.databind.node.ObjectNode zeroTotalCaps =
+                    (com.fasterxml.jackson.databind.node.ObjectNode) mapper.readTree(baseJson);
+            ((com.fasterxml.jackson.databind.node.ObjectNode) zeroTotalCaps.at("/scorecard/capabilitySummary")).put("totalCount", 0);
+            org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                    realPublisher.validateReportSchema(mapper.writeValueAsString(zeroTotalCaps))
+            ).isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("$.scorecard.capabilitySummary.totalCount");
+
+            // 5. Invalid colourGradient.name enum and hex colour pattern
+            com.fasterxml.jackson.databind.node.ObjectNode badGradName =
+                    (com.fasterxml.jackson.databind.node.ObjectNode) mapper.readTree(baseJson);
+            ((com.fasterxml.jackson.databind.node.ObjectNode) badGradName.at("/scorecard/colourGradient")).put("name", "PURPLE");
+            org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                    realPublisher.validateReportSchema(mapper.writeValueAsString(badGradName))
+            ).isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("$.scorecard.colourGradient.name");
+
+            com.fasterxml.jackson.databind.node.ObjectNode badHex =
+                    (com.fasterxml.jackson.databind.node.ObjectNode) mapper.readTree(baseJson);
+            ((com.fasterxml.jackson.databind.node.ObjectNode) badHex.at("/scorecard/colourGradient")).put("startColor", "#GGGGGG");
+            org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                    realPublisher.validateReportSchema(mapper.writeValueAsString(badHex))
+            ).isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("$.scorecard.colourGradient.startColor");
+
+            // 6. Invalid requirementRow level/weight mismatch (allOf if/then)
+            com.fasterxml.jackson.databind.node.ObjectNode badWeight =
+                    (com.fasterxml.jackson.databind.node.ObjectNode) mapper.readTree(baseJson);
+            ((com.fasterxml.jackson.databind.node.ObjectNode) badWeight.at("/scorecard/requirementMatrix/0")).put("weight", 1);
+            org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                    realPublisher.validateReportSchema(mapper.writeValueAsString(badWeight))
+            ).isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("$.scorecard.requirementMatrix[0].weight");
+
+            // 7. Invalid testResultRow.status enum
+            com.fasterxml.jackson.databind.node.ObjectNode badTestStatus =
+                    (com.fasterxml.jackson.databind.node.ObjectNode) mapper.readTree(baseJson);
+            ((com.fasterxml.jackson.databind.node.ObjectNode) badTestStatus.at("/testResults/0")).put("status", "INVALID_STATUS");
+            org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                    realPublisher.validateReportSchema(mapper.writeValueAsString(badTestStatus))
+            ).isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("$.testResults[0].status");
+
+            // 8. Invalid projectUrl pattern
+            com.fasterxml.jackson.databind.node.ObjectNode badProjectUrl =
+                    (com.fasterxml.jackson.databind.node.ObjectNode) mapper.readTree(baseJson);
+            ((com.fasterxml.jackson.databind.node.ObjectNode) badProjectUrl.get("metadata")).put("projectUrl", "ftp://example.com");
+            org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                    realPublisher.validateReportSchema(mapper.writeValueAsString(badProjectUrl))
+            ).isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("$.metadata.projectUrl");
+        }
+
+        @Test
+        void complianceReportGenerator_whenScoreServiceThrows_rethrowsIllegalStateException() {
+            UUID runId = UUID.randomUUID();
+            ValidationRun run = createSampleRun(runId, "developer@example.com", "PASSED");
+            de.palsoftware.scim.validator.ui.repo.ValidationRunRepository mockRunRepo =
+                    org.mockito.Mockito.mock(de.palsoftware.scim.validator.ui.repo.ValidationRunRepository.class);
+            when(mockRunRepo.findById(runId)).thenReturn( java.util.Optional.of(run));
+            when(complianceScoreService.computeScorecard(eq(run), any(), any()))
+                    .thenThrow(new RuntimeException("Catalog corrupted"));
+
+            de.palsoftware.scim.validator.ui.service.ComplianceReportGenerator generator =
+                    new de.palsoftware.scim.validator.ui.service.ComplianceReportGenerator(
+                            mockRunRepo, null, complianceScoreService, null);
+
+            CompliancePublishRequest req = new CompliancePublishRequest(
+                    runId, "Test Prod", "test-prod", "1.0.0",
+                    "Vendor", "https://example.com", "Apache-2.0", false,
+                    90, "EMERALD", 9, 10, "developer@example.com", "https://scim.example.com", null);
+
+            org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                    generator.generate(req, OffsetDateTime.now(ZoneOffset.UTC))
+            ).isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("Failed to compute compliance scorecard for runId=" + runId);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────

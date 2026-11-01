@@ -1,6 +1,5 @@
 package de.palsoftware.scim.validator.ui.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.palsoftware.scim.validator.ui.model.ValidationHttpExchange;
 import de.palsoftware.scim.validator.ui.model.ValidationRun;
@@ -21,7 +20,7 @@ import java.util.regex.Pattern;
 public class ComplianceScoreService {
 
     private static final Logger log = LoggerFactory.getLogger(ComplianceScoreService.class);
-    private static final Pattern TEST_ID_PATTERN = Pattern.compile("^([A-Z0-9_]+):\\s*.*");
+    public static final Pattern TEST_ID_PATTERN = SpecCatalogService.TEST_ID_PATTERN;
     public static final int DEFAULT_MIN_PUBLISH_SCORE = 50;
     public static final int DEFAULT_MIN_CORE_COVERAGE_PERCENT = 50;
 
@@ -98,6 +97,12 @@ public class ComplianceScoreService {
 
     /**
      * Compute full ComplianceScorecardView for a given ValidationRun.
+     *
+     * <p>For active requirements mapped to multiple tests across capabilities, tests whose required
+     * capability is inactive are excluded from {@code totalTestsForReq} ({@code effectiveTestIds}) so that
+     * a core or active requirement is not penalized when an optional capability is unsupported by the server.
+     * If all mapped tests for a requirement require inactive capabilities, the requirement itself is classified
+     * as {@code EXCLUDED_CAPABILITY} and omitted from the active-scope denominator.</p>
      */
     public ComplianceScorecardView computeScorecard(
             ValidationRun run,
@@ -105,7 +110,6 @@ public class ComplianceScoreService {
             List<ValidationHttpExchange> exchanges) {
 
         List<ValidationTestResult> safeResults = testResults != null ? testResults : Collections.emptyList();
-        List<ValidationHttpExchange> safeExchanges = exchanges != null ? exchanges : Collections.emptyList();
 
         Map<String, SpecRequirement> catalog = specCatalogService.getRequirements();
 
@@ -122,12 +126,8 @@ public class ComplianceScoreService {
             }
         }
 
-        // 2. Discover changePassword capability from exchanges
-        Boolean changePasswordSupported = discoverChangePassword(safeExchanges);
-
-        // 3. Evaluate the 10 Optional Capabilities
-        Map<String, CapabilityStatus> capabilityStatusMap = evaluateCapabilities(
-                resultsByTestId, changePasswordSupported);
+        // 2. Evaluate the 10 Optional Capabilities
+        Map<String, CapabilityStatus> capabilityStatusMap = evaluateCapabilities(resultsByTestId);
 
         // Set of capabilities that were EXECUTED (at least 1 test SUCCESS or FAILED, not ABORTED)
         Set<String> activeCapabilities = new HashSet<>();
@@ -136,6 +136,12 @@ public class ComplianceScoreService {
                 activeCapabilities.add(entry.getKey());
             }
         }
+
+        // 3. Determine once whether any mapped test in the catalog was executed (SUCCESS or FAILED)
+        boolean hasAnyExecuted = resultsByTestId.entrySet().stream()
+                .filter(e -> isMappedTestId(e.getKey(), catalog.keySet()))
+                .map(Map.Entry::getValue)
+                .anyMatch(tr -> tr != null && ("SUCCESS".equalsIgnoreCase(tr.getStatus()) || "FAILED".equalsIgnoreCase(tr.getStatus())));
 
         // 4. Trace Requirements & Determine Active Scope
         List<RequirementTraceResult> traceResults = new ArrayList<>();
@@ -165,13 +171,30 @@ public class ComplianceScoreService {
 
             // Find all tests mapping to this requirement
             List<String> mappedTestIds = specCatalogService.getTestsForRequirement(req.id());
-            int totalTestsForReq = mappedTestIds.size();
+
+            // Multi-capability test filtering: for active requirements mapped to multiple tests across
+            // capabilities, exclude tests whose required capability is inactive from totalTestsForReq
+            // so a core requirement is not penalized when an optional capability is unsupported.
+            // If all mapped tests require an inactive capability, the requirement becomes EXCLUDED_CAPABILITY.
+            List<String> eligibleTestIds = mappedTestIds.stream().filter(tid -> {
+                List<String> testCaps = specCatalogService.getTestMapping(tid)
+                        .map(TestSpecMapping::requiredCapabilities)
+                        .orElse(Collections.emptyList());
+                return testCaps.stream().allMatch(c -> "none".equalsIgnoreCase(c) || activeCapabilities.contains(c));
+            }).toList();
+
+            if (capActive && eligibleTestIds.isEmpty() && !mappedTestIds.isEmpty()) {
+                capActive = false;
+            }
+
+            List<String> effectiveTestIds = capActive ? eligibleTestIds : mappedTestIds;
+            int totalTestsForReq = effectiveTestIds.size();
             int executedTestsForReq = 0;
             int passedTestsForReq = 0;
             int failedTestsForReq = 0;
             int abortedTestsForReq = 0;
 
-            for (String tid : mappedTestIds) {
+            for (String tid : effectiveTestIds) {
                 ValidationTestResult tr = resultsByTestId.get(tid);
                 if (tr != null) {
                     String status = tr.getStatus() != null ? tr.getStatus().toUpperCase() : "UNKNOWN";
@@ -184,30 +207,14 @@ public class ComplianceScoreService {
                             failedTestsForReq++;
                             executedTestsForReq++;
                         }
-                        case "ABORTED" -> abortedTestsForReq++;
+                        case "ABORTED", "SKIPPED" -> abortedTestsForReq++;
                     }
                 }
             }
 
-            if (capActive && executedTestsForReq == 0 && abortedTestsForReq > 0 && !mappedTestIds.isEmpty()) {
-                boolean allMappedTestsBlockedByInactiveCapability = mappedTestIds.stream().allMatch(tid -> {
-                    List<String> testCaps = specCatalogService.getTestMapping(tid)
-                            .map(TestSpecMapping::requiredCapabilities)
-                            .orElse(Collections.emptyList());
-                    return testCaps.stream().anyMatch(c -> !"none".equalsIgnoreCase(c) && !activeCapabilities.contains(c));
-                });
-                if (allMappedTestsBlockedByInactiveCapability) {
-                    capActive = false;
-                }
-            }
-
             boolean isNaDisposition = "na".equalsIgnoreCase(req.disposition());
-            if (capActive && isCore && !isNaDisposition && totalTestsForReq > 0) {
-                testableCoreReqs++;
-                if (executedTestsForReq > 0) {
-                    executedCoreReqs++;
-                }
-            }
+            boolean isOptionalDisposition = "optional".equalsIgnoreCase(req.disposition());
+            boolean isOptionalReq = isOptionalDisposition || req.isMayOrOptional();
 
             boolean inActiveScope = false;
             double earned = 0.0;
@@ -217,51 +224,87 @@ public class ComplianceScoreService {
             if (!capActive || (isNaDisposition && executedTestsForReq == 0)) {
                 status = "EXCLUDED_CAPABILITY";
                 excludedCount++;
-            } else if (executedTestsForReq == 0) {
+            } else if (!hasAnyExecuted) {
                 status = "UNTESTED";
                 untestedCount++;
             } else {
                 inActiveScope = true;
-                activeCount++;
-                earned = w * ((double) passedTestsForReq / executedTestsForReq);
-                totalEarned += earned;
                 totalWeight += w;
 
-                if (passedTestsForReq == executedTestsForReq) {
-                    status = "COMPLIANT";
-                } else if (passedTestsForReq > 0) {
-                    status = "PARTIAL";
+                if (totalTestsForReq > 0) {
+                    earned = w * ((double) passedTestsForReq / totalTestsForReq);
+                }
+                totalEarned += earned;
+
+                if (executedTestsForReq == 0) {
+                    status = "UNTESTED";
+                    untestedCount++;
                 } else {
-                    status = "FAILED";
+                    activeCount++;
+                    if (passedTestsForReq == totalTestsForReq && abortedTestsForReq == 0 && totalTestsForReq > 0) {
+                        status = "COMPLIANT";
+                    } else if (passedTestsForReq > 0) {
+                        status = "PARTIAL";
+                    } else {
+                        status = "FAILED";
+                    }
                 }
 
                 // Tally normative metrics
                 String level = req.level() != null ? req.level().toUpperCase() : "MAY";
                 switch (level) {
                     case "MUST" -> {
-                        mustActive++;
                         mustTotal += w;
                         mustEarned += earned;
-                        if (passedTestsForReq == executedTestsForReq) mustCompliant++;
-                        else if (passedTestsForReq > 0) mustPartial++;
-                        else mustFailed++;
+                        if ("COMPLIANT".equals(status)) {
+                            mustActive++;
+                            mustCompliant++;
+                        } else if ("PARTIAL".equals(status)) {
+                            mustActive++;
+                            mustPartial++;
+                        } else if ("FAILED".equals(status)) {
+                            mustActive++;
+                            mustFailed++;
+                        }
                     }
                     case "SHOULD" -> {
-                        shouldActive++;
                         shouldTotal += w;
                         shouldEarned += earned;
-                        if (passedTestsForReq == executedTestsForReq) shouldCompliant++;
-                        else if (passedTestsForReq > 0) shouldPartial++;
-                        else shouldFailed++;
+                        if ("COMPLIANT".equals(status)) {
+                            shouldActive++;
+                            shouldCompliant++;
+                        } else if ("PARTIAL".equals(status)) {
+                            shouldActive++;
+                            shouldPartial++;
+                        } else if ("FAILED".equals(status)) {
+                            shouldActive++;
+                            shouldFailed++;
+                        }
                     }
                     case "MAY", "OPTIONAL" -> {
-                        mayActive++;
                         mayTotal += w;
                         mayEarned += earned;
-                        if (passedTestsForReq == executedTestsForReq) mayCompliant++;
-                        else if (passedTestsForReq > 0) mayPartial++;
-                        else mayFailed++;
+                        if ("COMPLIANT".equals(status)) {
+                            mayActive++;
+                            mayCompliant++;
+                        } else if ("PARTIAL".equals(status)) {
+                            mayActive++;
+                            mayPartial++;
+                        } else if ("FAILED".equals(status)) {
+                            mayActive++;
+                            mayFailed++;
+                        }
                     }
+                }
+            }
+
+            // Core Execution Coverage Protection (TASK-59):
+            // Do not penalize core execution coverage for optional sub-features that abort.
+            boolean isAbortedOptional = executedTestsForReq == 0 && abortedTestsForReq > 0 && isOptionalReq;
+            if (capActive && isCore && !isNaDisposition && !isAbortedOptional && totalTestsForReq > 0 && !"EXCLUDED_CAPABILITY".equals(status)) {
+                testableCoreReqs++;
+                if (executedTestsForReq > 0) {
+                    executedCoreReqs++;
                 }
             }
 
@@ -272,8 +315,11 @@ public class ComplianceScoreService {
             ));
         }
 
-        // 5. Final Score & Rounding
+        // 5. Final Score & Rounding (TASK-62: 99% cap on active failures)
         int coreScore = totalWeight > 0 ? (int) Math.round((100.0 * totalEarned) / totalWeight) : 0;
+        if (totalEarned < totalWeight && coreScore == 100) {
+            coreScore = 99;
+        }
         ColourGradient gradient = ColourGradient.forScore(coreScore);
 
         // 6. Normative Breakdown
@@ -295,11 +341,14 @@ public class ComplianceScoreService {
 
         // 8. Publish Eligibility Evaluation
         String runStatus = run != null && run.getStatus() != null ? run.getStatus().toUpperCase(Locale.ROOT) : "UNKNOWN";
-        boolean isTerminal = "PASSED".equals(runStatus) || "FAILED".equals(runStatus);
+        boolean isTerminal = "PASSED".equals(runStatus) || "FAILED".equals(runStatus) || "PARTIAL".equals(runStatus);
         boolean meetsThreshold = coreScore >= minPublishScore;
         int coreCoveragePercent = testableCoreReqs > 0
                 ? (int) Math.round((100.0 * executedCoreReqs) / testableCoreReqs)
                 : (activeCount > 0 ? 100 : 0);
+        if (executedCoreReqs < testableCoreReqs && coreCoveragePercent == 100) {
+            coreCoveragePercent = 99;
+        }
         boolean meetsCoverage = activeCount > 0 && coreCoveragePercent >= minCoreCoveragePercent;
         boolean publishEligible = isTerminal && meetsThreshold && meetsCoverage;
         String ineligibilityReason = null;
@@ -318,8 +367,13 @@ public class ComplianceScoreService {
                     + minCoreCoveragePercent + "% publishing threshold (" + executedCoreReqs + "/" + testableCoreReqs + " testable core requirements executed).";
         }
 
-        // 9. Per-RFC Summaries
+        // 9. Per-RFC Summaries & Core-Only Conformance (TASK-63) & Conformance Tier (Policy 3.3)
         Map<String, RfcSectionSummary> rfcSummaries = computeRfcSummaries(traceResults);
+        double coreOnlyEarnedPoints = computeCoreOnlyEarnedPoints(traceResults);
+        double coreOnlyTotalPoints = computeCoreOnlyTotalPoints(traceResults);
+        int coreOnlyScore = computeCoreOnlyScore(traceResults);
+        String conformanceTierLabel = ComplianceScorecardView.computeConformanceTierLabel(
+                coreScore, coreCoveragePercent, mustBreakdown);
 
         return new ComplianceScorecardView(
                 run != null ? run.getId() : null,
@@ -343,14 +397,33 @@ public class ComplianceScoreService {
                 excludedCount,
                 untestedCount,
                 rfcSummaries,
-                traceResults
+                traceResults,
+                coreOnlyScore,
+                coreOnlyEarnedPoints,
+                coreOnlyTotalPoints,
+                coreCoveragePercent,
+                conformanceTierLabel
         );
+    }
+
+    private boolean isMappedTestId(String testId, Collection<String> requirementIds) {
+        if (testId == null) return false;
+        if (specCatalogService.getTestMapping(testId).isPresent()) {
+            return true;
+        }
+        for (String reqId : requirementIds) {
+            List<String> reqTests = specCatalogService.getTestsForRequirement(reqId);
+            if (reqTests != null && reqTests.contains(testId)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public boolean isEligibleForPublish(ComplianceScorecardView scorecard, ValidationRun run) {
         if (scorecard == null || run == null) return false;
         String status = run.getStatus() != null ? run.getStatus().toUpperCase(Locale.ROOT) : "";
-        boolean isTerminal = "PASSED".equals(status) || "FAILED".equals(status);
+        boolean isTerminal = "PASSED".equals(status) || "FAILED".equals(status) || "PARTIAL".equals(status);
         return isTerminal && scorecard.coreScore() >= minPublishScore && meetsMinimumCoverage(scorecard);
     }
 
@@ -365,7 +438,11 @@ public class ComplianceScoreService {
                 boolean isNaDisposition = specCatalogService.getRequirement(r.id())
                         .map(spec -> "na".equalsIgnoreCase(spec.disposition()))
                         .orElse(false);
-                if (isCore && !isNaDisposition && r.totalTests() > 0 && !"EXCLUDED_CAPABILITY".equals(r.status())) {
+                boolean isOptionalDisposition = specCatalogService.getRequirement(r.id())
+                        .map(spec -> "optional".equalsIgnoreCase(spec.disposition()) || spec.isMayOrOptional())
+                        .orElse(false);
+                boolean isAbortedOptional = r.executedTests() == 0 && r.abortedTests() > 0 && isOptionalDisposition;
+                if (isCore && !isNaDisposition && !isAbortedOptional && r.totalTests() > 0 && !"EXCLUDED_CAPABILITY".equals(r.status())) {
                     testableCore++;
                     if (r.executedTests() > 0) {
                         executedCore++;
@@ -375,50 +452,20 @@ public class ComplianceScoreService {
             int coveragePercent = testableCore > 0
                     ? (int) Math.round((100.0 * executedCore) / testableCore)
                     : (scorecard.activeRequirementsCount() > 0 ? 100 : 0);
+            if (executedCore < testableCore && coveragePercent == 100) {
+                coveragePercent = 99;
+            }
             return scorecard.activeRequirementsCount() > 0 && coveragePercent >= minCoreCoveragePercent;
         }
         return scorecard.activeRequirementsCount() > 0 || scorecard.catalogRequirementsTotal() == 0;
     }
 
     private Map<String, CapabilityStatus> evaluateCapabilities(
-            Map<String, ValidationTestResult> resultsByTestId,
-            Boolean changePasswordSupported) {
+            Map<String, ValidationTestResult> resultsByTestId) {
 
         Map<String, CapabilityStatus> result = new LinkedHashMap<>();
 
         for (String cap : OPTIONAL_CAPABILITIES) {
-            if ("changePassword".equals(cap)) {
-                List<String> cpTestIds = specCatalogService.getTestsForCapability("changePassword");
-                boolean hasTestResults = false;
-                if (cpTestIds != null && !cpTestIds.isEmpty()) {
-                    for (String tid : cpTestIds) {
-                        if (resultsByTestId.containsKey(tid)) {
-                            hasTestResults = true;
-                            break;
-                        }
-                    }
-                }
-
-                if (!hasTestResults) {
-                    boolean supported = Boolean.TRUE.equals(changePasswordSupported);
-                    CapabilitySupportLevel lvl = supported
-                            ? CapabilitySupportLevel.SUPPORTED_COMPLIANT
-                            : CapabilitySupportLevel.UNSUPPORTED;
-                    result.put(cap, CapabilityStatus.of(
-                            cap,
-                            CAPABILITY_TITLES.get(cap),
-                            CAPABILITY_SECTIONS.get(cap),
-                            lvl,
-                            1,
-                            supported ? 1 : 0,
-                            supported ? 1 : 0,
-                            0,
-                            supported ? 0 : 1
-                    ));
-                    continue;
-                }
-            }
-
             List<String> capTestIds = specCatalogService.getTestsForCapability(cap);
             int total = capTestIds.size();
             int passed = 0;
@@ -432,7 +479,7 @@ public class ComplianceScoreService {
                     switch (status) {
                         case "SUCCESS" -> passed++;
                         case "FAILED" -> failed++;
-                        case "ABORTED" -> aborted++;
+                        case "ABORTED", "SKIPPED" -> aborted++;
                     }
                 }
             }
@@ -441,7 +488,7 @@ public class ComplianceScoreService {
             CapabilitySupportLevel lvl;
             if (executed == 0) {
                 lvl = CapabilitySupportLevel.UNSUPPORTED;
-            } else if (failed == 0) {
+            } else if (failed == 0 && aborted == 0 && passed == total) {
                 lvl = CapabilitySupportLevel.SUPPORTED_COMPLIANT;
             } else {
                 lvl = CapabilitySupportLevel.SUPPORTED_PARTIAL;
@@ -461,28 +508,6 @@ public class ComplianceScoreService {
         }
 
         return result;
-    }
-
-    private Boolean discoverChangePassword(List<ValidationHttpExchange> exchanges) {
-        if (exchanges == null) return false;
-        for (ValidationHttpExchange ex : exchanges) {
-            if (ex == null) continue;
-            String url = ex.getUrl();
-            if (url != null && url.contains("/ServiceProviderConfig") &&
-                    ex.getResponseStatus() != null && ex.getResponseStatus() == 200 &&
-                    ex.getResponseBody() != null && !ex.getResponseBody().isBlank()) {
-                try {
-                    JsonNode root = objectMapper.readTree(ex.getResponseBody());
-                    JsonNode cpNode = root.get("changePassword");
-                    if (cpNode != null && cpNode.has("supported")) {
-                        return cpNode.get("supported").asBoolean();
-                    }
-                } catch (Exception e) {
-                    log.warn("Failed to parse ServiceProviderConfig response body: {}", e.getMessage());
-                }
-            }
-        }
-        return false;
     }
 
     private Map<String, RfcSectionSummary> computeRfcSummaries(List<RequirementTraceResult> traceResults) {
@@ -517,11 +542,104 @@ public class ComplianceScoreService {
             }
 
             int percent = totalPts > 0 ? (int) Math.round((100.0 * earned) / totalPts) : 0;
+            if (earned < totalPts && percent == 100) {
+                percent = 99;
+            }
             summaries.put(rfc, new RfcSectionSummary(
                     rfc, titles.getOrDefault(rfc, "RFC " + rfc), total, active, compliant, earned, totalPts, percent));
         }
 
         return summaries;
+    }
+
+    public static boolean isCoreOnlyRequirement(SpecRequirement req) {
+        return req != null && req.isCore() && "tested".equalsIgnoreCase(req.disposition());
+    }
+
+    private boolean isCoreOnlyTrace(RequirementTraceResult r) {
+        if (r == null || !r.inActiveScope()) {
+            return false;
+        }
+        Map<String, SpecRequirement> reqs = specCatalogService.getRequirements();
+        SpecRequirement req = (reqs != null) ? reqs.get(r.id()) : null;
+        if (req == null) {
+            req = specCatalogService.getRequirement(r.id()).orElse(null);
+        }
+        if (req != null) {
+            return isCoreOnlyRequirement(req);
+        }
+        String cap = r.capability() != null ? r.capability().trim() : "none";
+        return "none".equalsIgnoreCase(cap) || cap.isEmpty();
+    }
+
+    /**
+     * Compute true Core-Only Conformance score (0-100) evaluating only core-tested requirements
+     * (capability: "none" and disposition: "tested", i.e. the 86 core-tested requirements totaling
+     * 238.0 points from the re-leveled catalog).
+     */
+    public int computeCoreOnlyScore(ComplianceScorecardView scorecard) {
+        if (scorecard == null) {
+            return 0;
+        }
+        if (scorecard.requirementMatrix() == null || scorecard.requirementMatrix().isEmpty()) {
+            return scorecard.coreOnlyScore();
+        }
+        return computeCoreOnlyScore(scorecard.requirementMatrix());
+    }
+
+    public int computeCoreOnlyScore(List<RequirementTraceResult> traceResults) {
+        if (traceResults == null || traceResults.isEmpty()) {
+            return 0;
+        }
+        double earned = computeCoreOnlyEarnedPoints(traceResults);
+        double weight = computeCoreOnlyTotalPoints(traceResults);
+        if (weight <= 0) return 0;
+        int score = (int) Math.round((100.0 * earned) / weight);
+        if (earned < weight && score == 100) {
+            score = 99;
+        }
+        return score;
+    }
+
+    /**
+     * Compute composite Active-Scope Conformance score (0-100) across all active requirements.
+     * Target denominator is up to 431.0 points when all capabilities are active.
+     */
+    public int computeActiveScopeScore(ComplianceScorecardView scorecard) {
+        if (scorecard == null) return 0;
+        return scorecard.coreScore();
+    }
+
+    public double computeCoreOnlyEarnedPoints(ComplianceScorecardView scorecard) {
+        if (scorecard == null) return 0.0;
+        if (scorecard.requirementMatrix() == null || scorecard.requirementMatrix().isEmpty()) {
+            return scorecard.coreOnlyEarnedPoints();
+        }
+        return computeCoreOnlyEarnedPoints(scorecard.requirementMatrix());
+    }
+
+    public double computeCoreOnlyEarnedPoints(List<RequirementTraceResult> traceResults) {
+        if (traceResults == null) return 0.0;
+        return traceResults.stream()
+                .filter(this::isCoreOnlyTrace)
+                .mapToDouble(RequirementTraceResult::earnedWeight)
+                .sum();
+    }
+
+    public double computeCoreOnlyTotalPoints(ComplianceScorecardView scorecard) {
+        if (scorecard == null) return 0.0;
+        if (scorecard.requirementMatrix() == null || scorecard.requirementMatrix().isEmpty()) {
+            return scorecard.coreOnlyTotalPoints();
+        }
+        return computeCoreOnlyTotalPoints(scorecard.requirementMatrix());
+    }
+
+    public double computeCoreOnlyTotalPoints(List<RequirementTraceResult> traceResults) {
+        if (traceResults == null) return 0.0;
+        return traceResults.stream()
+                .filter(this::isCoreOnlyTrace)
+                .mapToDouble(RequirementTraceResult::weight)
+                .sum();
     }
 
     public static String extractTestId(ValidationTestResult tr) {
@@ -541,7 +659,7 @@ public class ComplianceScoreService {
         if (m.find()) {
             return m.group(1);
         }
-        if (trimmed.matches("^[A-Z0-9_]+$")) {
+        if (SpecCatalogService.RAW_TEST_ID_SYNTAX.matcher(trimmed).matches()) {
             return trimmed;
         }
         return null;

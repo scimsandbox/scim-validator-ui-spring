@@ -16,7 +16,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.math.BigDecimal;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -419,6 +422,9 @@ public class GitHubCompliancePublisherService {
         // Programmatic security assertion ensuring ZERO target URLs or credentials leaked
         String targetUrl = resolveTargetUrl(req);
         ComplianceReportGenerator.assertSanitized(reportJson, targetUrl);
+
+        // Pre-publish JSON Schema validation against compliance-report-v1.json (TASK-65)
+        validateReportSchema(reportJson);
 
         int existingIndex = -1;
         for (int i = 0; i < catalog.size(); i++) {
@@ -936,5 +942,328 @@ public class GitHubCompliancePublisherService {
 
     public void setApiUrl(String apiUrl) {
         this.apiUrl = apiUrl;
+    }
+
+    /**
+     * Pre-publish JSON Schema validation against bundled {@code /schemas/compliance-report-v1.json} (TASK-65).
+     * Evaluates the full Draft 2020-12 JSON Schema AST recursively ($ref, type, required, properties,
+     * additionalProperties, items, enum, const, pattern, minimum, maximum, minLength, maxLength,
+     * allOf/if/then/else, and format).
+     */
+    private static final String COMPLIANCE_REPORT_SCHEMA_RESOURCE = "/schemas/compliance-report-v1.json";
+    private static final Pattern UUID_FORMAT_PATTERN = Pattern.compile(
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
+    private static volatile JsonNode cachedComplianceReportSchema;
+
+    public void validateReportSchema(String reportJson) {
+        if (reportJson == null || reportJson.isBlank()) {
+            throw new IllegalArgumentException("Compliance report JSON must not be blank");
+        }
+        try {
+            JsonNode root = objectMapper.readTree(reportJson);
+            JsonNode schemaRoot = loadComplianceReportSchema();
+            validateNodeAgainstSchema(root, schemaRoot, schemaRoot, "$");
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Failed to validate report JSON against compliance-report-v1.json: " + e.getMessage(), e);
+        }
+    }
+
+    private JsonNode loadComplianceReportSchema() {
+        JsonNode schema = cachedComplianceReportSchema;
+        if (schema != null) {
+            return schema;
+        }
+        synchronized (GitHubCompliancePublisherService.class) {
+            if (cachedComplianceReportSchema == null) {
+                try (InputStream in = GitHubCompliancePublisherService.class.getResourceAsStream(COMPLIANCE_REPORT_SCHEMA_RESOURCE)) {
+                    if (in == null) {
+                        throw new IllegalStateException("Bundled JSON Schema resource not found on classpath: " + COMPLIANCE_REPORT_SCHEMA_RESOURCE);
+                    }
+                    cachedComplianceReportSchema = objectMapper.readTree(in);
+                } catch (IOException e) {
+                    throw new IllegalStateException("Failed to load bundled JSON Schema resource " + COMPLIANCE_REPORT_SCHEMA_RESOURCE, e);
+                }
+            }
+            return cachedComplianceReportSchema;
+        }
+    }
+
+    private static void validateNodeAgainstSchema(JsonNode instance, JsonNode schema, JsonNode rootSchema, String path) {
+        if (schema == null || schema.isMissingNode()) {
+            return;
+        }
+
+        // 1. $ref resolution
+        if (schema.has("$ref")) {
+            String ref = schema.get("$ref").asText();
+            if (!ref.startsWith("#/")) {
+                throw new IllegalStateException("Unsupported external $ref in compliance schema: " + ref);
+            }
+            JsonNode target = rootSchema.at(ref.substring(1));
+            if (target == null || target.isMissingNode()) {
+                throw new IllegalStateException("Unresolvable $ref in compliance schema: " + ref);
+            }
+            validateNodeAgainstSchema(instance, target, rootSchema, path);
+        }
+
+        // 2. type validation
+        if (schema.has("type")) {
+            JsonNode typeNode = schema.get("type");
+            boolean typeMatched = false;
+            if (typeNode.isTextual()) {
+                typeMatched = matchesJsonType(instance, typeNode.asText());
+            } else if (typeNode.isArray()) {
+                for (JsonNode allowedType : typeNode) {
+                    if (matchesJsonType(instance, allowedType.asText())) {
+                        typeMatched = true;
+                        break;
+                    }
+                }
+            }
+            if (!typeMatched) {
+                throw new IllegalArgumentException(
+                        "Schema validation failed at " + path + ": expected type " + typeNode + " but found " + describeNodeType(instance));
+            }
+        }
+
+        if (instance == null || instance.isNull()) {
+            return;
+        }
+
+        // 3. const validation
+        if (schema.has("const")) {
+            JsonNode constNode = schema.get("const");
+            if (!jsonValueEquals(instance, constNode)) {
+                throw new IllegalArgumentException(
+                        "Schema validation failed at " + path + ": expected const " + constNode + " but found " + instance);
+            }
+        }
+
+        // 4. enum validation
+        if (schema.has("enum") && schema.get("enum").isArray()) {
+            boolean matchedEnum = false;
+            for (JsonNode allowed : schema.get("enum")) {
+                if (jsonValueEquals(instance, allowed)) {
+                    matchedEnum = true;
+                    break;
+                }
+            }
+            if (!matchedEnum) {
+                throw new IllegalArgumentException(
+                        "Schema validation failed at " + path + ": value " + instance + " is not in allowed enum " + schema.get("enum"));
+            }
+        }
+
+        // 5. String validations (minLength, maxLength, pattern, format)
+        if (instance.isTextual()) {
+            String text = instance.asText();
+            int codePointLen = text.codePointCount(0, text.length());
+            if (schema.has("minLength")) {
+                int minLen = schema.get("minLength").asInt();
+                if (codePointLen < minLen) {
+                    throw new IllegalArgumentException(
+                            "Schema validation failed at " + path + ": string length " + codePointLen + " is less than minLength " + minLen);
+                }
+            }
+            if (schema.has("maxLength")) {
+                int maxLen = schema.get("maxLength").asInt();
+                if (codePointLen > maxLen) {
+                    throw new IllegalArgumentException(
+                            "Schema validation failed at " + path + ": string length " + codePointLen + " exceeds maxLength " + maxLen);
+                }
+            }
+            if (schema.has("pattern")) {
+                String patternStr = schema.get("pattern").asText();
+                if (!Pattern.compile(patternStr).matcher(text).find()) {
+                    throw new IllegalArgumentException(
+                            "Schema validation failed at " + path + ": string '" + text + "' does not match pattern " + patternStr);
+                }
+            }
+            if (schema.has("format")) {
+                validateStringFormat(text, schema.get("format").asText(), path);
+            }
+        }
+
+        // 6. Numeric validations (minimum, maximum)
+        if (instance.isNumber()) {
+            BigDecimal val = instance.decimalValue();
+            if (schema.has("minimum")) {
+                BigDecimal min = schema.get("minimum").decimalValue();
+                if (val.compareTo(min) < 0) {
+                    throw new IllegalArgumentException(
+                            "Schema validation failed at " + path + ": value " + val + " is less than minimum " + min);
+                }
+            }
+            if (schema.has("maximum")) {
+                BigDecimal max = schema.get("maximum").decimalValue();
+                if (val.compareTo(max) > 0) {
+                    throw new IllegalArgumentException(
+                            "Schema validation failed at " + path + ": value " + val + " exceeds maximum " + max);
+                }
+            }
+        }
+
+        // 7. Object validations (required, additionalProperties, properties)
+        if (instance.isObject()) {
+            JsonNode propsNode = schema.get("properties");
+            if (schema.has("required") && schema.get("required").isArray()) {
+                for (JsonNode reqNode : schema.get("required")) {
+                    String reqField = reqNode.asText();
+                    if (!instance.has(reqField) || instance.get(reqField).isMissingNode()) {
+                        throw new IllegalArgumentException("Missing required property at " + path + ": " + reqField);
+                    }
+                }
+            }
+            if (schema.has("additionalProperties")) {
+                JsonNode addProps = schema.get("additionalProperties");
+                if (addProps.isBoolean() && !addProps.asBoolean()) {
+                    Iterator<String> fieldNames = instance.fieldNames();
+                    while (fieldNames.hasNext()) {
+                        String fieldName = fieldNames.next();
+                        if (propsNode == null || !propsNode.has(fieldName)) {
+                            throw new IllegalArgumentException(
+                                    "Unknown additional property not allowed at " + path + ": " + fieldName);
+                        }
+                    }
+                } else if (addProps.isObject()) {
+                    Iterator<Map.Entry<String, JsonNode>> fields = instance.fields();
+                    while (fields.hasNext()) {
+                        Map.Entry<String, JsonNode> entry = fields.next();
+                        if (propsNode == null || !propsNode.has(entry.getKey())) {
+                            validateNodeAgainstSchema(entry.getValue(), addProps, rootSchema, path + "." + entry.getKey());
+                        }
+                    }
+                }
+            }
+            if (propsNode != null && propsNode.isObject()) {
+                Iterator<Map.Entry<String, JsonNode>> fields = instance.fields();
+                while (fields.hasNext()) {
+                    Map.Entry<String, JsonNode> entry = fields.next();
+                    String fieldName = entry.getKey();
+                    if (propsNode.has(fieldName)) {
+                        validateNodeAgainstSchema(entry.getValue(), propsNode.get(fieldName), rootSchema, path + "." + fieldName);
+                    }
+                }
+            }
+        }
+
+        // 8. Array validations (minItems, maxItems, items)
+        if (instance.isArray()) {
+            if (schema.has("minItems") && instance.size() < schema.get("minItems").asInt()) {
+                throw new IllegalArgumentException(
+                        "Schema validation failed at " + path + ": array size " + instance.size() + " is less than minItems " + schema.get("minItems").asInt());
+            }
+            if (schema.has("maxItems") && instance.size() > schema.get("maxItems").asInt()) {
+                throw new IllegalArgumentException(
+                        "Schema validation failed at " + path + ": array size " + instance.size() + " exceeds maxItems " + schema.get("maxItems").asInt());
+            }
+            if (schema.has("items") && schema.get("items").isObject()) {
+                JsonNode itemSchema = schema.get("items");
+                for (int i = 0; i < instance.size(); i++) {
+                    validateNodeAgainstSchema(instance.get(i), itemSchema, rootSchema, path + "[" + i + "]");
+                }
+            }
+        }
+
+        // 9. Conditional / Applicator validations (allOf, if/then/else)
+        if (schema.has("allOf") && schema.get("allOf").isArray()) {
+            for (JsonNode subSchema : schema.get("allOf")) {
+                validateNodeAgainstSchema(instance, subSchema, rootSchema, path);
+            }
+        }
+        if (schema.has("if") && schema.get("if").isObject()) {
+            if (matchesSchema(instance, schema.get("if"), rootSchema)) {
+                if (schema.has("then") && schema.get("then").isObject()) {
+                    validateNodeAgainstSchema(instance, schema.get("then"), rootSchema, path);
+                }
+            } else if (schema.has("else") && schema.get("else").isObject()) {
+                validateNodeAgainstSchema(instance, schema.get("else"), rootSchema, path);
+            }
+        }
+    }
+
+    private static boolean matchesSchema(JsonNode instance, JsonNode subSchema, JsonNode rootSchema) {
+        try {
+            validateNodeAgainstSchema(instance, subSchema, rootSchema, "$if");
+            return true;
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+    }
+
+    private static boolean matchesJsonType(JsonNode instance, String expectedType) {
+        if (instance == null || instance.isNull()) {
+            return "null".equals(expectedType);
+        }
+        return switch (expectedType) {
+            case "object" -> instance.isObject();
+            case "array" -> instance.isArray();
+            case "string" -> instance.isTextual();
+            case "integer" -> instance.isIntegralNumber();
+            case "number" -> instance.isNumber();
+            case "boolean" -> instance.isBoolean();
+            case "null" -> instance.isNull();
+            default -> false;
+        };
+    }
+
+    private static String describeNodeType(JsonNode instance) {
+        if (instance == null || instance.isNull()) return "null";
+        if (instance.isObject()) return "object";
+        if (instance.isArray()) return "array";
+        if (instance.isTextual()) return "string";
+        if (instance.isIntegralNumber()) return "integer";
+        if (instance.isNumber()) return "number (" + instance.asText() + ")";
+        if (instance.isBoolean()) return "boolean";
+        return instance.getNodeType().name();
+    }
+
+    private static boolean jsonValueEquals(JsonNode a, JsonNode b) {
+        if (a == null || b == null) {
+            return a == b;
+        }
+        if (a.isNumber() && b.isNumber()) {
+            if (a.isIntegralNumber() != b.isIntegralNumber()) {
+                return false;
+            }
+            return a.decimalValue().compareTo(b.decimalValue()) == 0;
+        }
+        return a.equals(b);
+    }
+
+    private static void validateStringFormat(String text, String format, String path) {
+        switch (format) {
+            case "uuid" -> {
+                if (!UUID_FORMAT_PATTERN.matcher(text).matches()) {
+                    throw new IllegalArgumentException(
+                            "Schema validation failed at " + path + ": invalid uuid format '" + text + "'");
+                }
+            }
+            case "date-time" -> {
+                try {
+                    OffsetDateTime.parse(text, DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+                } catch (Exception e) {
+                    throw new IllegalArgumentException(
+                            "Schema validation failed at " + path + ": invalid date-time format '" + text + "'");
+                }
+            }
+            case "uri" -> {
+                try {
+                    URI uri = new URI(text);
+                    if (uri.getScheme() == null || uri.getScheme().isBlank()) {
+                        throw new IllegalArgumentException(
+                                "Schema validation failed at " + path + ": URI must include a scheme '" + text + "'");
+                    }
+                } catch (URISyntaxException e) {
+                    throw new IllegalArgumentException(
+                            "Schema validation failed at " + path + ": invalid uri format '" + text + "'");
+                }
+            }
+            default -> {
+                // Unknown format annotations are non-failing per JSON Schema Draft 2020-12
+            }
+        }
     }
 }

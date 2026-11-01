@@ -239,7 +239,7 @@ public class ValidationController {
         ValidationProgress progress = validationProgressTracker.getProgress(runId);
         if (progress == null) {
             String status = run.status();
-            boolean isTerminal = "PASSED".equals(status) || "FAILED".equals(status);
+            boolean isTerminal = "PASSED".equals(status) || "FAILED".equals(status) || "PARTIAL".equals(status);
             progress = new ValidationProgress(
                     run.id(),
                     status,
@@ -511,7 +511,7 @@ public class ValidationController {
             int minScore = complianceScoreService.getMinPublishScore();
             String reason = scorecard.publishIneligibilityReason() != null
                     ? scorecard.publishIneligibilityReason()
-                    : "Run does not meet publishing eligibility criteria (Core Conformance >= " + minScore + "% and terminal status).";
+                    : "Run does not meet publishing eligibility criteria (Core Conformance >= " + minScore + "% and terminal status: PASSED, PARTIAL, or FAILED).";
             redirectAttributes.addFlashAttribute("errorMessage", "Publication rejected: " + reason);
             return "redirect:/runs/" + runId;
         }

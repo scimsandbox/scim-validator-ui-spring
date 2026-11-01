@@ -61,12 +61,12 @@ class SpecCatalogServiceTest {
         long shouldCount = reqs.values().stream().filter(SpecRequirement::isShould).count();
         long mayOrOptCount = reqs.values().stream().filter(SpecRequirement::isMayOrOptional).count();
 
-        assertThat(mustCount).isEqualTo(132);
-        assertThat(shouldCount).isEqualTo(13);
-        assertThat(mayOrOptCount).isEqualTo(14); // 13 MAY + 1 OPTIONAL
+        assertThat(mustCount).isEqualTo(131);
+        assertThat(shouldCount).isEqualTo(16);
+        assertThat(mayOrOptCount).isEqualTo(12); // 11 MAY + 1 OPTIONAL
 
         int totalWeight = reqs.values().stream().mapToInt(SpecRequirement::getWeight).sum();
-        assertThat(totalWeight).isEqualTo(132 * 3 + 13 * 2 + 14 * 1); // 396 + 26 + 14 = 436
+        assertThat(totalWeight).isEqualTo(131 * 3 + 16 * 2 + 12 * 1); // 393 + 32 + 12 = 437
     }
 
     @Test
@@ -80,11 +80,11 @@ class SpecCatalogServiceTest {
     }
 
     @Test
-    @DisplayName("Reflective inspection of the 13 Spock specs discovers exactly 274 test methods")
-    void testSpockReflection_Discovers274Tests() {
+    @DisplayName("Reflective inspection of the 13 Spock specs discovers exactly 280 test methods")
+    void testSpockReflection_Discovers280Tests() {
         Map<String, TestSpecMapping> testMappings = service.getAllTestMappings();
-        assertThat(testMappings).hasSize(274);
-        assertThat(service.getTotalTestsCount()).isEqualTo(274);
+        assertThat(testMappings).hasSize(280);
+        assertThat(service.getTotalTestsCount()).isEqualTo(280);
 
         // Every test method must have a valid identifier, display name, class name, and >= 1 spec ref
         for (TestSpecMapping mapping : testMappings.values()) {
@@ -111,7 +111,7 @@ class SpecCatalogServiceTest {
         assertThat(cursorTests).hasSize(6);
 
         List<String> asyncTests = service.getTestsForCapability("async");
-        assertThat(asyncTests).hasSize(3);
+        assertThat(asyncTests).hasSize(4);
 
         List<String> enterpriseTests = service.getTestsForCapability("enterprise");
         assertThat(enterpriseTests).containsExactlyInAnyOrder("SCH_07", "USR_02", "USR_24", "PAT_10", "FLT_19", "FLT_34");
@@ -158,6 +158,15 @@ class SpecCatalogServiceTest {
         List<TestSpecMapping> list = service.getMappingsForTest("DSC_01: any extra text");
         assertThat(list).isNotEmpty();
         assertThat(list.get(0).testId()).isEqualTo("DSC_01");
+
+        // Verify lowercase-suffixed test IDs (SCH_13a..f, ASY_01b) and shared pattern constant
+        assertThat(ComplianceScoreService.TEST_ID_PATTERN).isSameAs(SpecCatalogService.TEST_ID_PATTERN);
+        for (String id : List.of("SCH_13a", "SCH_13b", "SCH_13c", "SCH_13d", "SCH_13e", "SCH_13f", "ASY_01b")) {
+            Optional<TestSpecMapping> mapped = service.getTestMapping(id);
+            assertThat(mapped).as("Test mapping for %s must exist", id).isPresent();
+            assertThat(mapped.get().testId()).isEqualTo(id);
+            assertThat(service.getTestMapping(id + ": sample description")).contains(mapped.get());
+        }
     }
 
     @Test
