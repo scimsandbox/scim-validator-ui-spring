@@ -143,6 +143,15 @@ public class ComplianceScoreService {
                 .map(Map.Entry::getValue)
                 .anyMatch(tr -> tr != null && ("SUCCESS".equalsIgnoreCase(tr.getStatus()) || "FAILED".equalsIgnoreCase(tr.getStatus())));
 
+        boolean hasAnyCoreExecuted = catalog.values().stream()
+                .filter(SpecRequirement::isCore)
+                .flatMap(req -> {
+                    List<String> reqTests = specCatalogService.getTestsForRequirement(req.id());
+                    return reqTests != null ? reqTests.stream() : java.util.stream.Stream.empty();
+                })
+                .map(resultsByTestId::get)
+                .anyMatch(tr -> tr != null && ("SUCCESS".equalsIgnoreCase(tr.getStatus()) || "FAILED".equalsIgnoreCase(tr.getStatus())));
+
         // 4. Trace Requirements & Determine Active Scope
         List<RequirementTraceResult> traceResults = new ArrayList<>();
         double totalEarned = 0.0;
@@ -165,8 +174,8 @@ public class ComplianceScoreService {
         int executedCoreReqs = 0;
 
         for (SpecRequirement req : catalog.values()) {
-            String cap = req.capability() != null ? req.capability().trim() : "none";
-            boolean isCore = "none".equalsIgnoreCase(cap) || cap.isEmpty();
+            String cap = req.capability() != null ? req.capability().trim() : SpecRequirement.CORE_CAPABILITY;
+            boolean isCore = SpecRequirement.CORE_CAPABILITY.equalsIgnoreCase(cap) || cap.isEmpty();
             boolean capActive = isCore || activeCapabilities.contains(cap);
 
             // Find all tests mapping to this requirement
@@ -180,7 +189,7 @@ public class ComplianceScoreService {
                 List<String> testCaps = specCatalogService.getTestMapping(tid)
                         .map(TestSpecMapping::requiredCapabilities)
                         .orElse(Collections.emptyList());
-                return testCaps.stream().allMatch(c -> "none".equalsIgnoreCase(c) || activeCapabilities.contains(c));
+                return testCaps.stream().allMatch(c -> SpecRequirement.CORE_CAPABILITY.equalsIgnoreCase(c) || activeCapabilities.contains(c));
             }).toList();
 
             if (capActive && eligibleTestIds.isEmpty() && !mappedTestIds.isEmpty()) {
@@ -215,13 +224,15 @@ public class ComplianceScoreService {
             boolean isNaDisposition = "na".equalsIgnoreCase(req.disposition());
             boolean isOptionalDisposition = "optional".equalsIgnoreCase(req.disposition());
             boolean isOptionalReq = isOptionalDisposition || req.isMayOrOptional();
+            boolean capExecuted = isCore ? hasAnyCoreExecuted : activeCapabilities.contains(cap);
+            boolean isAbortedMaySubfeature = capExecuted && executedTestsForReq == 0 && abortedTestsForReq > 0 && req.isMayOrOptional();
 
             boolean inActiveScope = false;
             double earned = 0.0;
             int w = req.getWeight();
             String status;
 
-            if (!capActive || (isNaDisposition && executedTestsForReq == 0)) {
+            if (!capActive || (isNaDisposition && executedTestsForReq == 0) || isAbortedMaySubfeature) {
                 status = "EXCLUDED_CAPABILITY";
                 excludedCount++;
             } else if (!hasAnyExecuted) {
@@ -433,8 +444,8 @@ public class ComplianceScoreService {
             int testableCore = 0;
             int executedCore = 0;
             for (RequirementTraceResult r : matrix) {
-                String cap = r.capability() != null ? r.capability().trim() : "none";
-                boolean isCore = "none".equalsIgnoreCase(cap) || cap.isEmpty();
+                String cap = r.capability() != null ? r.capability().trim() : SpecRequirement.CORE_CAPABILITY;
+                boolean isCore = SpecRequirement.CORE_CAPABILITY.equalsIgnoreCase(cap) || cap.isEmpty();
                 boolean isNaDisposition = specCatalogService.getRequirement(r.id())
                         .map(spec -> "na".equalsIgnoreCase(spec.disposition()))
                         .orElse(false);
@@ -553,7 +564,7 @@ public class ComplianceScoreService {
     }
 
     public static boolean isCoreOnlyRequirement(SpecRequirement req) {
-        return req != null && req.isCore() && "tested".equalsIgnoreCase(req.disposition());
+        return req != null && req.isCore() && req.isScored();
     }
 
     private boolean isCoreOnlyTrace(RequirementTraceResult r) {
@@ -568,14 +579,13 @@ public class ComplianceScoreService {
         if (req != null) {
             return isCoreOnlyRequirement(req);
         }
-        String cap = r.capability() != null ? r.capability().trim() : "none";
-        return "none".equalsIgnoreCase(cap) || cap.isEmpty();
+        String cap = r.capability() != null ? r.capability().trim() : SpecRequirement.CORE_CAPABILITY;
+        return SpecRequirement.CORE_CAPABILITY.equalsIgnoreCase(cap) || cap.isEmpty();
     }
 
     /**
      * Compute true Core-Only Conformance score (0-100) evaluating only core-tested requirements
-     * (capability: "none" and disposition: "tested", i.e. the 86 core-tested requirements totaling
-     * 238.0 points from the re-leveled catalog).
+     * (capability: "core" and a scored disposition, i.e. everything except optional/na).
      */
     public int computeCoreOnlyScore(ComplianceScorecardView scorecard) {
         if (scorecard == null) {
@@ -603,7 +613,7 @@ public class ComplianceScoreService {
 
     /**
      * Compute composite Active-Scope Conformance score (0-100) across all active requirements.
-     * Target denominator is up to 431.0 points when all capabilities are active.
+     * Denominator is the total weight of all requirements in active scope.
      */
     public int computeActiveScopeScore(ComplianceScorecardView scorecard) {
         if (scorecard == null) return 0;

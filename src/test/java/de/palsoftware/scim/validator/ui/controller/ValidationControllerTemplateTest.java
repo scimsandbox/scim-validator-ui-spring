@@ -162,7 +162,7 @@ class ValidationControllerTemplateTest {
                                 "GET /ServiceProviderConfig returns HTTP 200",
                                 "MUST",
                                 3,
-                                "none",
+                                "core",
                                 true,
                                 1,
                                 1,

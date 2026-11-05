@@ -1738,8 +1738,8 @@
                                           th:text="${req.level}">MUST</span>
                                 </td>
                                 <td>
-                                    <span th:if="${req.capability == 'none' or req.capability == ''}" style="color: #94a3b8; font-size: 12px;">Core SCIM</span>
-                                    <span th:if="${req.capability != 'none' and req.capability != ''}"
+                                    <span th:if="${req.capability == 'core' or req.capability == ''}" style="color: #94a3b8; font-size: 12px;">Core SCIM</span>
+                                    <span th:if="${req.capability != 'core' and req.capability != ''}"
                                           style="color: #38bdf8; font-family: 'JetBrains Mono', monospace; font-size: 12px;"
                                           th:text="${req.capability}">patch</span>
                                 </td>

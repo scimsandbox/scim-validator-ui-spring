@@ -34,24 +34,8 @@ public class SpecCatalogService {
             "classpath:spec/rfc9967-requirements.yaml"
     );
 
-    public static final List<String> SPEC_CLASS_NAMES = List.of(
-            "de.palsoftware.scim.validator.specs.A1_ServiceDiscoverySpec",
-            "de.palsoftware.scim.validator.specs.A2_SchemaValidationSpec",
-            "de.palsoftware.scim.validator.specs.A3_UserCrudSpec",
-            "de.palsoftware.scim.validator.specs.A4_PatchOperationsSpec",
-            "de.palsoftware.scim.validator.specs.A5_FilteringSpec",
-            "de.palsoftware.scim.validator.specs.A5_PaginationSpec",
-            "de.palsoftware.scim.validator.specs.A5_SortingSpec",
-            "de.palsoftware.scim.validator.specs.A6_GroupLifecycleSpec",
-            "de.palsoftware.scim.validator.specs.A7_BulkOperationsSpec",
-            "de.palsoftware.scim.validator.specs.A8_SecurityAndRobustnessSpec",
-            "de.palsoftware.scim.validator.specs.A9_NegativeAndEdgeCasesSpec",
-            "de.palsoftware.scim.validator.specs.A10_CursorPaginationSpec",
-            "de.palsoftware.scim.validator.specs.A11_AsyncOperationsSpec"
-    );
-
-    public static final Pattern TEST_ID_PATTERN = Pattern.compile("^([A-Z][A-Za-z0-9_]*):\\s*(.*)");
-    public static final Pattern RAW_TEST_ID_SYNTAX = Pattern.compile("^[A-Z][A-Za-z0-9_]*$");
+    public static final Pattern TEST_ID_PATTERN = Pattern.compile("^([A-Z][A-Za-z0-9_.\\-]*):\\s*(.*)");
+    public static final Pattern RAW_TEST_ID_SYNTAX = Pattern.compile("^[A-Z][A-Za-z0-9_.\\-]*$");
 
     private final ResourcePatternResolver resourceResolver;
     private final Map<String, SpecRequirement> requirements = new LinkedHashMap<>();
@@ -85,15 +69,15 @@ public class SpecCatalogService {
                     String id = (String) map.get("id");
                     String rfc = map.get("rfc") != null ? String.valueOf(map.get("rfc")) : "";
                     String section = map.get("section") != null ? String.valueOf(map.get("section")) : "";
-                    String title = (String) map.get("title");
+                    String subject = (String) map.get("subject");
                     String level = (String) map.get("level");
+                    String quote = (String) map.get("quote");
+                    String area = (String) map.get("area");
                     String capability = (String) map.get("capability");
-                    String observability = (String) map.get("observability");
                     String disposition = (String) map.get("disposition");
-                    String note = map.get("note") != null ? String.valueOf(map.get("note")) : "";
 
                     SpecRequirement req = new SpecRequirement(
-                            id, rfc, section, title, level, capability, observability, disposition, note
+                            id, rfc, section, subject, level, quote, area, capability, disposition
                     );
                     if (requirements.containsKey(req.id())) {
                         throw new IllegalStateException("Duplicate requirement ID in catalog: " + req.id());
@@ -149,7 +133,7 @@ public class SpecCatalogService {
     }
 
     public static Set<String> discoverValidatorSpecClassNames(ResourcePatternResolver resolver) {
-        Set<String> classNames = new LinkedHashSet<>(SPEC_CLASS_NAMES);
+        Set<String> classNames = new LinkedHashSet<>();
         try {
             ResourcePatternResolver effectiveResolver = resolver != null ? resolver : new PathMatchingResourcePatternResolver();
             Resource[] resources = effectiveResolver.getResources("classpath*:de/palsoftware/scim/validator/specs/*Spec.class");
@@ -163,7 +147,12 @@ public class SpecCatalogService {
                 }
             }
         } catch (Exception e) {
-            log.debug("Dynamic classpath scan for validator specs fell back to static list: {}", e.getMessage());
+            throw new IllegalStateException("Classpath scan for validator specs failed", e);
+        }
+        if (classNames.isEmpty()) {
+            throw new IllegalStateException(
+                    "No validator spec classes found on the classpath (expected de/palsoftware/scim/validator/specs/*Spec.class); "
+                            + "check the scim-validator dependency");
         }
         return classNames;
     }
@@ -200,14 +189,14 @@ public class SpecCatalogService {
                     String methodCapValue = (methodCap != null && !methodCap.value().isBlank()) ? methodCap.value().trim() : null;
 
                     List<String> requiredCaps = new ArrayList<>();
-                    if (classCapValue != null && !"none".equalsIgnoreCase(classCapValue)) {
+                    if (classCapValue != null && !SpecRequirement.CORE_CAPABILITY.equalsIgnoreCase(classCapValue)) {
                         requiredCaps.add(classCapValue);
                     }
-                    if (methodCapValue != null && !"none".equalsIgnoreCase(methodCapValue) && !requiredCaps.contains(methodCapValue)) {
+                    if (methodCapValue != null && !SpecRequirement.CORE_CAPABILITY.equalsIgnoreCase(methodCapValue) && !requiredCaps.contains(methodCapValue)) {
                         requiredCaps.add(methodCapValue);
                     }
                     if (requiredCaps.isEmpty()) {
-                        requiredCaps.add("none");
+                        requiredCaps.add(SpecRequirement.CORE_CAPABILITY);
                     }
 
                     String primaryCap = requiredCaps.get(0);
@@ -258,8 +247,8 @@ public class SpecCatalogService {
                     }
                 }
             } catch (ClassNotFoundException e) {
-                log.error("Spock spec class not found on classpath: {}", className, e);
-                throw new IllegalStateException("Required Spock spec class not found on classpath: " + className, e);
+                // The class was just listed by the classpath scan, so it must be loadable.
+                throw new IllegalStateException("Spock spec class found by scan but not loadable: " + className, e);
             }
         }
     }
