@@ -4,7 +4,7 @@
 
     <groupId>de.pal-software.scim</groupId>
     <artifactId>scim-validator-ui-spring</artifactId>
-    <version>0.0.8-SNAPSHOT</version>
+    <version>0.1.0-SNAPSHOT</version>
     <packaging>jar</packaging>
 
     <name>SCIM Validator UI</name>
@@ -32,7 +32,7 @@
 
     <properties>
         <java.version>25</java.version>
-        <scim-validator.version>0.0.5</scim-validator.version>
+        <scim-validator.version>0.1.0-SNAPSHOT</scim-validator.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <spring-boot.version>3.5.14</spring-boot.version>
         <groovy.version>4.0.31</groovy.version>

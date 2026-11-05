@@ -12,6 +12,8 @@ import de.palsoftware.scim.validator.ui.model.spec.SanitizedComplianceReport.*;
 import de.palsoftware.scim.validator.ui.repo.ValidationHttpExchangeRepository;
 import de.palsoftware.scim.validator.ui.repo.ValidationRunRepository;
 import de.palsoftware.scim.validator.ui.repo.ValidationTestResultRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -22,8 +24,10 @@ import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -31,6 +35,7 @@ import java.util.regex.Pattern;
 @Service
 public class ComplianceReportGenerator {
 
+    private static final Logger log = LoggerFactory.getLogger(ComplianceReportGenerator.class);
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final Pattern URL_PATTERN = Pattern.compile("(?i)https?://[^\\s\"'>\\]\\)]+");
     private static final Pattern BEARER_PATTERN = Pattern.compile("(?i)bearer\\s+[A-Za-z0-9_\\-\\.~+/=]{8,}");
@@ -117,7 +122,9 @@ public class ComplianceReportGenerator {
                         run,
                         testResults,
                         exchanges != null ? exchanges : Collections.emptyList());
-            } catch (Exception ignored) {
+            } catch (Exception e) {
+                log.error("Failed to compute compliance scorecard for runId={}: {}", request.runId(), e.getMessage(), e);
+                throw new IllegalStateException("Failed to compute compliance scorecard for runId=" + request.runId(), e);
             }
         }
 
@@ -210,15 +217,15 @@ public class ComplianceReportGenerator {
         );
 
         NormativeLevelBreakdown normative = new NormativeLevelBreakdown(
-                scorecard.mustBreakdown(),
-                scorecard.shouldBreakdown(),
-                scorecard.mayBreakdown()
+                scorecard.mustBreakdown() != null ? scorecard.mustBreakdown() : NormativeBreakdown.of("MUST", 3, 0, 0, 0, 0, 0.0, 0.0),
+                scorecard.shouldBreakdown() != null ? scorecard.shouldBreakdown() : NormativeBreakdown.of("SHOULD", 2, 0, 0, 0, 0, 0.0, 0.0),
+                scorecard.mayBreakdown() != null ? scorecard.mayBreakdown() : NormativeBreakdown.of("MAY", 1, 0, 0, 0, 0, 0.0, 0.0)
         );
 
         CapabilitySummary capSummary = new CapabilitySummary(
                 scorecard.supportedCapabilitiesCount(),
                 scorecard.compliantCapabilitiesCount(),
-                scorecard.totalCapabilitiesCount()
+                Math.max(1, scorecard.totalCapabilitiesCount())
         );
 
         RequirementCounts reqCounts = new RequirementCounts(
@@ -236,7 +243,7 @@ public class ComplianceReportGenerator {
                 scorecard.capabilities(),
                 capSummary,
                 reqCounts,
-                scorecard.rfcSummaries(),
+                ensureValidRfcSummaries(scorecard.rfcSummaries()),
                 scorecard.requirementMatrix()
         );
 
@@ -288,15 +295,15 @@ public class ComplianceReportGenerator {
         ReportScorecard scorecardDto;
         if (scorecard != null) {
             NormativeLevelBreakdown normative = new NormativeLevelBreakdown(
-                    scorecard.mustBreakdown(),
-                    scorecard.shouldBreakdown(),
-                    scorecard.mayBreakdown()
+                    scorecard.mustBreakdown() != null ? scorecard.mustBreakdown() : NormativeBreakdown.of("MUST", 3, 0, 0, 0, 0, 0.0, 0.0),
+                    scorecard.shouldBreakdown() != null ? scorecard.shouldBreakdown() : NormativeBreakdown.of("SHOULD", 2, 0, 0, 0, 0, 0.0, 0.0),
+                    scorecard.mayBreakdown() != null ? scorecard.mayBreakdown() : NormativeBreakdown.of("MAY", 1, 0, 0, 0, 0, 0.0, 0.0)
             );
 
             CapabilitySummary capSummary = new CapabilitySummary(
                     scorecard.supportedCapabilitiesCount(),
                     scorecard.compliantCapabilitiesCount(),
-                    scorecard.totalCapabilitiesCount()
+                    Math.max(1, scorecard.totalCapabilitiesCount())
             );
 
             RequirementCounts reqCounts = new RequirementCounts(
@@ -314,21 +321,26 @@ public class ComplianceReportGenerator {
                     scorecard.capabilities(),
                     capSummary,
                     reqCounts,
-                    scorecard.rfcSummaries(),
+                    ensureValidRfcSummaries(scorecard.rfcSummaries()),
                     scorecard.requirementMatrix()
             );
         } else {
-            int minScore = scoreService != null ? scoreService.getMinPublishScore() : ComplianceScoreService.DEFAULT_MIN_PUBLISH_SCORE;
             ColourGradientInfo gradInfo = ColourGradientInfo.from(request.colourGradient(), request.coreScore());
+            NormativeLevelBreakdown fallbackNormative = new NormativeLevelBreakdown(
+                    NormativeBreakdown.of("MUST", 3, 0, 0, 0, 0, 0.0, 0.0),
+                    NormativeBreakdown.of("SHOULD", 2, 0, 0, 0, 0, 0.0, 0.0),
+                    NormativeBreakdown.of("MAY", 1, 0, 0, 0, 0, 0.0, 0.0)
+            );
+            RequirementCounts fallbackReqCounts = new RequirementCounts(0, 0, 0, 0);
             scorecardDto = new ReportScorecard(
                     request.coreScore(),
                     gradInfo,
-                    request.coreScore() >= minScore,
-                    null,
+                    false,
+                    fallbackNormative,
                     Collections.emptyList(),
-                    new CapabilitySummary(request.supportedCapabilities(), request.supportedCapabilities(), request.totalCapabilities()),
-                    null,
-                    Collections.emptyMap(),
+                    new CapabilitySummary(request.supportedCapabilities(), request.supportedCapabilities(), Math.max(1, request.totalCapabilities())),
+                    fallbackReqCounts,
+                    defaultRfcSummaries(),
                     Collections.emptyList()
             );
         }
@@ -344,6 +356,30 @@ public class ComplianceReportGenerator {
         );
     }
 
+    private static Map<String, RfcSectionSummary> defaultRfcSummaries() {
+        Map<String, RfcSectionSummary> summaries = new LinkedHashMap<>();
+        summaries.put("7643", new RfcSectionSummary("7643", "RFC 7643: Core Schemas", 0, 0, 0, 0.0, 0.0, 0));
+        summaries.put("7644", new RfcSectionSummary("7644", "RFC 7644: Protocol", 0, 0, 0, 0.0, 0.0, 0));
+        summaries.put("9865", new RfcSectionSummary("9865", "RFC 9865: Cursor Pagination", 0, 0, 0, 0.0, 0.0, 0));
+        summaries.put("9967", new RfcSectionSummary("9967", "RFC 9967: Asynchronous Operations", 0, 0, 0, 0.0, 0.0, 0));
+        return Collections.unmodifiableMap(summaries);
+    }
+
+    private static Map<String, RfcSectionSummary> ensureValidRfcSummaries(Map<String, RfcSectionSummary> rfcSummaries) {
+        if (rfcSummaries != null
+                && rfcSummaries.containsKey("7643")
+                && rfcSummaries.containsKey("7644")
+                && rfcSummaries.containsKey("9865")
+                && rfcSummaries.containsKey("9967")) {
+            return rfcSummaries;
+        }
+        Map<String, RfcSectionSummary> merged = new LinkedHashMap<>(defaultRfcSummaries());
+        if (rfcSummaries != null) {
+            merged.putAll(rfcSummaries);
+        }
+        return Collections.unmodifiableMap(merged);
+    }
+
     private static List<SanitizedTestResult> sanitizeTestResults(List<ValidationTestResult> testResults, String targetUrl) {
         List<SanitizedTestResult> sanitizedTests = new ArrayList<>();
         if (testResults != null) {
@@ -355,12 +391,15 @@ public class ComplianceReportGenerator {
                 String sanitizedError = sanitizeErrorMessage(tr.getErrorMessage(), targetUrl);
 
                 String testId = ComplianceScoreService.extractTestId(tr);
+                String resolvedTestName = tr.getTestName() != null ? tr.getTestName() : (testId != null ? testId : "");
+                String resolvedDisplayName = tr.getDisplayName() != null ? tr.getDisplayName() : resolvedTestName;
+                String resolvedClassName = tr.getClassName() != null ? tr.getClassName() : "";
                 sanitizedTests.add(new SanitizedTestResult(
-                        testId != null ? testId : tr.getTestName(),
-                        tr.getDisplayName(),
-                        tr.getClassName(),
-                        tr.getTestName(),
-                        tr.getStatus(),
+                        testId != null ? testId : resolvedTestName,
+                        resolvedDisplayName,
+                        resolvedClassName,
+                        resolvedTestName,
+                        tr.getStatus() != null ? tr.getStatus() : "ABORTED",
                         duration,
                         sanitizedError
                 ));

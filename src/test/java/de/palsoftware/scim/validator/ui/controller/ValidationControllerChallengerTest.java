@@ -578,7 +578,7 @@ class ValidationControllerChallengerTest {
 
         TestSpecMapping multiMapping = new TestSpecMapping(
                 "DSC_01", "ServiceProviderConfig response is valid",
-                "specs.A1_ServiceDiscoverySpec", "none",
+                "specs.A1_ServiceDiscoverySpec", "core",
                 List.of("RFC7644-4-R1", "RFC7643-3-R2")
         );
 
@@ -733,7 +733,7 @@ class ValidationControllerChallengerTest {
         List<RequirementTraceResult> matrix = List.of(
                 new RequirementTraceResult(
                         "RFC7644-4-R1", "7644", "4", "Service providers MUST support discovery",
-                        "MUST", 3, "none", true, 1, 1, score > 0 ? 1 : 0, score > 0 ? 0 : 1, 0,
+                        "MUST", 3, "core", true, 1, 1, score > 0 ? 1 : 0, score > 0 ? 0 : 1, 0,
                         score > 0 ? 3.0 : 0.0, score > 0 ? "COMPLIANT" : "FAILED", List.of("DSC_01")
                 )
         );

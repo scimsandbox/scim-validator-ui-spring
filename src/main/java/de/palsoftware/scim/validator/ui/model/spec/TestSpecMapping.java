@@ -14,12 +14,12 @@ public record TestSpecMapping(
 ) {
     public TestSpecMapping {
         if (requiredCapabilities == null) {
-            requiredCapabilities = capability != null ? List.of(capability) : List.of("none");
+            requiredCapabilities = capability != null ? List.of(capability) : List.of(SpecRequirement.CORE_CAPABILITY);
         } else {
             requiredCapabilities = Collections.unmodifiableList(requiredCapabilities);
         }
         if (capability == null || capability.isBlank()) {
-            capability = requiredCapabilities.isEmpty() ? "none" : requiredCapabilities.get(0);
+            capability = requiredCapabilities.isEmpty() ? SpecRequirement.CORE_CAPABILITY : requiredCapabilities.get(0);
         }
         if (specRefs == null) {
             specRefs = Collections.emptyList();
@@ -30,7 +30,7 @@ public record TestSpecMapping(
 
     public TestSpecMapping(String testId, String displayName, String className, String capability, List<String> specRefs) {
         this(testId, displayName, className, 0, capability,
-                capability != null ? List.of(capability) : List.of("none"), specRefs);
+                capability != null ? List.of(capability) : List.of(SpecRequirement.CORE_CAPABILITY), specRefs);
     }
 
     public TestSpecMapping(String testId, String displayName, String className, int lineNumber,

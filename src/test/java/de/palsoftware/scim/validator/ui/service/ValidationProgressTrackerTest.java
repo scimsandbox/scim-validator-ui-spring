@@ -93,4 +93,20 @@ class ValidationProgressTrackerTest {
         SseEmitter emitter = tracker.subscribe(runId);
         assertThat(emitter).isNotNull();
     }
+
+    @Test
+    void subscribe_whenRunStatusIsPartial_treatsAsTerminalComplete() {
+        UUID runId = UUID.randomUUID();
+        tracker.registerRun(runId, 280, "/runs/" + runId);
+        tracker.completeRun(runId, "PARTIAL", 280, 276, 0);
+
+        ValidationProgress progress = tracker.getProgress(runId);
+        assertThat(progress).isNotNull();
+        assertThat(progress.status()).isEqualTo("PARTIAL");
+        assertThat(progress.percent()).isEqualTo(100);
+        assertThat(progress.currentTestName()).isEqualTo("Validation completed");
+
+        SseEmitter emitter = tracker.subscribe(runId);
+        assertThat(emitter).isNotNull();
+    }
 }

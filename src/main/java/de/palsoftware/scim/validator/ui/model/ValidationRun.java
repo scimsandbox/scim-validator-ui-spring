@@ -12,6 +12,7 @@ import jakarta.persistence.OneToMany;
 import jakarta.persistence.OneToOne;
 import jakarta.persistence.OrderBy;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
 import org.hibernate.annotations.UuidGenerator;
 
 import java.time.OffsetDateTime;
@@ -52,6 +53,12 @@ public class ValidationRun {
 
     @Column(nullable = false)
     private int failedTests;
+
+    @Transient
+    private int skippedTests;
+
+    @Transient
+    private int abortedTests;
 
     @OneToMany(mappedBy = "run", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     @OrderBy("startedAt ASC")
@@ -130,6 +137,40 @@ public class ValidationRun {
 
     public void setFailedTests(int failedTests) {
         this.failedTests = failedTests;
+    }
+
+    public int getSkippedTests() {
+        if (skippedTests == 0 && testResults != null && !testResults.isEmpty()) {
+            int derived = 0;
+            for (ValidationTestResult r : testResults) {
+                if (r != null && "SKIPPED".equalsIgnoreCase(r.getStatus())) {
+                    derived++;
+                }
+            }
+            return derived;
+        }
+        return skippedTests;
+    }
+
+    public void setSkippedTests(int skippedTests) {
+        this.skippedTests = skippedTests;
+    }
+
+    public int getAbortedTests() {
+        if (abortedTests == 0 && testResults != null && !testResults.isEmpty()) {
+            int derived = 0;
+            for (ValidationTestResult r : testResults) {
+                if (r != null && "ABORTED".equalsIgnoreCase(r.getStatus())) {
+                    derived++;
+                }
+            }
+            return derived;
+        }
+        return abortedTests;
+    }
+
+    public void setAbortedTests(int abortedTests) {
+        this.abortedTests = abortedTests;
     }
 
     public List<ValidationTestResult> getTestResults() {

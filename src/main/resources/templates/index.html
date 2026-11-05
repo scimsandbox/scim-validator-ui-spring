@@ -343,7 +343,7 @@
             color: #f87171;
             border: 1px solid rgba(239, 68, 68, 0.3);
         }
-        .status-aborted {
+        .status-aborted, .status-partial, .status-skipped {
             background: rgba(234, 179, 8, 0.15);
             color: #facc15;
             border: 1px solid rgba(234, 179, 8, 0.3);
@@ -1256,7 +1256,7 @@
                 testNameEl.title = data.currentTestName;
             }
 
-            if (data.status === 'PASSED' || data.status === 'FAILED') {
+            if (data.status === 'PASSED' || data.status === 'FAILED' || data.status === 'PARTIAL') {
                 onComplete(data);
             } else if (data.status === 'ERROR') {
                 onError(data.errorMessage || 'An error occurred during compliance check.');
