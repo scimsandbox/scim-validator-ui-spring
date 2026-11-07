@@ -15,6 +15,14 @@
     {
       "name": "app.security.oidc",
       "type": "java.lang.Object"
+    },
+    {
+      "name": "app.github",
+      "type": "java.lang.Object"
+    },
+    {
+      "name": "app.compliance",
+      "type": "java.lang.Object"
     }
   ],
   "properties": [
@@ -37,6 +45,87 @@
       "name": "app.security.oidc.user-role",
       "type": "java.lang.String",
       "description": "Configured user role name."
+    },
+    {
+      "name": "app.runs.max-published-per-user",
+      "type": "java.lang.Integer",
+      "defaultValue": 50,
+      "description": "Maximum number of published compliance runs retained per user."
+    },
+    {
+      "name": "app.compliance.min-publish-score",
+      "type": "java.lang.Integer",
+      "defaultValue": 50,
+      "description": "Minimum Core RFC Conformance percentage required to publish a validation run."
+    },
+    {
+      "name": "app.compliance.min-core-coverage-percent",
+      "type": "java.lang.Integer",
+      "defaultValue": 50,
+      "description": "Minimum percentage of testable core RFC requirements that must be executed to publish a validation run."
+    },
+    {
+      "name": "app.compliance.public-base-url",
+      "type": "java.lang.String",
+      "defaultValue": "https://scimsandbox.net",
+      "description": "Public base URL used when constructing published report and badge URLs."
+    },
+    {
+      "name": "app.compliance.sample-run-ids",
+      "type": "java.lang.String",
+      "defaultValue": "11111111-1111-1111-1111-111111111111,22222222-2222-2222-2222-222222222222",
+      "description": "Comma-separated UUIDs of official sample fixture runs."
+    },
+    {
+      "name": "app.compliance.reservation-timeout-seconds",
+      "type": "java.lang.Long",
+      "defaultValue": 300,
+      "description": "Seconds before a pending publication reservation is treated as stale and retryable."
+    },
+    {
+      "name": "app.compliance.reservation-cleanup-interval-ms",
+      "type": "java.lang.Long",
+      "defaultValue": 60000,
+      "description": "Fixed delay in milliseconds between background sweeps that purge stale pending publication reservations."
+    },
+    {
+      "name": "app.github.publish.enabled",
+      "type": "java.lang.Boolean",
+      "defaultValue": false,
+      "description": "Whether 1-click GitHub compliance directory publishing is enabled."
+    },
+    {
+      "name": "app.github.app-id",
+      "type": "java.lang.String",
+      "description": "GitHub App ID used for installation token exchange."
+    },
+    {
+      "name": "app.github.installation-id",
+      "type": "java.lang.String",
+      "description": "GitHub App installation ID for the target compliance repository."
+    },
+    {
+      "name": "app.github.private-key",
+      "type": "java.lang.String",
+      "description": "PEM-encoded RSA private key for the GitHub App."
+    },
+    {
+      "name": "app.github.repo",
+      "type": "java.lang.String",
+      "defaultValue": "scimsandbox/scim-website",
+      "description": "Target GitHub repository (owner/repo) for compliance directory publications."
+    },
+    {
+      "name": "app.github.branch",
+      "type": "java.lang.String",
+      "defaultValue": "main",
+      "description": "Target base branch in the GitHub compliance repository."
+    },
+    {
+      "name": "app.github.api-url",
+      "type": "java.lang.String",
+      "defaultValue": "https://api.github.com",
+      "description": "GitHub REST API base URL."
     }
   ]
 }

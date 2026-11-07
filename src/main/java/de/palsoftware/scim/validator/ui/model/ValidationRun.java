@@ -9,8 +9,10 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
+import jakarta.persistence.OneToOne;
 import jakarta.persistence.OrderBy;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
 import org.hibernate.annotations.UuidGenerator;
 
 import java.time.OffsetDateTime;
@@ -52,9 +54,18 @@ public class ValidationRun {
     @Column(nullable = false)
     private int failedTests;
 
+    @Transient
+    private int skippedTests;
+
+    @Transient
+    private int abortedTests;
+
     @OneToMany(mappedBy = "run", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     @OrderBy("startedAt ASC")
     private List<ValidationTestResult> testResults = new ArrayList<>();
+
+    @OneToOne(mappedBy = "run", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
+    private ValidationRunPublication publication;
 
     public UUID getId() {
         return id;
@@ -100,6 +111,10 @@ public class ValidationRun {
         this.createdByUser = createdByUser;
     }
 
+    public String getCreatedByEmail() {
+        return createdByUser != null ? createdByUser.getEmail() : null;
+    }
+
     public int getTotalTests() {
         return totalTests;
     }
@@ -124,7 +139,60 @@ public class ValidationRun {
         this.failedTests = failedTests;
     }
 
+    public int getSkippedTests() {
+        if (skippedTests == 0 && testResults != null && !testResults.isEmpty()) {
+            int derived = 0;
+            for (ValidationTestResult r : testResults) {
+                if (r != null && "SKIPPED".equalsIgnoreCase(r.getStatus())) {
+                    derived++;
+                }
+            }
+            return derived;
+        }
+        return skippedTests;
+    }
+
+    public void setSkippedTests(int skippedTests) {
+        this.skippedTests = skippedTests;
+    }
+
+    public int getAbortedTests() {
+        if (abortedTests == 0 && testResults != null && !testResults.isEmpty()) {
+            int derived = 0;
+            for (ValidationTestResult r : testResults) {
+                if (r != null && "ABORTED".equalsIgnoreCase(r.getStatus())) {
+                    derived++;
+                }
+            }
+            return derived;
+        }
+        return abortedTests;
+    }
+
+    public void setAbortedTests(int abortedTests) {
+        this.abortedTests = abortedTests;
+    }
+
     public List<ValidationTestResult> getTestResults() {
         return testResults;
+    }
+
+    public ValidationRunPublication getPublication() {
+        return publication;
+    }
+
+    public void setPublication(ValidationRunPublication publication) {
+        this.publication = publication;
+        if (publication != null && publication.getRun() == null) {
+            publication.setRun(this);
+        }
+    }
+
+    public boolean isPublished() {
+        return publication != null && !publication.isPendingReservation();
+    }
+
+    public boolean hasPendingReservation() {
+        return publication != null && publication.isPendingReservation();
     }
 }

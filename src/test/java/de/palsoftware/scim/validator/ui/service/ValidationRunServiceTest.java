@@ -290,6 +290,36 @@ class ValidationRunServiceTest {
                 .isInstanceOf(ResponseStatusException.class);
     }
 
+    @Test
+    void deleteRun_publishedRun_rejectsForBothAdminAndNonAdmin() {
+        de.palsoftware.scim.validator.ui.model.ValidationRunPublication pub =
+                new de.palsoftware.scim.validator.ui.model.ValidationRunPublication();
+        pub.setRunId(runId);
+        pub.setPrUrl("https://github.com/scimsandbox/scim-website/pull/1");
+        sampleRun.setPublication(pub);
+
+        when(runRepository.findById(runId)).thenReturn(Optional.of(sampleRun));
+        when(runRepository.findAccessibleById(runId, "user@example.com")).thenReturn(Optional.of(sampleRun));
+
+        assertThatThrownBy(() -> service.deleteRun(runId, "admin@example.com", true))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(ex -> {
+                    ResponseStatusException rse = (ResponseStatusException) ex;
+                    assertThat(rse.getStatusCode()).isEqualTo(org.springframework.http.HttpStatus.CONFLICT);
+                    assertThat(rse.getReason()).contains("Published compliance runs cannot be deleted");
+                });
+
+        assertThatThrownBy(() -> service.deleteRun(runId, "user@example.com", false))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(ex -> {
+                    ResponseStatusException rse = (ResponseStatusException) ex;
+                    assertThat(rse.getStatusCode()).isEqualTo(org.springframework.http.HttpStatus.CONFLICT);
+                    assertThat(rse.getReason()).contains("Published compliance runs cannot be deleted");
+                });
+
+        verify(runRepository, org.mockito.Mockito.never()).deleteById(runId);
+    }
+
     // ─── ValidationExecutionListener ───────────────────────────────────
 
     @Test
@@ -312,18 +342,24 @@ class ValidationRunServiceTest {
         assertThat(listener.getTotal()).isEqualTo(1);
         assertThat(listener.getPassed()).isEqualTo(1);
         assertThat(listener.getFailed()).isZero();
+        assertThat(listener.getSkipped()).isZero();
+        assertThat(listener.getAborted()).isZero();
 
         // 2. Aborted test (e.g. capability gating)
         listener.executionFinished(identifier, TestExecutionResult.aborted(new RuntimeException("Capability not supported")));
         assertThat(listener.getTotal()).isEqualTo(2);
         assertThat(listener.getPassed()).isEqualTo(1);
         assertThat(listener.getFailed()).isZero();
+        assertThat(listener.getSkipped()).isZero();
+        assertThat(listener.getAborted()).isEqualTo(1);
 
         // 3. Failed test
         listener.executionFinished(identifier, TestExecutionResult.failed(new AssertionError("Expectation failed")));
         assertThat(listener.getTotal()).isEqualTo(3);
         assertThat(listener.getPassed()).isEqualTo(1);
         assertThat(listener.getFailed()).isEqualTo(1);
+        assertThat(listener.getSkipped()).isZero();
+        assertThat(listener.getAborted()).isEqualTo(1);
 
         // Verify persisted entities and statuses
         ArgumentCaptor<ValidationTestResult> captor = ArgumentCaptor.forClass(ValidationTestResult.class);
@@ -340,6 +376,121 @@ class ValidationRunServiceTest {
 
         assertThat(saved.get(2).getStatus()).isEqualTo("FAILED");
         assertThat(saved.get(2).getErrorMessage()).isEqualTo("Expectation failed");
+    }
+
+    @Test
+    void validationExecutionListener_executionSkipped_recordsSkippedTest() {
+        ValidationRun run = new ValidationRun();
+        ValidationRunService.ValidationExecutionListener listener =
+                new ValidationRunService.ValidationExecutionListener(run, 1, progressTracker, testResultRepository, exchangeRepository);
+
+        TestDescriptor descriptor = org.mockito.Mockito.mock(TestDescriptor.class);
+        when(descriptor.getUniqueId()).thenReturn(UniqueId.forEngine("test-engine"));
+        when(descriptor.getType()).thenReturn(TestDescriptor.Type.TEST);
+        when(descriptor.getDisplayName()).thenReturn("skippedFeature");
+        TestIdentifier identifier = TestIdentifier.from(descriptor);
+
+        when(testResultRepository.save(any(ValidationTestResult.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        listener.executionSkipped(identifier, "Feature is disabled via @Disabled");
+
+        assertThat(listener.getTotal()).isEqualTo(1);
+        assertThat(listener.getSkipped()).isEqualTo(1);
+        assertThat(listener.getPassed()).isZero();
+        assertThat(listener.getFailed()).isZero();
+        assertThat(listener.getAborted()).isZero();
+
+        ArgumentCaptor<ValidationTestResult> captor = ArgumentCaptor.forClass(ValidationTestResult.class);
+        verify(testResultRepository).save(captor.capture());
+
+        ValidationTestResult saved = captor.getValue();
+        assertThat(saved.getStatus()).isEqualTo("SKIPPED");
+        assertThat(saved.getErrorMessage()).isEqualTo("Feature is disabled via @Disabled");
+        assertThat(saved.getDisplayName()).isEqualTo("skippedFeature");
+    }
+
+    @Test
+    void defaultDiscoveredTestCount_is280() {
+        assertThat(ValidationRunService.DEFAULT_DISCOVERED_TEST_COUNT).isEqualTo(280);
+    }
+
+    @Test
+    void executeRun_whenZeroFailedAndAbortedOrSkippedPresent_setsFinalStatusPartial() {
+        ValidationMgmtUser owner = new ValidationMgmtUser("user@example.com", OffsetDateTime.now());
+        when(mgmtUserRepository.findById("user@example.com")).thenReturn(Optional.of(owner));
+        when(runRepository.save(any(ValidationRun.class))).thenAnswer(inv -> {
+            ValidationRun r = inv.getArgument(0);
+            if (r.getId() == null) {
+                try {
+                    var f = ValidationRun.class.getDeclaredField("id");
+                    f.setAccessible(true);
+                    f.set(r, runId);
+                } catch (ReflectiveOperationException e) {
+                    throw new RuntimeException(e);
+                }
+            }
+            return r;
+        });
+        when(testResultRepository.save(any(ValidationTestResult.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        ValidationRunService partialRunService = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, progressTracker, null) {
+            @Override
+            int discoverTestCount(String baseUrl, String authToken) {
+                return 2;
+            }
+
+            @Override
+            void executeLauncher(org.junit.platform.launcher.Launcher launcher,
+                                 LauncherDiscoveryRequest request,
+                                 org.junit.platform.launcher.TestExecutionListener listener) {
+                TestDescriptor d1 = org.mockito.Mockito.mock(TestDescriptor.class);
+                when(d1.getUniqueId()).thenReturn(UniqueId.forEngine("test-engine").append("test", "1"));
+                when(d1.getType()).thenReturn(TestDescriptor.Type.TEST);
+                when(d1.getDisplayName()).thenReturn("USR_01: Pass");
+                TestIdentifier id1 = TestIdentifier.from(d1);
+
+                TestDescriptor d2 = org.mockito.Mockito.mock(TestDescriptor.class);
+                when(d2.getUniqueId()).thenReturn(UniqueId.forEngine("test-engine").append("test", "2"));
+                when(d2.getType()).thenReturn(TestDescriptor.Type.TEST);
+                when(d2.getDisplayName()).thenReturn("BLK_01: Skipped");
+                TestIdentifier id2 = TestIdentifier.from(d2);
+
+                listener.executionFinished(id1, TestExecutionResult.successful());
+                listener.executionSkipped(id2, "Optional capability not supported");
+            }
+        };
+
+        de.palsoftware.scim.validator.ui.dto.ValidationRunForm form =
+                new de.palsoftware.scim.validator.ui.dto.ValidationRunForm("Partial Run", "https://example.com/scim/v2", "token");
+        ValidationRunService.ExecutionResult result = partialRunService.executeRun(form, "user@example.com");
+
+        assertThat(result.getRun().getStatus()).isEqualTo("PARTIAL");
+        assertThat(result.getRun().getTotalTests()).isEqualTo(2);
+        assertThat(result.getRun().getPassedTests()).isEqualTo(1);
+        assertThat(result.getRun().getFailedTests()).isZero();
+        assertThat(result.getRun().getSkippedTests()).isEqualTo(1);
+        verify(progressTracker).completeRun(runId, "PARTIAL", 2, 1, 0);
+    }
+
+    @Test
+    void validationRun_derivesTransientSkippedAndAbortedCountsFromTestResultsWhenReloaded() {
+        ValidationRun reloadedRun = new ValidationRun();
+
+        ValidationTestResult trPass = new ValidationTestResult();
+        trPass.setStatus("SUCCESS");
+        ValidationTestResult trSkip1 = new ValidationTestResult();
+        trSkip1.setStatus("SKIPPED");
+        ValidationTestResult trSkip2 = new ValidationTestResult();
+        trSkip2.setStatus("SKIPPED");
+        ValidationTestResult trAbort = new ValidationTestResult();
+        trAbort.setStatus("ABORTED");
+
+        reloadedRun.getTestResults().addAll(List.of(trPass, trSkip1, trSkip2, trAbort));
+
+        assertThat(reloadedRun.getSkippedTests()).isEqualTo(2);
+        assertThat(reloadedRun.getAbortedTests()).isEqualTo(1);
     }
 
     // ─── helpers ────────────────────────────────────────────────────────
