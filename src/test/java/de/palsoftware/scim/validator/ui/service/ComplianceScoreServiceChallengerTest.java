@@ -34,8 +34,7 @@ public class ComplianceScoreServiceChallengerTest {
 
     @BeforeAll
     static void setUp() {
-        catalogService = new SpecCatalogService(new PathMatchingResourcePatternResolver());
-        catalogService.init();
+        catalogService = CoveredSpecCatalog.create();
         scoreService = new ComplianceScoreService(catalogService, new ObjectMapper());
     }
 
@@ -343,11 +342,11 @@ public class ComplianceScoreServiceChallengerTest {
             assertThat(scorecard.supportedCapabilitiesCount()).isEqualTo(0);
             assertThat(scorecard.compliantCapabilitiesCount()).isEqualTo(0);
 
-            // All 157 requirements must be partitioned into EXCLUDED_CAPABILITY or UNTESTED
+            // All covered requirements must be partitioned into EXCLUDED_CAPABILITY or UNTESTED
             assertThat(scorecard.activeRequirementsCount() +
                     scorecard.excludedRequirementsCount() +
                     scorecard.untestedRequirementsCount())
-                    .isEqualTo(157);
+                    .isEqualTo(catalogService.getTotalRequirementsCount());
 
             // All 10 capabilities must be UNSUPPORTED with passRate = 0.0
             for (CapabilityStatus cap : scorecard.capabilities()) {
@@ -376,17 +375,22 @@ public class ComplianceScoreServiceChallengerTest {
 
             ComplianceScorecardView scorecard = scoreService.computeScorecard(run, testResults, Collections.emptyList());
 
-            // Active scope includes filter requirements and search requirements (exercised by composite tests FLT_17 and FLT_40)
+            // Active scope includes filter requirements; aborted core requirements remain in denominator
             assertThat(scorecard.activeRequirementsCount()).isGreaterThan(0);
-            assertThat(scorecard.coreScore()).isEqualTo(100);
-            assertThat(scorecard.colourGradient()).isEqualTo(ColourGradient.EMERALD);
-            // Because < 50% of core requirements were executed, run is not eligible for publishing
+            double filterWeight = catalogService.getRequirements().values().stream()
+                    .filter(r -> "filter".equals(r.capability())).mapToDouble(SpecRequirement::getWeight).sum();
+            double coreWeight = catalogService.getRequirements().values().stream()
+                    .filter(SpecRequirement::isCore).mapToDouble(SpecRequirement::getWeight).sum();
+            assertThat(scorecard.coreScore()).isEqualTo((int) Math.round(100.0 * filterWeight / (filterWeight + coreWeight)));
+            assertThat(scorecard.colourGradient()).isEqualTo(ColourGradient.forScore(scorecard.coreScore()));
+            // Core requirements never executed, so the run is not eligible
+            assertThat(scorecard.coreCoveragePercent()).isLessThan(50);
             assertThat(scorecard.publishEligible()).isFalse();
             assertThat(scorecard.publishIneligibilityReason())
-                    .contains("Core requirement execution coverage");
-            // filter AND search are both supported due to composite tests FLT_17 and FLT_40
-            assertThat(scorecard.supportedCapabilitiesCount()).isEqualTo(2);
-            assertThat(scorecard.compliantCapabilitiesCount()).isEqualTo(2);
+                    .contains("publishing threshold");
+            // only filter is supported
+            assertThat(scorecard.supportedCapabilitiesCount()).isEqualTo(1);
+            assertThat(scorecard.compliantCapabilitiesCount()).isEqualTo(1);
 
             Optional<CapabilityStatus> filterCap = scorecard.capabilities().stream()
                     .filter(c -> "filter".equals(c.capability())).findFirst();
@@ -397,7 +401,7 @@ public class ComplianceScoreServiceChallengerTest {
             Optional<CapabilityStatus> searchCap = scorecard.capabilities().stream()
                     .filter(c -> "search".equals(c.capability())).findFirst();
             assertThat(searchCap).isPresent();
-            assertThat(searchCap.get().status()).isEqualTo(CapabilitySupportLevel.SUPPORTED_COMPLIANT);
+            assertThat(searchCap.get().status()).isEqualTo(CapabilitySupportLevel.UNSUPPORTED);
         }
 
         @Test
@@ -445,7 +449,7 @@ public class ComplianceScoreServiceChallengerTest {
             Map<String, SpecRequirement> reqMap = new LinkedHashMap<>();
             for (int i = 1; i <= 200; i++) {
                 String id = "REQ-" + i;
-                reqMap.put(id, new SpecRequirement(id, "7644", "3." + i, "Req " + i, "MAY", "none", "response", "tested", ""));
+                reqMap.put(id, new SpecRequirement(id, "7644", "3." + i, "", "MAY", "Req " + i, "", "core", "tested"));
                 when(mockCatalog.getTestsForRequirement(id)).thenReturn(List.of("T" + i));
             }
             when(mockCatalog.getRequirements()).thenReturn(reqMap);
@@ -511,17 +515,17 @@ public class ComplianceScoreServiceChallengerTest {
 
             // REQ-MUST: weight 3, mapped to T1, T2, T3, T4.
             // Outcome: 2 SUCCESS, 1 FAILED, 1 ABORTED.
-            // Executed tests = 3. Passed = 2.
-            // Earned = 3 * (2 / 3) = 2.0.
+            // All-inclusive denominator: total mapped tests = 4. Passed = 2.
+            // Earned = 3 * (2 / 4) = 1.5.
             SpecRequirement reqMust = new SpecRequirement(
-                    "REQ-MUST", "7644", "3.1", "Must Req", "MUST", "none", "response", "tested", "");
+                    "REQ-MUST", "7644", "3.1", "", "MUST", "Must Req", "", "core", "tested");
 
             // REQ-SHOULD: weight 2, mapped to T5, T6.
             // Outcome: 1 SUCCESS, 1 FAILED.
             // Executed tests = 2. Passed = 1.
             // Earned = 2 * (1 / 2) = 1.0.
             SpecRequirement reqShould = new SpecRequirement(
-                    "REQ-SHOULD", "7644", "3.2", "Should Req", "SHOULD", "none", "response", "tested", "");
+                    "REQ-SHOULD", "7644", "3.2", "", "SHOULD", "Should Req", "", "core", "tested");
 
             when(mockCatalog.getRequirements()).thenReturn(Map.of("REQ-MUST", reqMust, "REQ-SHOULD", reqShould));
             when(mockCatalog.getTestsForRequirement("REQ-MUST")).thenReturn(List.of("T1", "T2", "T3", "T4"));
@@ -544,15 +548,15 @@ public class ComplianceScoreServiceChallengerTest {
 
             ComplianceScorecardView scorecard = service.computeScorecard(run, results, Collections.emptyList());
 
-            // Total earned = 2.0 + 1.0 = 3.0. Total weight = 3 + 2 = 5.0.
-            // Score = round(100 * 3.0 / 5.0) = 60%.
-            assertThat(scorecard.coreScore()).isEqualTo(60);
+            // Total earned = 1.5 + 1.0 = 2.5. Total weight = 3 + 2 = 5.0.
+            // Score = round(100 * 2.5 / 5.0) = 50%.
+            assertThat(scorecard.coreScore()).isEqualTo(50);
             assertThat(scorecard.colourGradient()).isEqualTo(ColourGradient.ORANGE);
             assertThat(scorecard.publishEligible()).isTrue();
 
-            assertThat(scorecard.mustBreakdown().earnedPoints()).isEqualTo(2.0);
+            assertThat(scorecard.mustBreakdown().earnedPoints()).isEqualTo(1.5);
             assertThat(scorecard.mustBreakdown().totalPoints()).isEqualTo(3.0);
-            assertThat(scorecard.mustBreakdown().conformancePercent()).isEqualTo(67); // round(200 / 3) = 67%
+            assertThat(scorecard.mustBreakdown().conformancePercent()).isEqualTo(50); // round(150 / 3) = 50%
             assertThat(scorecard.mustBreakdown().partialRequirements()).isEqualTo(1);
 
             assertThat(scorecard.shouldBreakdown().earnedPoints()).isEqualTo(1.0);
@@ -622,7 +626,19 @@ public class ComplianceScoreServiceChallengerTest {
                 "'SCHEMA_03', 'SCHEMA_03'",
                 "'  GRP_01: Add Member  ', 'GRP_01'",
                 "'PAG_05: Cursor next', 'PAG_05'",
-                "'DSC_01: ServiceProviderConfig', 'DSC_01'"
+                "'DSC_01: ServiceProviderConfig', 'DSC_01'",
+                "'SCH_13a: User schema attributes', 'SCH_13a'",
+                "'SCH_13b: User schema complex', 'SCH_13b'",
+                "'SCH_13c: Group schema attributes', 'SCH_13c'",
+                "'SCH_13d: EnterpriseUser schema', 'SCH_13d'",
+                "'SCH_13e: ServiceProviderConfig schema', 'SCH_13e'",
+                "'SCH_13f: ResourceType and Schema', 'SCH_13f'",
+                "'ASY_01b: Async polling status', 'ASY_01b'",
+                "'SCH_13a', 'SCH_13a'",
+                "'ASY_01b', 'ASY_01b'",
+                "'RFC7643-2.3.6-1a2b3c: Display label', 'RFC7643-2.3.6-1a2b3c'",
+                "'RFC9865-2-351699', 'RFC9865-2-351699'",
+                "'RFC7644-3.4.2.1-0f0f0f: Label: with colon', 'RFC7644-3.4.2.1-0f0f0f'"
         })
         void testValidIdExtraction(String text, String expectedId) {
             assertThat(ComplianceScoreService.extractTestId(text)).isEqualTo(expectedId);
@@ -634,7 +650,9 @@ public class ComplianceScoreServiceChallengerTest {
                 "   ",
                 "",
                 "lower_case_id: test",
-                "123-hyphen: test"
+                "123-hyphen: test",
+                "RFC7643-2.3.6 1a2b3c: id with space",
+                "-RFC7643-2.3.6-1a2b3c: leading hyphen"
         })
         void testInvalidIdExtraction(String text) {
             assertThat(ComplianceScoreService.extractTestId(text)).isNull();
@@ -688,7 +706,7 @@ public class ComplianceScoreServiceChallengerTest {
                 int totalReqs = scorecard.activeRequirementsCount() +
                         scorecard.excludedRequirementsCount() +
                         scorecard.untestedRequirementsCount();
-                assertThat(totalReqs).isEqualTo(157);
+                assertThat(totalReqs).isEqualTo(catalogService.getTotalRequirementsCount());
 
                 // Invariant 5: Capabilities list size is always 10
                 assertThat(scorecard.capabilities()).hasSize(10);
@@ -711,7 +729,7 @@ public class ComplianceScoreServiceChallengerTest {
                 ("PASSED".equalsIgnoreCase(status) || "FAILED".equalsIgnoreCase(status)) && score >= 50,
                 null, null, null, null,
                 Collections.emptyList(), 0, 0, 10,
-                157, 100, 0, 10,
+                159, 100, 0, 10,
                 Collections.emptyMap(), Collections.emptyList()
         );
     }

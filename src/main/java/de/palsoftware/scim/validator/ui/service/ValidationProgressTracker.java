@@ -106,7 +106,7 @@ public class ValidationProgressTracker {
         ValidationProgress current = progressMap.get(runId);
         if (current != null) {
             try {
-                if ("PASSED".equals(current.status()) || "FAILED".equals(current.status())) {
+                if ("PASSED".equals(current.status()) || "FAILED".equals(current.status()) || "PARTIAL".equals(current.status())) {
                     emitter.send(SseEmitter.event().name("complete").data(current));
                     emitter.complete();
                 } else if ("ERROR".equals(current.status())) {

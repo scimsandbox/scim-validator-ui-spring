@@ -18,7 +18,7 @@ public record ColourGradientInfo(
                 gradient.name(),
                 gradient.getStartColor(),
                 gradient.getEndColor(),
-                gradient.getName()
+                gradient.getLabel()
         );
     }
 

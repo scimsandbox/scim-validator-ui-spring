@@ -24,6 +24,8 @@ import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.PrivateKey;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -305,6 +307,242 @@ class GitHubCompliancePublisherChallengerTest {
                 .filter(r -> "DELETE".equals(r.method()) && r.path().contains(targetBranch))
                 .count();
         assertThat(deleteRefCalls).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("Fault Injection (409): Retries on HTTP 409 merge conflict during squash-merge and succeeds on attempt 2")
+    void testMergeConflict409RetrySuccess() {
+        mockServer.setSimulateMergeConflictTimes(1, 409);
+
+        UUID runId = UUID.randomUUID();
+        CompliancePublishRequest request = new CompliancePublishRequest(
+                runId, "409 Conflict Product", "conflict-409-p", "1.0.0",
+                "Vendor", "https://example.com", "MIT", 85, "TEAL_GREEN", 8, 10
+        );
+
+        CompliancePublicationResult result = publisherService.publish(request);
+        assertThat(result.success()).isTrue();
+
+        String shortId = runId.toString().substring(0, 8);
+        String targetBranch = "publish/conflict-409-p-" + shortId;
+
+        // Ensure 2 branches created and 2 branches deleted (1 failed attempt cleaned up + 1 successful attempt cleaned up)
+        long postRefCalls = mockServer.getRecordedRequests().stream()
+                .filter(r -> "POST".equals(r.method()) && r.path().endsWith("/git/refs"))
+                .count();
+        assertThat(postRefCalls).isEqualTo(2);
+
+        long deleteRefCalls = mockServer.getRecordedRequests().stream()
+                .filter(r -> "DELETE".equals(r.method()) && r.path().contains(targetBranch))
+                .count();
+        assertThat(deleteRefCalls).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("Fault Injection (409 Exhausted): Fails after 3 attempts on persistent 409 conflict and cleans up branch on every attempt")
+    void testMergeConflict409ExhaustedRetries() {
+        mockServer.setSimulateMergeConflict(true, 409); // Persist 409 indefinitely
+
+        UUID runId = UUID.randomUUID();
+        CompliancePublishRequest request = new CompliancePublishRequest(
+                runId, "Persistent 409 Conflict", "persistent-409-p", "1.0.0",
+                "Vendor", "https://example.com", "MIT", 85, "TEAL_GREEN", 8, 10
+        );
+
+        assertThatThrownBy(() -> publisherService.publish(request))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("Failed to publish compliance report after 3 attempts");
+
+        String shortId = runId.toString().substring(0, 8);
+        String targetBranch = "publish/persistent-409-p-" + shortId;
+
+        long postRefCalls = mockServer.getRecordedRequests().stream()
+                .filter(r -> "POST".equals(r.method()) && r.path().endsWith("/git/refs"))
+                .count();
+        assertThat(postRefCalls).isEqualTo(3);
+
+        long deleteRefCalls = mockServer.getRecordedRequests().stream()
+                .filter(r -> "DELETE".equals(r.method()) && r.path().contains(targetBranch))
+                .count();
+        assertThat(deleteRefCalls).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("Fault Injection (422 Branch Update): Retries on HTTP 422 branch update conflict and succeeds on attempt 2")
+    void testBranchUpdateConflict422RetrySuccess() {
+        mockServer.setSimulateBranchUpdateConflict(422, 1);
+
+        UUID runId = UUID.randomUUID();
+        CompliancePublishRequest request = new CompliancePublishRequest(
+                runId, "422 Ref Conflict Product", "ref-conflict-422", "1.0.0",
+                "Vendor", "https://example.com", "MIT", 90, "EMERALD", 9, 10
+        );
+
+        CompliancePublicationResult result = publisherService.publish(request);
+        assertThat(result.success()).isTrue();
+
+        String shortId = runId.toString().substring(0, 8);
+        String targetBranch = "publish/ref-conflict-422-" + shortId;
+
+        long postRefCalls = mockServer.getRecordedRequests().stream()
+                .filter(r -> "POST".equals(r.method()) && r.path().endsWith("/git/refs"))
+                .count();
+        assertThat(postRefCalls).isEqualTo(2);
+
+        long deleteRefCalls = mockServer.getRecordedRequests().stream()
+                .filter(r -> "DELETE".equals(r.method()) && r.path().contains(targetBranch))
+                .count();
+        assertThat(deleteRefCalls).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("Fault Injection (409 Branch Update): Retries on HTTP 409 branch update conflict and succeeds on attempt 2")
+    void testBranchUpdateConflict409RetrySuccess() {
+        mockServer.setSimulateBranchUpdateConflict(409, 1);
+
+        UUID runId = UUID.randomUUID();
+        CompliancePublishRequest request = new CompliancePublishRequest(
+                runId, "409 Ref Conflict Product", "ref-conflict-409", "1.0.0",
+                "Vendor", "https://example.com", "MIT", 90, "EMERALD", 9, 10
+        );
+
+        CompliancePublicationResult result = publisherService.publish(request);
+        assertThat(result.success()).isTrue();
+
+        String shortId = runId.toString().substring(0, 8);
+        String targetBranch = "publish/ref-conflict-409-" + shortId;
+
+        long postRefCalls = mockServer.getRecordedRequests().stream()
+                .filter(r -> "POST".equals(r.method()) && r.path().endsWith("/git/refs"))
+                .count();
+        assertThat(postRefCalls).isEqualTo(2);
+
+        long deleteRefCalls = mockServer.getRecordedRequests().stream()
+                .filter(r -> "DELETE".equals(r.method()) && r.path().contains(targetBranch))
+                .count();
+        assertThat(deleteRefCalls).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("Fault Injection (Branch Protection): Non-retryable 405 fails fast without wasting retries")
+    void testBranchProtection405FailsFastWithoutRetry() throws Exception {
+        String protectionError = "Pull request blocked by branch protection rule: review is required";
+        try (FaultInjectingGitHubServer customServer = new FaultInjectingGitHubServer(9, false, 405, protectionError)) {
+            GitHubAuthService customAuth = new GitHubAuthService(
+                    "123456", "78910", pkcs8Pem, customServer.getBaseUrl(), objectMapper, HttpClient.newHttpClient()
+            );
+            GitHubCompliancePublisherService customPublisher = new GitHubCompliancePublisherService(
+                    customAuth, reportGenerator, badgeGenerator, objectMapper, HttpClient.newHttpClient(), customServer.getBaseUrl()
+            );
+            customPublisher.setEnabled(true);
+            customPublisher.setRepo("scimsandbox/scim-website");
+            customPublisher.setBranch("main");
+
+            UUID runId = UUID.randomUUID();
+            CompliancePublishRequest request = new CompliancePublishRequest(
+                    runId, "Protected Branch Product", "protected-prod", "1.0.0",
+                    "Vendor", "https://example.com", "MIT", 90, "EMERALD", 9, 10
+            );
+
+            // Must throw RuntimeException wrapping IllegalStateException (non-retryable branch protection) immediately on attempt 1
+            assertThatThrownBy(() -> customPublisher.publish(request))
+                    .isInstanceOf(RuntimeException.class)
+                    .hasCauseInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("blocked by repository branch protection (HTTP 405)");
+
+            String shortId = runId.toString().substring(0, 8);
+            String targetBranch = "publish/protected-prod-" + shortId;
+
+            // Invariant 1: branch creation attempted exactly once (no useless retries)
+            long postRefCalls = customServer.getRecordedRequests().stream()
+                    .filter(r -> "POST".equals(r.method()) && r.path().endsWith("/git/refs"))
+                    .count();
+            assertThat(postRefCalls).isEqualTo(1);
+
+            // Invariant 2: temporary branch was cleaned up in finally
+            boolean deleteCalled = customServer.getRecordedRequests().stream()
+                    .anyMatch(r -> "DELETE".equals(r.method()) && r.path().contains(targetBranch));
+            assertThat(deleteCalled).isTrue();
+        }
+    }
+
+    @Test
+    @DisplayName("Narrow publishLock: Two distinct runs publish concurrently without serializing external GitHub API calls")
+    void testNarrowPublishLockAllowsConcurrentDistinctPublications() throws Exception {
+        UUID run1 = UUID.randomUUID();
+        UUID run2 = UUID.randomUUID();
+
+        CountDownLatch startLatch = new CountDownLatch(1);
+        CountDownLatch bothInFlightAtTreeStep = new CountDownLatch(2);
+        CountDownLatch doneLatch = new CountDownLatch(2);
+        AtomicInteger inFlightTrees = new AtomicInteger(0);
+        AtomicInteger maxConcurrentTrees = new AtomicInteger(0);
+        java.util.concurrent.atomic.AtomicBoolean overlapVerified = new java.util.concurrent.atomic.AtomicBoolean(false);
+
+        mockServer.setRequestInterceptor(req -> {
+            if ("POST".equalsIgnoreCase(req.method()) && req.path().endsWith("/git/trees")) {
+                int current = inFlightTrees.incrementAndGet();
+                maxConcurrentTrees.accumulateAndGet(current, Math::max);
+                bothInFlightAtTreeStep.countDown();
+                try {
+                    if (bothInFlightAtTreeStep.await(5, TimeUnit.SECONDS)) {
+                        overlapVerified.set(true);
+                    }
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                } finally {
+                    inFlightTrees.decrementAndGet();
+                }
+            }
+        });
+
+        List<CompliancePublicationResult> results = new CopyOnWriteArrayList<>();
+        List<Throwable> errors = new CopyOnWriteArrayList<>();
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+
+        executor.submit(() -> {
+            try {
+                startLatch.await();
+                CompliancePublishRequest req1 = new CompliancePublishRequest(
+                        run1, "Parallel A", "parallel-a", "1.0.0",
+                        "Vendor", "https://example.com", "MIT", 90, "EMERALD", 9, 10
+                );
+                results.add(publisherService.publish(req1));
+            } catch (Throwable t) {
+                errors.add(t);
+            } finally {
+                doneLatch.countDown();
+            }
+        });
+
+        executor.submit(() -> {
+            try {
+                startLatch.await();
+                CompliancePublishRequest req2 = new CompliancePublishRequest(
+                        run2, "Parallel B", "parallel-b", "1.0.0",
+                        "Vendor", "https://example.com", "MIT", 90, "EMERALD", 9, 10
+                );
+                results.add(publisherService.publish(req2));
+            } catch (Throwable t) {
+                errors.add(t);
+            } finally {
+                doneLatch.countDown();
+            }
+        });
+
+        startLatch.countDown();
+        assertThat(doneLatch.await(10, TimeUnit.SECONDS)).isTrue();
+        executor.shutdown();
+
+        assertThat(errors).isEmpty();
+        assertThat(overlapVerified.get())
+                .as("Both distinct publications must execute GitHub API requests concurrently in-flight")
+                .isTrue();
+        assertThat(maxConcurrentTrees.get()).isEqualTo(2);
+        assertThat(results).hasSize(2);
+        assertThat(results.get(0).success()).isTrue();
+        assertThat(results.get(1).success()).isTrue();
     }
 
     @Test
@@ -714,6 +952,92 @@ class GitHubCompliancePublisherChallengerTest {
         assertThat(parsed2.getEncoded()).isEqualTo(parsed.getEncoded());
     }
 
+    @Test
+    @DisplayName("Post-Merge Reconciliation: When PR merges on GitHub and DB finalization fails, tryReconcilePendingPublication completes publication")
+    void testPostMergeReconciliationWorkflow() {
+        UUID runId = UUID.randomUUID();
+        ValidationRunServiceChallengerTest.InMemoryRunRepository runRepository =
+                new ValidationRunServiceChallengerTest.InMemoryRunRepository();
+        ValidationRunServiceChallengerTest.InMemoryUserRepository userRepository =
+                new ValidationRunServiceChallengerTest.InMemoryUserRepository();
+        java.util.concurrent.atomic.AtomicBoolean dbOutageDuringFinalization =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+        ValidationRunServiceChallengerTest.InMemoryPublicationRepository publicationRepository =
+                new ValidationRunServiceChallengerTest.InMemoryPublicationRepository() {
+                    @Override
+                    public Optional<de.palsoftware.scim.validator.ui.model.ValidationRunPublication> findById(UUID uuid) {
+                        if (dbOutageDuringFinalization.get()) {
+                            throw new RuntimeException("Simulated transient DB failure during post-merge finalization");
+                        }
+                        return super.findById(uuid);
+                    }
+
+                    @Override
+                    public <S extends de.palsoftware.scim.validator.ui.model.ValidationRunPublication> S save(S entity) {
+                        if (dbOutageDuringFinalization.get()) {
+                            throw new RuntimeException("Simulated transient DB failure during post-merge finalization");
+                        }
+                        return super.save(entity);
+                    }
+                };
+
+        de.palsoftware.scim.validator.ui.model.ValidationMgmtUser owner =
+                new de.palsoftware.scim.validator.ui.model.ValidationMgmtUser("actor@example.com", OffsetDateTime.now(ZoneOffset.UTC));
+        userRepository.save(owner);
+
+        de.palsoftware.scim.validator.ui.model.ValidationRun run = new de.palsoftware.scim.validator.ui.model.ValidationRun();
+        org.springframework.test.util.ReflectionTestUtils.setField(run, "id", runId);
+        run.setName("Reconciliation Run");
+        run.setTargetUrl("https://scim.example.com");
+        run.setStatus("PASSED");
+        run.setCreatedByUser(owner);
+        runRepository.save(run);
+
+        CompliancePublishRequest request = new CompliancePublishRequest(
+                runId, "Reconciled Prod", "reconciled-prod", "1.0.0",
+                "Vendor", "https://example.com", "MIT", 95, "EMERALD", 10, 10
+        );
+
+        ValidationRunService runService = new ValidationRunService(
+                runRepository, userRepository, null, null, publicationRepository, null, null);
+
+        // 1. Reserve pending publication slot prior to GitHub merge
+        runService.reservePublication(run, "actor@example.com", request);
+        assertThat(run.hasPendingReservation()).isTrue();
+        assertThat(run.isPublished()).isFalse();
+
+        // 2. GitHub publish succeeds and merges PR
+        CompliancePublicationResult ghResult = publisherService.publish(request);
+        assertThat(ghResult.success()).isTrue();
+
+        // 3. Initial post-merge DB finalization fails due to transient DB outage -> triggers markReconciliationRequired
+        dbOutageDuringFinalization.set(true);
+        assertThatThrownBy(() -> runService.recordPublication(run, "actor@example.com", request, ghResult))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("Simulated transient DB failure");
+        runService.markReconciliationRequired(runId, "actor@example.com", request, ghResult);
+
+        // Invariant 1: run is flagged as requiring reconciliation and is not yet marked published
+        dbOutageDuringFinalization.set(false);
+        assertThat(runService.isReconciliationRequired(runId)).isTrue();
+        assertThat(run.isPublished()).isFalse();
+        assertThat(runService.getPublication(runId)).isEmpty();
+
+        // 4. DB recovers; tryReconcilePendingPublication succeeds, persists the publication, and marks run as published
+        Optional<CompliancePublicationResult> reconciled = runService.tryReconcilePendingPublication(run);
+        assertThat(reconciled).isPresent();
+        assertThat(reconciled.get().runId()).isEqualTo(runId);
+        assertThat(reconciled.get().prUrl()).isEqualTo(ghResult.prUrl());
+
+        // Invariant 3: reconciliationRequired flag is cleared and publication is persisted
+        assertThat(runService.isReconciliationRequired(runId)).isFalse();
+        assertThat(run.isPublished()).isTrue();
+        assertThat(runService.getPublication(runId)).isPresent();
+        assertThat(runService.getPublication(runId).get().isPendingReservation()).isFalse();
+        assertThat(runService.getPublication(runId).get().getPrUrl()).isEqualTo(ghResult.prUrl());
+        assertThat(runService.getPublication(runId).get().getProductSlug()).isEqualTo("reconciled-prod");
+    }
+
     // =========================================================================
     // HELPER: FAULT-INJECTING HTTP SERVER FOR MID-FLOW ERROR TESTING
     // =========================================================================
@@ -726,14 +1050,26 @@ class GitHubCompliancePublisherChallengerTest {
         private final List<MockGitHubApiServer.RecordedRequest> recorded = new CopyOnWriteArrayList<>();
         private final int failStep;
         private final boolean failDelete;
+        private final int failStatusCode;
+        private final String failMessage;
 
         FaultInjectingGitHubServer(int failStep) throws IOException {
-            this(failStep, false);
+            this(failStep, false, 500, null);
         }
 
         FaultInjectingGitHubServer(int failStep, boolean failDelete) throws IOException {
+            this(failStep, failDelete, 500, null);
+        }
+
+        FaultInjectingGitHubServer(int failStep, int failStatusCode, String failMessage) throws IOException {
+            this(failStep, false, failStatusCode, failMessage);
+        }
+
+        FaultInjectingGitHubServer(int failStep, boolean failDelete, int failStatusCode, String failMessage) throws IOException {
             this.failStep = failStep;
             this.failDelete = failDelete;
+            this.failStatusCode = failStatusCode;
+            this.failMessage = failMessage;
             this.server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
             this.server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
             this.server.createContext("/", new Handler());
@@ -843,7 +1179,8 @@ class GitHubCompliancePublisherChallengerTest {
                 // Step 9: Squash Merge: PUT /repos/:o/:r/pulls/:number/merge
                 if ("PUT".equalsIgnoreCase(method) && path.matches(".*/pulls/\\d+/merge")) {
                     if (failStep == 9) {
-                        sendJson(exchange, 500, Map.of("message", "Internal Server Error during squash merge"));
+                        String msg = failMessage != null ? failMessage : "Internal Server Error during squash merge";
+                        sendJson(exchange, failStatusCode, Map.of("message", msg));
                         return;
                     }
                     sendJson(exchange, 200, Map.of("sha", "mergedSha", "merged", true));

@@ -38,8 +38,12 @@ public class MockGitHubApiServer implements AutoCloseable {
     private String existingIndexJsonContent = null; // null => returns 404
     private boolean simulateMergeConflict = false;
     private int mergeConflictRemainingCount = 0;
+    private int mergeConflictStatusCode = 405;
+    private int branchUpdateConflictStatusCode = 0;
+    private int branchUpdateConflictRemainingCount = 0;
     private boolean simulateBranchExists = false;
     private boolean simulateAuthFailure = false;
+    private volatile java.util.function.Consumer<RecordedRequest> requestInterceptor = null;
 
     public record RecordedRequest(
             String method,
@@ -88,9 +92,17 @@ public class MockGitHubApiServer implements AutoCloseable {
         recordedRequests.clear();
         simulateMergeConflict = false;
         mergeConflictRemainingCount = 0;
+        mergeConflictStatusCode = 405;
+        branchUpdateConflictStatusCode = 0;
+        branchUpdateConflictRemainingCount = 0;
         simulateBranchExists = false;
         simulateAuthFailure = false;
         existingIndexJsonContent = null;
+        requestInterceptor = null;
+    }
+
+    public void setRequestInterceptor(java.util.function.Consumer<RecordedRequest> requestInterceptor) {
+        this.requestInterceptor = requestInterceptor;
     }
 
     public void setExistingIndexJson(String json) {
@@ -98,13 +110,28 @@ public class MockGitHubApiServer implements AutoCloseable {
     }
 
     public void setSimulateMergeConflict(boolean conflict) {
+        setSimulateMergeConflict(conflict, 405);
+    }
+
+    public void setSimulateMergeConflict(boolean conflict, int statusCode) {
         this.simulateMergeConflict = conflict;
         this.mergeConflictRemainingCount = conflict ? Integer.MAX_VALUE : 0;
+        this.mergeConflictStatusCode = statusCode;
     }
 
     public void setSimulateMergeConflictTimes(int times) {
+        setSimulateMergeConflictTimes(times, 405);
+    }
+
+    public void setSimulateMergeConflictTimes(int times, int statusCode) {
         this.simulateMergeConflict = times > 0;
         this.mergeConflictRemainingCount = times;
+        this.mergeConflictStatusCode = statusCode;
+    }
+
+    public void setSimulateBranchUpdateConflict(int statusCode, int times) {
+        this.branchUpdateConflictStatusCode = statusCode;
+        this.branchUpdateConflictRemainingCount = times;
     }
 
     public void setSimulateBranchExists(boolean exists) {
@@ -155,7 +182,12 @@ public class MockGitHubApiServer implements AutoCloseable {
                 }
                 String body = new String(bodyBytes, StandardCharsets.UTF_8);
 
-                recordedRequests.add(new RecordedRequest(method, path, query, headers, body, Instant.now()));
+                RecordedRequest recordedRequest = new RecordedRequest(method, path, query, headers, body, Instant.now());
+                recordedRequests.add(recordedRequest);
+                var interceptor = requestInterceptor;
+                if (interceptor != null) {
+                    interceptor.accept(recordedRequest);
+                }
 
                 if (simulateAuthFailure) {
                     sendJson(exchange, 401, Map.of("message", "Bad credentials"));
@@ -247,6 +279,11 @@ public class MockGitHubApiServer implements AutoCloseable {
 
                 // 8. Update Branch Ref: PATCH /repos/:o/:r/git/refs/heads/...
                 if ("PATCH".equalsIgnoreCase(method) && path.contains("/git/refs/heads/")) {
+                    if (branchUpdateConflictStatusCode > 0 && branchUpdateConflictRemainingCount > 0) {
+                        branchUpdateConflictRemainingCount--;
+                        sendJson(exchange, branchUpdateConflictStatusCode, Map.of("message", "Branch ref update conflict"));
+                        return;
+                    }
                     sendJson(exchange, 200, Map.of(
                             "ref", "refs/heads/publish/...",
                             "object", Map.of("sha", createdCommitSha)
@@ -273,7 +310,7 @@ public class MockGitHubApiServer implements AutoCloseable {
                         if (mergeConflictRemainingCount == 0) {
                             simulateMergeConflict = false;
                         }
-                        sendJson(exchange, 405, Map.of("message", "Pull Request is not mergeable"));
+                        sendJson(exchange, mergeConflictStatusCode, Map.of("message", "Pull Request is not mergeable"));
                         return;
                     }
                     sendJson(exchange, 200, Map.of(

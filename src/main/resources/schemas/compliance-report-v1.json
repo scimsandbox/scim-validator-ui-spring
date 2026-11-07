@@ -1,0 +1,294 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scimsandbox.net/schemas/compliance-report-v1.json",
+  "title": "SCIM 2.0 Compliance Scorecard & Traceability Report (v1.0)",
+  "description": "Public schema for verified SCIM 2.0 conformance reports published to the SCIM Sandbox Compliance Directory.",
+  "type": "object",
+  "required": ["schemaVersion", "metadata", "scorecard", "testResults"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "format": "uri"
+    },
+    "schemaVersion": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["runId", "productName", "productSlug", "productVersion", "publishedAt"],
+      "additionalProperties": false,
+      "properties": {
+        "runId": { "type": "string", "format": "uuid" },
+        "productName": { "type": "string", "minLength": 1 },
+        "productSlug": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+        "productVersion": { "type": "string", "minLength": 1 },
+        "vendorName": { "type": ["string", "null"] },
+        "projectUrl": {
+          "type": ["string", "null"],
+          "format": "uri",
+          "pattern": "^https?://"
+        },
+        "licenseType": { "type": ["string", "null"] },
+        "publishedAt": { "type": "string", "format": "date-time" },
+        "submitter": { "type": ["string", "null"] },
+        "isSampleFixture": { "type": "boolean" }
+      }
+    },
+    "scorecard": {
+      "type": "object",
+      "required": [
+        "coreScore",
+        "colourGradient",
+        "publishEligible",
+        "normativeBreakdown",
+        "capabilities",
+        "capabilitySummary",
+        "requirementCounts",
+        "rfcSummaries",
+        "requirementMatrix"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "coreScore": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "colourGradient": {
+          "type": "object",
+          "required": ["name", "startColor", "endColor", "label"],
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string", "enum": ["EMERALD", "TEAL_GREEN", "AMBER", "ORANGE", "RED"] },
+            "startColor": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+            "endColor": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+            "label": { "type": "string" }
+          }
+        },
+        "publishEligible": { "type": "boolean" },
+        "normativeBreakdown": {
+          "type": "object",
+          "required": ["must", "should", "may"],
+          "additionalProperties": false,
+          "properties": {
+            "must": { "$ref": "#/$defs/normativeLevel" },
+            "should": { "$ref": "#/$defs/normativeLevel" },
+            "may": { "$ref": "#/$defs/normativeLevel" }
+          }
+        },
+        "capabilities": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/capabilityItem" }
+        },
+        "capabilitySummary": {
+          "type": "object",
+          "required": ["supportedCount", "compliantCount", "totalCount"],
+          "additionalProperties": false,
+          "properties": {
+            "supportedCount": { "type": "integer", "minimum": 0 },
+            "compliantCount": { "type": "integer", "minimum": 0 },
+            "totalCount": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "requirementCounts": {
+          "type": "object",
+          "required": ["catalogTotal", "activeScopeCount", "excludedCount", "untestedCount"],
+          "additionalProperties": false,
+          "properties": {
+            "catalogTotal": { "type": "integer", "minimum": 0 },
+            "activeScopeCount": { "type": "integer", "minimum": 0 },
+            "excludedCount": { "type": "integer", "minimum": 0 },
+            "untestedCount": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "rfcSummaries": {
+          "type": "object",
+          "required": ["7643", "7644", "9865", "9967"],
+          "properties": {
+            "7643": { "$ref": "#/$defs/rfcSummaryItem" },
+            "7644": { "$ref": "#/$defs/rfcSummaryItem" },
+            "9865": { "$ref": "#/$defs/rfcSummaryItem" },
+            "9967": { "$ref": "#/$defs/rfcSummaryItem" }
+          },
+          "additionalProperties": false
+        },
+        "requirementMatrix": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/requirementRow" }
+        }
+      }
+    },
+    "testResults": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/testResultRow" }
+    }
+  },
+  "$defs": {
+    "normativeLevel": {
+      "type": "object",
+      "required": [
+        "level",
+        "weight",
+        "activeRequirements",
+        "compliantRequirements",
+        "partialRequirements",
+        "failedRequirements",
+        "earnedPoints",
+        "totalPoints",
+        "conformancePercent"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "level": { "type": "string", "enum": ["MUST", "SHOULD", "MAY"] },
+        "weight": { "type": "integer", "enum": [1, 2, 3] },
+        "activeRequirements": { "type": "integer", "minimum": 0 },
+        "compliantRequirements": { "type": "integer", "minimum": 0 },
+        "partialRequirements": { "type": "integer", "minimum": 0 },
+        "failedRequirements": { "type": "integer", "minimum": 0 },
+        "earnedPoints": { "type": "number", "minimum": 0 },
+        "totalPoints": { "type": "number", "minimum": 0 },
+        "conformancePercent": { "type": "integer", "minimum": 0, "maximum": 100 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "level": { "const": "MUST" } } },
+          "then": { "properties": { "weight": { "const": 3 } } }
+        },
+        {
+          "if": { "properties": { "level": { "const": "SHOULD" } } },
+          "then": { "properties": { "weight": { "const": 2 } } }
+        },
+        {
+          "if": { "properties": { "level": { "const": "MAY" } } },
+          "then": { "properties": { "weight": { "const": 1 } } }
+        }
+      ]
+    },
+    "capabilityItem": {
+      "type": "object",
+      "required": [
+        "capability",
+        "displayName",
+        "rfcSection",
+        "status",
+        "totalTests",
+        "executedTests",
+        "passedTests",
+        "failedTests",
+        "abortedTests",
+        "passRate",
+        "isSupported"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "capability": { "type": "string" },
+        "displayName": { "type": "string" },
+        "rfcSection": { "type": "string" },
+        "status": { "type": "string", "enum": ["SUPPORTED_COMPLIANT", "SUPPORTED_PARTIAL", "UNSUPPORTED"] },
+        "totalTests": { "type": "integer", "minimum": 0 },
+        "executedTests": { "type": "integer", "minimum": 0 },
+        "passedTests": { "type": "integer", "minimum": 0 },
+        "failedTests": { "type": "integer", "minimum": 0 },
+        "abortedTests": { "type": "integer", "minimum": 0 },
+        "passRate": { "type": "number", "minimum": 0, "maximum": 100 },
+        "isSupported": { "type": "boolean" }
+      }
+    },
+    "rfcSummaryItem": {
+      "type": "object",
+      "required": [
+        "rfc",
+        "rfcTitle",
+        "totalRequirements",
+        "activeRequirements",
+        "compliantRequirements",
+        "earnedPoints",
+        "totalPoints",
+        "conformancePercent"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "rfc": { "type": "string" },
+        "rfcTitle": { "type": "string" },
+        "totalRequirements": { "type": "integer", "minimum": 0 },
+        "activeRequirements": { "type": "integer", "minimum": 0 },
+        "compliantRequirements": { "type": "integer", "minimum": 0 },
+        "earnedPoints": { "type": "number", "minimum": 0 },
+        "totalPoints": { "type": "number", "minimum": 0 },
+        "conformancePercent": { "type": "integer", "minimum": 0, "maximum": 100 }
+      }
+    },
+    "requirementRow": {
+      "type": "object",
+      "required": [
+        "id",
+        "rfc",
+        "section",
+        "title",
+        "level",
+        "weight",
+        "capability",
+        "inActiveScope",
+        "totalTests",
+        "executedTests",
+        "passedTests",
+        "failedTests",
+        "abortedTests",
+        "earnedWeight",
+        "status",
+        "mappedTestIds"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "rfc": { "type": "string" },
+        "section": { "type": "string" },
+        "title": { "type": "string" },
+        "level": { "type": "string", "enum": ["MUST", "SHOULD", "MAY", "OPTIONAL"] },
+        "weight": { "type": "integer", "enum": [1, 2, 3] },
+        "capability": { "type": "string" },
+        "inActiveScope": { "type": "boolean" },
+        "totalTests": { "type": "integer", "minimum": 0 },
+        "executedTests": { "type": "integer", "minimum": 0 },
+        "passedTests": { "type": "integer", "minimum": 0 },
+        "failedTests": { "type": "integer", "minimum": 0 },
+        "abortedTests": { "type": "integer", "minimum": 0 },
+        "earnedWeight": { "type": "number", "minimum": 0 },
+        "status": {
+          "type": "string",
+          "enum": ["COMPLIANT", "PARTIAL", "FAILED", "UNTESTED", "EXCLUDED_CAPABILITY"]
+        },
+        "mappedTestIds": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "level": { "const": "MUST" } } },
+          "then": { "properties": { "weight": { "const": 3 } } }
+        },
+        {
+          "if": { "properties": { "level": { "const": "SHOULD" } } },
+          "then": { "properties": { "weight": { "const": 2 } } }
+        },
+        {
+          "if": { "properties": { "level": { "enum": ["MAY", "OPTIONAL"] } } },
+          "then": { "properties": { "weight": { "const": 1 } } }
+        }
+      ]
+    },
+    "testResultRow": {
+      "type": "object",
+      "required": ["testId", "displayName", "className", "testName", "status", "durationMs"],
+      "additionalProperties": false,
+      "properties": {
+        "testId": { "type": "string" },
+        "displayName": { "type": "string" },
+        "className": { "type": "string" },
+        "testName": { "type": "string" },
+        "status": { "type": "string", "enum": ["SUCCESS", "FAILED", "ABORTED", "SKIPPED"] },
+        "durationMs": { "type": "integer", "minimum": 0 },
+        "errorMessage": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

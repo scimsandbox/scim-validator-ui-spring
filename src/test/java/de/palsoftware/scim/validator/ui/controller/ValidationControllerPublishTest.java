@@ -143,7 +143,7 @@ class ValidationControllerPublishTest {
         when(complianceScoreService.computeScorecard(runEntity, Collections.emptyList(), Collections.emptyList()))
                 .thenReturn(scorecard);
         when(complianceScoreService.isEligibleForPublish(scorecard, runEntity)).thenReturn(true);
-        when(specCatalogService.getAllTestMappings()).thenReturn(Map.of("DSC_01", new TestSpecMapping("DSC_01", "Service Discovery", "specs.A1_ServiceDiscoverySpec", "none", List.of("RFC7644-4-R1"))));
+        when(specCatalogService.getAllTestMappings()).thenReturn(Map.of("DSC_01", new TestSpecMapping("DSC_01", "Service Discovery", "specs.A1_ServiceDiscoverySpec", "core", List.of("RFC7644-4-R1"))));
         when(specCatalogService.getAllMappings()).thenReturn(List.of());
 
         String view = controller.detail(runId, model, userAuth);

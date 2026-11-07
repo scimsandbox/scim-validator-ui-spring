@@ -23,7 +23,10 @@ public record CapabilityStatus(
             int passedTests,
             int failedTests,
             int abortedTests) {
-        double rate = executedTests > 0 ? (passedTests * 100.0) / executedTests : 0.0;
+        double rate = totalTests > 0 ? (passedTests * 100.0) / totalTests : 0.0;
+        if (passedTests < totalTests && Math.round(rate) == 100) {
+            rate = 99.0;
+        }
         boolean supported = status == CapabilitySupportLevel.SUPPORTED_COMPLIANT ||
                 status == CapabilitySupportLevel.SUPPORTED_PARTIAL;
         return new CapabilityStatus(

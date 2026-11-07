@@ -10,32 +10,44 @@ public record SpecRequirement(
         @JsonProperty("id") String id,
         @JsonProperty("rfc") String rfc,
         @JsonProperty("section") String section,
-        @JsonProperty("title") String title,
+        @JsonProperty("subject") String subject,
         @JsonProperty("level") String level,
+        @JsonProperty("quote") String quote,
+        @JsonProperty("area") String area,
         @JsonProperty("capability") String capability,
-        @JsonProperty("observability") String observability,
-        @JsonProperty("disposition") String disposition,
-        @JsonProperty("note") String note
+        @JsonProperty("disposition") String disposition
 ) {
+    public static final String CORE_CAPABILITY = "core";
+
     public SpecRequirement {
         Objects.requireNonNull(id, "Requirement id must not be null");
         if (capability == null || capability.isBlank()) {
-            capability = "none";
+            capability = CORE_CAPABILITY;
         } else {
             capability = capability.trim();
-        }
-        if (observability == null || observability.isBlank()) {
-            observability = "response";
         }
         if (disposition == null || disposition.isBlank()) {
             disposition = "tested";
         }
-        if (note == null) {
-            note = "";
+        if (subject == null) {
+            subject = "";
+        }
+        if (quote == null) {
+            quote = "";
+        }
+        if (area == null) {
+            area = "";
         }
         if (level != null) {
             level = level.trim().toUpperCase();
         }
+    }
+
+    /**
+     * Display text for matrices and reports: the verbatim RFC sentence (the catalog has no separate title).
+     */
+    public String title() {
+        return quote;
     }
 
     /**
@@ -52,7 +64,7 @@ public record SpecRequirement(
     }
 
     public boolean isCore() {
-        return "none".equalsIgnoreCase(capability);
+        return CORE_CAPABILITY.equalsIgnoreCase(capability);
     }
 
     public boolean isOptionalCapability() {
@@ -73,5 +85,44 @@ public record SpecRequirement(
 
     public boolean isTested() {
         return "tested".equalsIgnoreCase(disposition);
+    }
+
+    /**
+     * True for dispositions that take part in scoring. The generated catalogs mark requirements
+     * as "unassigned" or "gap" until a test covers them; those still count (UNTESTED if nothing ran),
+     * only "optional" and "na" are handled specially by the scoring.
+     */
+    public boolean isScored() {
+        return !"optional".equalsIgnoreCase(disposition) && !"na".equalsIgnoreCase(disposition);
+    }
+
+    public String rfcUrl() {
+        return formatRfcUrl(rfc, section);
+    }
+
+    public String rfcLabel() {
+        return formatRfcLabel(rfc, section);
+    }
+
+    public static String formatRfcUrl(String rfc, String section) {
+        if (rfc == null || rfc.isBlank()) {
+            return null;
+        }
+        String trimmedRfc = rfc.trim();
+        if (section == null || section.isBlank()) {
+            return "https://www.rfc-editor.org/rfc/rfc" + trimmedRfc;
+        }
+        return "https://www.rfc-editor.org/rfc/rfc" + trimmedRfc + "#section-" + section.trim();
+    }
+
+    public static String formatRfcLabel(String rfc, String section) {
+        if (rfc == null || rfc.isBlank()) {
+            return "";
+        }
+        String trimmedRfc = rfc.trim();
+        if (section == null || section.isBlank()) {
+            return "RFC " + trimmedRfc;
+        }
+        return "RFC " + trimmedRfc + " §" + section.trim();
     }
 }
