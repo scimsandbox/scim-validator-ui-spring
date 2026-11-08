@@ -92,6 +92,12 @@ class SpecCatalogServiceTest {
             assertThat(req.area()).isNotBlank();
         }
 
+        SpecRequirement displayName = service.getRequirements().get("RFC7643-4.2-36465a");
+        assertThat(displayName).isNotNull();
+        assertThat(displayName.quote()).isEqualTo("REQUIRED.");
+        assertThat(displayName.summary()).contains("Group").contains("displayName");
+        assertThat(displayName.title()).isEqualTo(displayName.summary()).isNotEqualTo(displayName.quote());
+
         SpecRequirement withSummary = new SpecRequirement(
                 "RFC7643-4.2-36465a", "7643", "4.2", "displayName", "MUST", "REQUIRED.",
                 "In the \"Group\" resource schema, the \"displayName\" attribute (a human-readable name for the Group) is REQUIRED.",

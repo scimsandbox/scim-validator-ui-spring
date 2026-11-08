@@ -1729,7 +1729,9 @@
                                               th:text="${req.rfcLabel()}">RFC 7644 §4</span>
                                     </div>
                                 </td>
-                                <td class="req-title-cell" th:text="${req.title}">
+                                <td class="req-title-cell"
+                                    th:text="${req.title}"
+                                    th:title="${req.quote != null and !req.quote.isEmpty() and req.quote != req.title ? 'Verbatim RFC quote: ' + req.quote : null}">
                                     Service providers MUST support discovery endpoints...
                                 </td>
                                 <td>

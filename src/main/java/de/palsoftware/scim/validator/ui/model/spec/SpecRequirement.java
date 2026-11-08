@@ -67,7 +67,7 @@ public record SpecRequirement(
      * Display text for matrices and reports: the self-contained 1-sentence summary (falling back to verbatim quote).
      */
     public String title() {
-        return !summary.isBlank() ? summary : quote;
+        return summary;
     }
 
     /**
