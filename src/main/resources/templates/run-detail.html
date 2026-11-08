@@ -1695,7 +1695,6 @@
                                 <th>Level</th>
                                 <th>Capability</th>
                                 <th>Status</th>
-                                <th>Weight</th>
                                 <th>Mapped Tests</th>
                             </tr>
                             </thead>
@@ -1742,9 +1741,6 @@
                                     <span th:if="${req.status == 'FAILED'}" class="status-badge status-failed">FAILED</span>
                                     <span th:if="${req.status == 'UNTESTED'}" class="status-badge status-aborted" style="background: rgba(148, 163, 184, 0.15); color: #94a3b8; border-color: rgba(148, 163, 184, 0.3);">UNTESTED</span>
                                     <span th:if="${req.status == 'EXCLUDED_CAPABILITY'}" class="status-badge" style="background: rgba(100, 116, 139, 0.15); color: #94a3b8; border-color: rgba(100, 116, 139, 0.3);">EXCLUDED</span>
-                                </td>
-                                <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; white-space: nowrap;">
-                                    <span th:text="${#numbers.formatDecimal(req.earnedWeight, 1, 1) + ' / ' + req.weight + ' pts'}">3.0 / 3 pts</span>
                                 </td>
                                 <td>
                                     <div th:if="${req.mappedTestIds != null and !#lists.isEmpty(req.mappedTestIds)}" class="test-id-pills">
