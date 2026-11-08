@@ -213,6 +213,7 @@
             animation: spin 0.8s linear infinite;
             flex-shrink: 0;
         }
+        @keyframes spin { to { transform: rotate(360deg); } }
 
         pre {
             white-space: pre-wrap;
@@ -1036,11 +1037,13 @@
         }
         .snippet-code {
             flex: 1;
+            min-width: 0;
             font-family: 'JetBrains Mono', monospace;
             font-size: 12px;
             color: #38bdf8;
             white-space: nowrap;
-            overflow-x: auto;
+            overflow-x: hidden;
+            text-overflow: ellipsis;
             background: transparent;
             padding: 4px;
         }
@@ -1383,9 +1386,13 @@
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="9" y1="21" x2="9" y2="9"></line></svg>
                         <strong style="font-size: 13px; color: #f8fafc;">Embed Compliance Badge in README.md</strong>
                     </div>
-                    <div class="badge-preview">
-                        <span style="font-size: 11px; color: #94a3b8; text-transform: uppercase; font-weight: 700; margin-right: 6px;">Live Badge:</span>
-                        <img th:src="${publication.badgeUrl}" alt="SCIM 2.0 Compliance" style="height: 20px; vertical-align: middle;">
+                    <div class="badge-preview" style="display: flex; align-items: center; gap: 6px;">
+                        <span style="font-size: 11px; color: #94a3b8; text-transform: uppercase; font-weight: 700;">Live Badge:</span>
+                        <img id="published-live-badge" th:src="${publication.badgeUrl}" th:attr="data-badge-url=${publication.badgeUrl}" alt="SCIM 2.0 Compliance" style="height: 20px; vertical-align: middle;">
+                        <span id="published-badge-deploying" style="display: none; align-items: center; gap: 6px; font-size: 11.5px; color: #94a3b8; background: #1e293b; border: 1px solid #334155; border-radius: 4px; padding: 2px 8px;">
+                            <span class="mini-spinner" style="width: 10px; height: 10px; border-width: 1.5px;"></span>
+                            <span>Deploying to CDN…</span>
+                        </span>
                     </div>
                 </div>
 
@@ -2141,6 +2148,53 @@
                     copyTextToClipboard(snippetEl.textContent.trim(), copyBtn);
                 }
             });
+        }
+
+        var badgeImg = document.getElementById('published-live-badge');
+        var badgeDeploying = document.getElementById('published-badge-deploying');
+        if (badgeImg && badgeDeploying) {
+            var baseBadgeUrl = badgeImg.getAttribute('data-badge-url') || badgeImg.getAttribute('src');
+            var badgeRetryCount = 0;
+            var maxBadgeRetries = 20;
+            var badgeRetryTimer = null;
+
+            function onBadgeLoad() {
+                if (badgeImg.naturalWidth > 0) {
+                    if (badgeRetryTimer) {
+                        clearTimeout(badgeRetryTimer);
+                        badgeRetryTimer = null;
+                    }
+                    badgeDeploying.style.display = 'none';
+                    badgeImg.style.display = 'inline-block';
+                }
+            }
+
+            function scheduleBadgeRetry() {
+                if (!baseBadgeUrl) return;
+                badgeImg.style.display = 'none';
+                badgeDeploying.style.display = 'inline-flex';
+                if (badgeRetryCount >= maxBadgeRetries) {
+                    badgeDeploying.textContent = 'CDN deploy pending';
+                    return;
+                }
+                badgeRetryCount++;
+                if (badgeRetryTimer) clearTimeout(badgeRetryTimer);
+                badgeRetryTimer = setTimeout(function() {
+                    var sep = baseBadgeUrl.indexOf('?') === -1 ? '?' : '&';
+                    badgeImg.src = baseBadgeUrl + sep + 't=' + Date.now();
+                }, 3000);
+            }
+
+            badgeImg.addEventListener('load', onBadgeLoad);
+            badgeImg.addEventListener('error', scheduleBadgeRetry);
+
+            if (badgeImg.complete) {
+                if (badgeImg.naturalWidth === 0) {
+                    scheduleBadgeRetry();
+                } else {
+                    onBadgeLoad();
+                }
+            }
         }
 
         function copyTextToClipboard(text, btn) {
