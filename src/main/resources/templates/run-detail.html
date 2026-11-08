@@ -1436,7 +1436,8 @@
 
                     <!-- 1. Publish Button: Eligible & Unpublished -->
                     <button th:if="${(publication == null and (isPublished == null or !isPublished) and (isPublishing == null or !isPublishing)) and (scorecard != null and scorecard.publishEligible)}"
-                            type="button" id="open-publish-modal-btn" class="btn-publish-action">
+                            type="button" id="open-publish-modal-btn" class="btn-publish-action"
+                            th:data-tooltip="${'Eligible for Public Directory (Score ≥ ' + (minPublishScore != null ? minPublishScore : 50) + '%)'}">
                         <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"></path><path d="M12 12v9"></path><path d="m8 17 4 4 4-4"></path></svg>
                         <span>Publish to Directory</span>
                     </button>
@@ -1516,19 +1517,6 @@
                             <div class="score-stat-val" th:text="${scorecard.formattedNormativePoints}">431 / 431</div>
                             <div class="score-stat-key">Normative Points</div>
                         </div>
-                    </div>
-
-                    <!-- Publish Eligibility Status -->
-                    <div style="margin-top: 12px;">
-                        <span th:if="${scorecard.publishEligible}" class="eligibility-pill eligible">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
-                            <span th:text="${'Eligible for Public Directory (Score ≥ ' + (minPublishScore != null ? minPublishScore : 50) + '%)'}">Eligible for Public Directory (Score ≥ 50%)</span>
-                        </span>
-                        <span th:unless="${scorecard.publishEligible}" class="eligibility-pill ineligible"
-                              th:title="${scorecard.publishIneligibilityReason}">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                            <span th:text="${scorecard.publishIneligibilityReason != null ? scorecard.publishIneligibilityReason : 'Ineligible for Public Directory'}">Ineligible for Public Directory</span>
-                        </span>
                     </div>
                 </div>
             </div>
