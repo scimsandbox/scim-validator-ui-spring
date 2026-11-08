@@ -563,14 +563,6 @@
             line-height: 1;
             letter-spacing: -0.03em;
         }
-        .score-badge-label {
-            font-size: 10px;
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-            opacity: 0.95;
-            margin-top: 3px;
-            font-weight: 700;
-        }
         .score-hero-details { flex: 1; min-width: 260px; }
         .score-hero-title { font-size: 1.35rem; font-weight: 700; color: #f8fafc; margin: 0 0 6px 0; }
         .score-hero-subtitle { font-size: 13.5px; color: #94a3b8; margin: 0 0 14px 0; }
@@ -1482,7 +1474,6 @@
                      th:classappend="${scorecard.colourGradient != null ? 'gradient-' + #strings.toLowerCase(#strings.replace(scorecard.colourGradient.name(), '_', '-')) : 'gradient-emerald'}"
                      th:style="${scorecard.colourGradient != null ? 'background: ' + scorecard.colourGradient.cssLinearGradient() : ''}">
                     <span class="score-badge-number" th:text="${scorecard.coreScore + '%'}">100%</span>
-                    <span class="score-badge-label" th:text="${scorecard.conformanceTierLabel != null ? scorecard.conformanceTierLabel : (scorecard.colourGradient != null ? scorecard.colourGradient.getLabel() : 'Score')}">Certified RFC Compliant</span>
                 </div>
 
                 <!-- Hero Details & Metadata -->
