@@ -320,7 +320,7 @@ public class ComplianceScoreService {
             }
 
             traceResults.add(new RequirementTraceResult(
-                    req.id(), req.rfc(), req.section(), req.title(), req.level(),
+                    req.id(), req.rfc(), req.section(), req.title(), req.quote(), req.level(),
                     w, req.capability(), inActiveScope, totalTestsForReq, executedTestsForReq,
                     passedTestsForReq, failedTestsForReq, abortedTestsForReq, earned, status, mappedTestIds
             ));

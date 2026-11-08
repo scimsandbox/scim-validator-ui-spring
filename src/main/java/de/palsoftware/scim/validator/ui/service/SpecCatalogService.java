@@ -72,12 +72,13 @@ public class SpecCatalogService {
                     String subject = (String) map.get("subject");
                     String level = (String) map.get("level");
                     String quote = (String) map.get("quote");
+                    String summary = (String) map.get("summary");
                     String area = (String) map.get("area");
                     String capability = (String) map.get("capability");
                     String disposition = (String) map.get("disposition");
 
                     SpecRequirement req = new SpecRequirement(
-                            id, rfc, section, subject, level, quote, area, capability, disposition
+                            id, rfc, section, subject, level, quote, summary, area, capability, disposition
                     );
                     if (requirements.containsKey(req.id())) {
                         throw new IllegalStateException("Duplicate requirement ID in catalog: " + req.id());
