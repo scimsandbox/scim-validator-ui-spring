@@ -13,11 +13,26 @@ public record SpecRequirement(
         @JsonProperty("subject") String subject,
         @JsonProperty("level") String level,
         @JsonProperty("quote") String quote,
+        @JsonProperty("summary") String summary,
         @JsonProperty("area") String area,
         @JsonProperty("capability") String capability,
         @JsonProperty("disposition") String disposition
 ) {
     public static final String CORE_CAPABILITY = "core";
+
+    public SpecRequirement(
+            String id,
+            String rfc,
+            String section,
+            String subject,
+            String level,
+            String quote,
+            String area,
+            String capability,
+            String disposition
+    ) {
+        this(id, rfc, section, subject, level, quote, null, area, capability, disposition);
+    }
 
     public SpecRequirement {
         Objects.requireNonNull(id, "Requirement id must not be null");
@@ -35,6 +50,11 @@ public record SpecRequirement(
         if (quote == null) {
             quote = "";
         }
+        if (summary == null || summary.isBlank()) {
+            summary = quote;
+        } else {
+            summary = summary.trim();
+        }
         if (area == null) {
             area = "";
         }
@@ -44,10 +64,10 @@ public record SpecRequirement(
     }
 
     /**
-     * Display text for matrices and reports: the verbatim RFC sentence (the catalog has no separate title).
+     * Display text for matrices and reports: the self-contained 1-sentence summary (falling back to verbatim quote).
      */
     public String title() {
-        return quote;
+        return !summary.isBlank() ? summary : quote;
     }
 
     /**

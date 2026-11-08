@@ -83,13 +83,30 @@ class SpecCatalogServiceTest {
     }
 
     @Test
-    @DisplayName("Catalog fields from the generated YAML are exposed and title() returns the quote")
+    @DisplayName("Catalog fields from the generated YAML are exposed and title() returns the summary")
     void testGeneratedCatalogFieldsAndTitleAlias() {
         for (SpecRequirement req : service.getRequirements().values()) {
             assertThat(req.quote()).isNotBlank();
-            assertThat(req.title()).isEqualTo(req.quote());
+            assertThat(req.summary()).isNotBlank();
+            assertThat(req.title()).isEqualTo(req.summary());
             assertThat(req.area()).isNotBlank();
         }
+
+        SpecRequirement withSummary = new SpecRequirement(
+                "RFC7643-4.2-36465a", "7643", "4.2", "displayName", "MUST", "REQUIRED.",
+                "In the \"Group\" resource schema, the \"displayName\" attribute (a human-readable name for the Group) is REQUIRED.",
+                "user-group-schemas", "core", "tested"
+        );
+        assertThat(withSummary.quote()).isEqualTo("REQUIRED.");
+        assertThat(withSummary.summary()).contains("displayName");
+        assertThat(withSummary.title()).isEqualTo(withSummary.summary());
+
+        SpecRequirement fallbackToQuote = new SpecRequirement(
+                "RFC7643-4.2-36465a", "7643", "4.2", "displayName", "MUST", "REQUIRED.",
+                " ", "user-group-schemas", "core", "tested"
+        );
+        assertThat(fallbackToQuote.summary()).isEqualTo("REQUIRED.");
+        assertThat(fallbackToQuote.title()).isEqualTo("REQUIRED.");
     }
 
     @Test
