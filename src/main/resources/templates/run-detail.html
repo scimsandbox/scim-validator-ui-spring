@@ -807,12 +807,15 @@
         .filter-btn:hover { color: #f8fafc; background: #1e293b; }
         .filter-btn.active { background: #2563eb; color: #ffffff; border-color: #3b82f6; }
 
+        .matrix-table th, .matrix-table td {
+            padding: 10px 12px;
+        }
         .matrix-table tr.highlight-row td {
             background: rgba(59, 130, 246, 0.28) !important;
             transition: background 0.6s ease;
         }
         .req-id-cell { font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 12px; color: #60a5fa; white-space: nowrap; }
-        .req-title-cell { font-size: 13px; line-height: 1.45; color: #e2e8f0; max-width: 460px; }
+        .req-title-cell { font-size: 13px; line-height: 1.45; color: #e2e8f0; width: 100%; }
         .req-rfc-section { font-size: 11px; color: #94a3b8; margin-top: 2px; }
         .req-rfc-link { color: #94a3b8; text-decoration: none; display: inline-flex; align-items: center; gap: 3px; transition: color 0.15s ease; }
         .req-rfc-link:hover { color: #38bdf8; text-decoration: underline; }
@@ -840,6 +843,7 @@
             padding: 2px 6px;
             font-size: 11px;
             font-family: 'JetBrains Mono', monospace;
+            white-space: nowrap;
             text-decoration: none;
             transition: all 0.15s ease;
         }
@@ -1687,17 +1691,17 @@
                     </div>
 
                     <!-- Traceability Matrix Table -->
-                    <div class="table-responsive" style="max-height: 600px; overflow-y: auto;">
+                    <div class="table-responsive" style="max-height: 600px; overflow-y: auto; overflow-x: hidden;">
                         <table class="overview-table matrix-table" id="rfcMatrixTable">
                             <thead>
                             <tr>
-                                <th style="min-width: 170px;">Requirement ID</th>
-                                <th style="min-width: 320px;">Specification Requirement</th>
-                                <th style="min-width: 90px;">Level</th>
-                                <th style="min-width: 110px;">Capability</th>
-                                <th style="min-width: 110px;">Status</th>
-                                <th style="min-width: 90px;">Weight</th>
-                                <th style="min-width: 140px;">Mapped Tests</th>
+                                <th>Requirement ID</th>
+                                <th>Specification Requirement</th>
+                                <th>Level</th>
+                                <th>Capability</th>
+                                <th>Status</th>
+                                <th>Weight</th>
+                                <th>Mapped Tests</th>
                             </tr>
                             </thead>
                             <tbody>
@@ -1744,7 +1748,7 @@
                                     <span th:if="${req.status == 'UNTESTED'}" class="status-badge status-aborted" style="background: rgba(148, 163, 184, 0.15); color: #94a3b8; border-color: rgba(148, 163, 184, 0.3);">UNTESTED</span>
                                     <span th:if="${req.status == 'EXCLUDED_CAPABILITY'}" class="status-badge" style="background: rgba(100, 116, 139, 0.15); color: #94a3b8; border-color: rgba(100, 116, 139, 0.3);">EXCLUDED</span>
                                 </td>
-                                <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px;">
+                                <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px; white-space: nowrap;">
                                     <span th:text="${#numbers.formatDecimal(req.earnedWeight, 1, 1) + ' / ' + req.weight + ' pts'}">3.0 / 3 pts</span>
                                 </td>
                                 <td>
