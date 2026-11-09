@@ -910,6 +910,29 @@
             cursor: not-allowed;
             opacity: 0.75;
         }
+        .btn-publish-restricted {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            background: #1e293b;
+            color: #94a3b8;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            border: 1px solid #334155;
+            cursor: pointer;
+            opacity: 0.85;
+            text-decoration: none;
+            transition: all 0.15s ease;
+        }
+        .btn-publish-restricted:hover {
+            background: #273549;
+            color: #f8fafc;
+            border-color: #475569;
+            opacity: 1;
+            text-decoration: none;
+        }
         .btn-published-link {
             display: inline-flex;
             align-items: center;
@@ -1333,13 +1356,22 @@
                     <a th:href="@{/}" class="btn-link">← Back to compliance runs</a>
                     <a th:href="@{/runs/{id}/export(id=${run.id})}" class="btn-link">↓ Export as JSON</a>
 
-                    <!-- 1. Publish Button: Eligible & Unpublished -->
-                    <button th:if="${(publication == null and (isPublished == null or !isPublished) and (isPublishing == null or !isPublishing)) and (scorecard != null and scorecard.activeRequirementsCount > 0 and scorecard.publishEligible)}"
+                    <!-- 1a. Publish Button: Eligible & Unpublished & Allowed Publisher -->
+                    <button th:if="${(publication == null and (isPublished == null or !isPublished) and (isPublishing == null or !isPublishing)) and (scorecard != null and scorecard.activeRequirementsCount > 0 and scorecard.publishEligible) and (canPublish == null or canPublish)}"
                             type="button" id="open-publish-modal-btn" class="btn-publish-action"
                             th:data-tooltip="${'Eligible for Public Directory (Score ≥ ' + (minPublishScore != null ? minPublishScore : 50) + '%)'}">
                         <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"></path><path d="M12 12v9"></path><path d="m8 17 4 4 4-4"></path></svg>
                         <span>Publish to Directory</span>
                     </button>
+
+                    <!-- 1b. Publish Button: Eligible & Unpublished & Restricted User (Email Request) -->
+                    <a th:if="${(publication == null and (isPublished == null or !isPublished) and (isPublishing == null or !isPublishing)) and (scorecard != null and scorecard.activeRequirementsCount > 0 and scorecard.publishEligible) and (canPublish != null and !canPublish)}"
+                       id="request-publish-email-btn" class="btn-publish-restricted"
+                       th:href="${publishRequestMailtoUrl}"
+                       th:data-tooltip="${'Direct publishing is restricted to admins. Click to send an email (' + (supportEmail != null ? supportEmail : 'support@scimsandbox.net') + ') pre-filled with this Run ID.'}">
+                        <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="16" x="2" y="4" rx="2"></rect><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"></path></svg>
+                        <span>Publish to Directory</span>
+                    </a>
 
                     <!-- 2. Publish Button: Ineligible & Unpublished (Disabled with Tooltip) -->
                     <button th:if="${(publication == null and (isPublished == null or !isPublished) and (isPublishing == null or !isPublishing)) and (scorecard != null and scorecard.activeRequirementsCount > 0 and !scorecard.publishEligible)}"

@@ -142,15 +142,49 @@ class ValidationControllerChallengerTest {
         when(specCatalogService.getAllTestMappings()).thenReturn(Map.of());
         when(specCatalogService.getAllMappings()).thenReturn(List.of());
 
+        var adminToken = new TestingAuthenticationToken("admin@example.com", "n/a",
+                List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_ADMIN")));
+
         mockMvc.perform(get("/validator-ui/runs/{runId}", runId)
                         .contextPath("/validator-ui")
                         .requestAttr("_csrf", CSRF_TOKEN)
-                        .principal(new TestingAuthenticationToken(USER_EMAIL, "n/a")))
+                        .principal(adminToken))
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("Publish to Directory")))
                 .andExpect(content().string(containsString("id=\"open-publish-modal-btn\"")))
                 .andExpect(content().string(containsString("id=\"publish-modal-overlay\"")))
                 .andExpect(content().string(not(containsString("Published on scimsandbox.net Compliance Directory"))));
+    }
+
+    @Test
+    @DisplayName("detail: Non-admin user on eligible unpublished run sees mailto request button with Run ID and tooltip")
+    void detail_nonAdminEligibleRun_showsMailtoRequestButtonWithRunId() throws Exception {
+        UUID runId = UUID.randomUUID();
+        ValidationRunView runView = createSampleRunView(runId, "PASSED");
+        ValidationRun runEntity = createSampleRunEntity(runId, "PASSED");
+        ComplianceScorecardView scorecard = createScorecard(runId, 92, true, null);
+
+        when(validationRunService.getRun(eq(runId), anyString(), anyBoolean())).thenReturn(runView);
+        when(validationRunService.getTestResults(eq(runId), anyString(), anyBoolean())).thenReturn(List.of());
+        when(validationRunService.getRunEntity(eq(runId), anyString(), anyBoolean())).thenReturn(runEntity);
+        when(validationRunService.getRawTestResults(runId)).thenReturn(List.of());
+        when(validationRunService.getRawExchanges(runId)).thenReturn(List.of());
+        when(complianceScoreService.computeScorecard(any(), any(), any())).thenReturn(scorecard);
+        when(complianceScoreService.isEligibleForPublish(scorecard, runEntity)).thenReturn(true);
+        when(publicationRepository.findById(runId)).thenReturn(Optional.empty());
+        when(specCatalogService.getAllTestMappings()).thenReturn(Map.of());
+        when(specCatalogService.getAllMappings()).thenReturn(List.of());
+
+        mockMvc.perform(get("/validator-ui/runs/{runId}", runId)
+                        .contextPath("/validator-ui")
+                        .requestAttr("_csrf", CSRF_TOKEN)
+                        .principal(new TestingAuthenticationToken(USER_EMAIL, "n/a")))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("id=\"request-publish-email-btn\"")))
+                .andExpect(content().string(containsString("class=\"btn-publish-restricted\"")))
+                .andExpect(content().string(containsString("mailto:support@scimsandbox.net?subject=SCIM%20Directory%20Publication%20Request%20-%20Run%20" + runId)))
+                .andExpect(content().string(containsString("Validation%20Run%20ID%3A%20" + runId)))
+                .andExpect(content().string(not(containsString("id=\"open-publish-modal-btn\""))));
     }
 
     @Test
@@ -392,10 +426,13 @@ class ValidationControllerChallengerTest {
         when(specCatalogService.getAllTestMappings()).thenReturn(Map.of());
         when(specCatalogService.getAllMappings()).thenReturn(List.of());
 
+        var adminToken = new TestingAuthenticationToken("admin@example.com", "n/a",
+                List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_ADMIN")));
+
         mockMvc.perform(get("/validator-ui/runs/{runId}", runId)
                         .contextPath("/validator-ui")
                         .requestAttr("_csrf", CSRF_TOKEN)
-                        .principal(new TestingAuthenticationToken(USER_EMAIL, "n/a")))
+                        .principal(adminToken))
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("100%")))
                 .andExpect(content().string(containsString("gradient-emerald")))

@@ -124,6 +124,7 @@ class ValidationControllerPublishChallengerTest {
                 gitHubCompliancePublisherService,
                 publicationRepository
         );
+        ReflectionTestUtils.setField(controller, "allowedPublishers", "developer@example.com");
         userAuth = new TestingAuthenticationToken("developer@example.com", "n/a");
         attackerAuth = new TestingAuthenticationToken("attacker@example.com", "n/a");
     }

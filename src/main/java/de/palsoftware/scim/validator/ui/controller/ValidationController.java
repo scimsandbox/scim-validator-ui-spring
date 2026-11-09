@@ -78,6 +78,12 @@ public class ValidationController {
     private final GitHubCompliancePublisherService gitHubCompliancePublisherService;
     private final ValidationRunPublicationRepository publicationRepository;
 
+    @Value("${app.compliance.allowed-publishers:}")
+    private String allowedPublishers = "";
+
+    @Value("${app.compliance.support-email:support@scimsandbox.net}")
+    private String supportEmail = "support@scimsandbox.net";
+
     public ValidationController(ValidationRunService validationRunService,
             MgmtUserService mgmtUserService,
             ValidationProgressTracker validationProgressTracker,
@@ -300,6 +306,11 @@ public class ValidationController {
             model.addAttribute("minPublishScore", complianceScoreService != null
                     ? complianceScoreService.getMinPublishScore()
                     : ComplianceScoreService.DEFAULT_MIN_PUBLISH_SCORE);
+            boolean canPublish = isPublisherAllowed(authentication);
+            model.addAttribute("canPublish", canPublish);
+            model.addAttribute("supportEmail", getEffectiveSupportEmail());
+            model.addAttribute("publishRequestMailtoUrl",
+                    buildPublishRequestMailtoUrl(runId, runView, scorecard, userEmail));
 
             ValidationRunPublication rawPublication = null;
             if (runEntity != null && runEntity.getPublication() != null) {
@@ -393,6 +404,13 @@ public class ValidationController {
         } catch (ResponseStatusException ex) {
             redirectAttributes.addFlashAttribute("errorMessage", ex.getReason());
             return "redirect:/";
+        }
+
+        if (!isPublisherAllowed(authentication)) {
+            redirectAttributes.addFlashAttribute("errorMessage",
+                    "Direct directory publishing is restricted to administrators. Please request publication via "
+                            + getEffectiveSupportEmail() + " with Run ID " + runId + ".");
+            return "redirect:/runs/" + runId;
         }
 
         if (runEntity.isPublished()) {
@@ -707,5 +725,75 @@ public class ValidationController {
         }
         String fallback = AuthenticatedUser.displayName(authentication);
         return mgmtUserService.resolveDisplayName(AuthenticatedUser.email(authentication), fallback);
+    }
+
+    public boolean isPublisherAllowed(Authentication authentication) {
+        if (isAdmin(authentication)) {
+            return true;
+        }
+        String email = actorEmail(authentication);
+        if (email == null || email.isBlank() || allowedPublishers == null || allowedPublishers.isBlank()) {
+            return false;
+        }
+        String normalizedEmail = email.trim().toLowerCase(Locale.ROOT);
+        for (String rawPattern : allowedPublishers.split(",")) {
+            String pattern = rawPattern.trim().toLowerCase(Locale.ROOT);
+            if (pattern.isEmpty()) {
+                continue;
+            }
+            if ("*".equals(pattern) || pattern.equals(normalizedEmail)) {
+                return true;
+            }
+            if (pattern.startsWith("*@") && pattern.length() > 2) {
+                String domainSuffix = pattern.substring(1);
+                if (normalizedEmail.endsWith(domainSuffix)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private String getEffectiveSupportEmail() {
+        return (supportEmail != null && !supportEmail.isBlank())
+                ? supportEmail.trim()
+                : "support@scimsandbox.net";
+    }
+
+    String buildPublishRequestMailtoUrl(UUID runId, ValidationRunView runView, ComplianceScorecardView scorecard, String userEmail) {
+        String recipient = getEffectiveSupportEmail();
+        String subject = "SCIM Directory Publication Request - Run " + runId;
+        String runName = (runView != null && runView.name() != null && !runView.name().isBlank()) ? runView.name() : "N/A";
+        String scoreSummary = scorecard != null
+                ? (scorecard.coreScore() + "% (" + scorecard.supportedCapabilitiesCount() + "/" + scorecard.totalCapabilitiesCount() + " capabilities)")
+                : "N/A";
+        String senderEmail = (userEmail != null && !userEmail.isBlank()) ? userEmail : "N/A";
+
+        String body = "Hello SCIM Sandbox Team,\n\n"
+                + "I would like to request publication of my SCIM 2.0 compliance validation run to the public SCIM Compliance Directory:\n\n"
+                + "- Validation Run ID: " + runId + "\n"
+                + "- Run Name: " + runName + "\n"
+                + "- Core Conformance Score: " + scoreSummary + "\n"
+                + "- Submitter Account: " + senderEmail + "\n\n"
+                + "Product Details for Directory Listing:\n"
+                + "- Product Name: \n"
+                + "- Product Version: \n"
+                + "- Vendor / Organization: \n"
+                + "- Project / Homepage URL: \n"
+                + "- License Type (e.g. Apache-2.0, MIT, Commercial): \n\n"
+                + "Thank you!";
+
+        return "mailto:" + recipient
+                + "?subject=" + urlEncodeMailtoParam(subject)
+                + "&body=" + urlEncodeMailtoParam(body);
+    }
+
+    private static String urlEncodeMailtoParam(String value) {
+        if (value == null) {
+            return "";
+        }
+        return java.net.URLEncoder.encode(value, java.nio.charset.StandardCharsets.UTF_8)
+                .replace("+", "%20")
+                .replace("%0A", "%0D%0A");
     }
 }
