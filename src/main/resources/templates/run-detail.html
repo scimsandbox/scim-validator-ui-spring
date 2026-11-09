@@ -1326,6 +1326,55 @@
             <span>Publishing compliance report to the Compliance Directory...</span>
         </div>
 
+        <div class="card" th:if="${run != null}">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
+                <h1 style="margin: 0;">Compliance Run Result</h1>
+                <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                    <a th:href="@{/}" class="btn-link">← Back to compliance runs</a>
+                    <a th:href="@{/runs/{id}/export(id=${run.id})}" class="btn-link">↓ Export as JSON</a>
+
+                    <!-- 1. Publish Button: Eligible & Unpublished -->
+                    <button th:if="${(publication == null and (isPublished == null or !isPublished) and (isPublishing == null or !isPublishing)) and (scorecard != null and scorecard.activeRequirementsCount > 0 and scorecard.publishEligible)}"
+                            type="button" id="open-publish-modal-btn" class="btn-publish-action"
+                            th:data-tooltip="${'Eligible for Public Directory (Score ≥ ' + (minPublishScore != null ? minPublishScore : 50) + '%)'}">
+                        <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"></path><path d="M12 12v9"></path><path d="m8 17 4 4 4-4"></path></svg>
+                        <span>Publish to Directory</span>
+                    </button>
+
+                    <!-- 2. Publish Button: Ineligible & Unpublished (Disabled with Tooltip) -->
+                    <button th:if="${(publication == null and (isPublished == null or !isPublished) and (isPublishing == null or !isPublishing)) and (scorecard != null and scorecard.activeRequirementsCount > 0 and !scorecard.publishEligible)}"
+                            type="button" class="btn-publish-disabled" disabled th:data-tooltip="${scorecard.publishIneligibilityReason}">
+                        <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                        <span>Publish to Directory</span>
+                    </button>
+
+                    <!-- 2b. Publish Button: Publishing in Progress (Disabled) -->
+                    <button th:if="${isPublishing != null and isPublishing}"
+                            type="button" class="btn-publish-disabled" disabled data-tooltip="A publication for this validation run is currently in progress.">
+                        <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"></path><path d="M12 12v9"></path><path d="m8 17 4 4 4-4"></path></svg>
+                        <span>Publishing...</span>
+                    </button>
+
+                    <!-- 3. Link to Public Report when already Published -->
+                    <a th:if="${publication != null or (isPublished != null and isPublished)}"
+                       th:href="${publication != null and publication.reportUrl != null ? publication.reportUrl : ('https://scimsandbox.net/compliance/?run=' + run.id)}"
+                       target="_blank" rel="noopener noreferrer" class="btn-published-link">
+                        <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><path d="m9 12 2 2 4-4"></path></svg>
+                        <span>View on Directory ↗</span>
+                    </a>
+                </div>
+            </div>
+            <div class="meta">
+                <div><span class="key">ID</span> <span class="val" th:text="${run.id}">id</span></div>
+                <div><span class="key">Name</span> <span class="val" th:text="${run.name}">name</span></div>
+                <div><span class="key">Owner</span> <span class="val" th:text="${run.createdByEmail}">owner</span></div>
+                <div><span class="key">Target URL</span> <span class="val" th:text="${run.targetUrl}">url</span></div>
+                <div><span class="key">Date</span> <span class="val" th:text="${#temporals.format(run.executedAt, 'yyyy-MM-dd HH:mm:ssXXX')}">date</span></div>
+                <div><span class="key">Status</span> <span class="status-badge" th:text="${run.status}" th:classappend="${'status-' + #strings.toLowerCase(run.status)}">status</span></div>
+                <div><span class="key">Result</span> <span class="val" th:text="${run.passedTests + ' passed / ' + run.failedTests + ' failed' + (run.status != 'ERROR' and run.totalTests > run.passedTests + run.failedTests ? ' / ' + (run.totalTests - run.passedTests - run.failedTests) + ' skipped' : '') + ' / ' + run.totalTests + ' total'}">summary</span></div>
+            </div>
+        </div>
+
         <!-- Published on scimsandbox.net Banner -->
         <div th:if="${publication != null or (isPublished != null and isPublished)}" class="card published-banner-card">
             <div class="published-banner-header">
@@ -1425,55 +1474,6 @@
                         <span th:text="${'Directory Publication Criteria: (1) Run status must be completed (PASSED, PARTIAL, or FAILED), and (2) Core RFC Conformance score must be ≥ ' + (minPublishScore != null ? minPublishScore : 50) + '%.'}">Directory Publication Criteria: (1) Run status must be completed (PASSED, PARTIAL, or FAILED), and (2) Core RFC Conformance score must be &ge; 50%.</span>
                     </div>
                 </div>
-            </div>
-        </div>
-
-        <div class="card" th:if="${run != null}">
-            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
-                <h1 style="margin: 0;">Compliance Run Result</h1>
-                <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-                    <a th:href="@{/}" class="btn-link">← Back to compliance runs</a>
-                    <a th:href="@{/runs/{id}/export(id=${run.id})}" class="btn-link">↓ Export as JSON</a>
-
-                    <!-- 1. Publish Button: Eligible & Unpublished -->
-                    <button th:if="${(publication == null and (isPublished == null or !isPublished) and (isPublishing == null or !isPublishing)) and (scorecard != null and scorecard.activeRequirementsCount > 0 and scorecard.publishEligible)}"
-                            type="button" id="open-publish-modal-btn" class="btn-publish-action"
-                            th:data-tooltip="${'Eligible for Public Directory (Score ≥ ' + (minPublishScore != null ? minPublishScore : 50) + '%)'}">
-                        <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"></path><path d="M12 12v9"></path><path d="m8 17 4 4 4-4"></path></svg>
-                        <span>Publish to Directory</span>
-                    </button>
-
-                    <!-- 2. Publish Button: Ineligible & Unpublished (Disabled with Tooltip) -->
-                    <button th:if="${(publication == null and (isPublished == null or !isPublished) and (isPublishing == null or !isPublishing)) and (scorecard != null and scorecard.activeRequirementsCount > 0 and !scorecard.publishEligible)}"
-                            type="button" class="btn-publish-disabled" disabled th:data-tooltip="${scorecard.publishIneligibilityReason}">
-                        <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
-                        <span>Publish to Directory</span>
-                    </button>
-
-                    <!-- 2b. Publish Button: Publishing in Progress (Disabled) -->
-                    <button th:if="${isPublishing != null and isPublishing}"
-                            type="button" class="btn-publish-disabled" disabled data-tooltip="A publication for this validation run is currently in progress.">
-                        <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"></path><path d="M12 12v9"></path><path d="m8 17 4 4 4-4"></path></svg>
-                        <span>Publishing...</span>
-                    </button>
-
-                    <!-- 3. Link to Public Report when already Published -->
-                    <a th:if="${publication != null or (isPublished != null and isPublished)}"
-                       th:href="${publication != null and publication.reportUrl != null ? publication.reportUrl : ('https://scimsandbox.net/compliance/?run=' + run.id)}"
-                       target="_blank" rel="noopener noreferrer" class="btn-published-link">
-                        <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><path d="m9 12 2 2 4-4"></path></svg>
-                        <span>View on Directory ↗</span>
-                    </a>
-                </div>
-            </div>
-            <div class="meta">
-                <div><span class="key">ID</span> <span class="val" th:text="${run.id}">id</span></div>
-                <div><span class="key">Name</span> <span class="val" th:text="${run.name}">name</span></div>
-                <div><span class="key">Owner</span> <span class="val" th:text="${run.createdByEmail}">owner</span></div>
-                <div><span class="key">Target URL</span> <span class="val" th:text="${run.targetUrl}">url</span></div>
-                <div><span class="key">Date</span> <span class="val" th:text="${#temporals.format(run.executedAt, 'yyyy-MM-dd HH:mm:ssXXX')}">date</span></div>
-                <div><span class="key">Status</span> <span class="status-badge" th:text="${run.status}" th:classappend="${'status-' + #strings.toLowerCase(run.status)}">status</span></div>
-                <div><span class="key">Result</span> <span class="val" th:text="${run.passedTests + ' passed / ' + run.failedTests + ' failed' + (run.status != 'ERROR' and run.totalTests > run.passedTests + run.failedTests ? ' / ' + (run.totalTests - run.passedTests - run.failedTests) + ' skipped' : '') + ' / ' + run.totalTests + ' total'}">summary</span></div>
             </div>
         </div>
 
