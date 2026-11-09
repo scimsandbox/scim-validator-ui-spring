@@ -230,4 +230,72 @@ class ValidationControllerTemplateTest {
                                 .andExpect(content().string(org.hamcrest.Matchers.containsString("rel=\"noopener noreferrer\"")))
                                 .andExpect(content().string(org.hamcrest.Matchers.containsString("normative-tag optional")));
         }
+
+        @Test
+        void detailHidesScorecardAndMatrixForLegacyRunsWithoutActiveRequirements() throws Exception {
+                UUID runId = UUID.randomUUID();
+                ValidationRun runEntity = new ValidationRun();
+                runEntity.setName("Legacy Pre-Compliance Run");
+                runEntity.setStatus("PASSED");
+
+                when(validationRunService.getRun(eq(runId), anyString(), anyBoolean()))
+                                .thenReturn(new ValidationRunView(
+                                                runId,
+                                                "Legacy Pre-Compliance Run",
+                                                "https://example.test/scim/v2",
+                                                OffsetDateTime.parse("2026-01-10T12:00:00Z"),
+                                                "PASSED",
+                                                "user@example.com",
+                                                42,
+                                                42,
+                                                0));
+                when(validationRunService.getTestResults(eq(runId), anyString(), anyBoolean())).thenReturn(List.of());
+                when(validationRunService.getRunEntity(eq(runId), anyString(), anyBoolean())).thenReturn(runEntity);
+                when(validationRunService.getRawTestResults(eq(runId))).thenReturn(List.of());
+                when(validationRunService.getRawExchanges(eq(runId))).thenReturn(List.of());
+
+                NormativeBreakdown emptyMust = new NormativeBreakdown("MUST", 3, 0, 0, 0, 0, 0.0, 0.0, 0);
+                NormativeBreakdown emptyShould = new NormativeBreakdown("SHOULD", 2, 0, 0, 0, 0, 0.0, 0.0, 0);
+                NormativeBreakdown emptyOptional = new NormativeBreakdown("OPTIONAL", 1, 0, 0, 0, 0, 0.0, 0.0, 0);
+                ComplianceScorecardView legacyScorecard = new ComplianceScorecardView(
+                                runId,
+                                "Legacy Pre-Compliance Run",
+                                "https://example.test/scim/v2",
+                                OffsetDateTime.parse("2026-01-10T12:00:00Z"),
+                                "PASSED",
+                                0,
+                                ColourGradient.RED,
+                                false,
+                                "Core RFC Conformance score (0%) is below the minimum 50% publishing threshold.",
+                                emptyMust,
+                                emptyShould,
+                                emptyOptional,
+                                List.of(),
+                                0,
+                                0,
+                                10,
+                                550,
+                                0,
+                                0,
+                                550,
+                                java.util.Map.of(),
+                                List.of());
+                when(complianceScoreService.computeScorecard(eq(runEntity), eq(List.of()), eq(List.of())))
+                                .thenReturn(legacyScorecard);
+
+                mockMvc.perform(get("/validator-ui/runs/{runId}", runId)
+                                .contextPath("/validator-ui")
+                                .requestAttr("_csrf", CSRF_TOKEN)
+                                .principal(new TestingAuthenticationToken("user@example.com", "n/a")))
+                                .andExpect(status().isOk())
+                                .andExpect(content().string(org.hamcrest.Matchers.containsString("Legacy Pre-Compliance Run")))
+                                .andExpect(content().string(org.hamcrest.Matchers.not(
+                                                org.hamcrest.Matchers.containsString("SCIM 2.0 Compliance Scorecard"))))
+                                .andExpect(content().string(org.hamcrest.Matchers.not(
+                                                org.hamcrest.Matchers.containsString("RFC Requirement Traceability Matrix"))))
+                                .andExpect(content().string(org.hamcrest.Matchers.not(
+                                                org.hamcrest.Matchers.containsString("Not Eligible for Directory Publication"))))
+                                .andExpect(content().string(org.hamcrest.Matchers.not(
+                                                org.hamcrest.Matchers.containsString("Publish to Directory"))));
+        }
 }
