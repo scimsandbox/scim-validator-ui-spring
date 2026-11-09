@@ -7,6 +7,7 @@
     <link rel="icon" type="image/svg+xml" th:href="@{/favicon.svg}" href="/favicon.svg">
     <style>
         :root {
+            color-scheme: dark;
             --bg: #0b1220;
             --card-bg: #1e293b;
             --card-subtle: #0f172a;
@@ -213,6 +214,7 @@
             animation: spin 0.8s linear infinite;
             flex-shrink: 0;
         }
+        @keyframes spin { to { transform: rotate(360deg); } }
 
         pre {
             white-space: pre-wrap;
@@ -563,14 +565,6 @@
             line-height: 1;
             letter-spacing: -0.03em;
         }
-        .score-badge-label {
-            font-size: 10px;
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-            opacity: 0.95;
-            margin-top: 3px;
-            font-weight: 700;
-        }
         .score-hero-details { flex: 1; min-width: 260px; }
         .score-hero-title { font-size: 1.35rem; font-weight: 700; color: #f8fafc; margin: 0 0 6px 0; }
         .score-hero-subtitle { font-size: 13.5px; color: #94a3b8; margin: 0 0 14px 0; }
@@ -815,12 +809,15 @@
         .filter-btn:hover { color: #f8fafc; background: #1e293b; }
         .filter-btn.active { background: #2563eb; color: #ffffff; border-color: #3b82f6; }
 
+        .matrix-table th, .matrix-table td {
+            padding: 10px 12px;
+        }
         .matrix-table tr.highlight-row td {
             background: rgba(59, 130, 246, 0.28) !important;
             transition: background 0.6s ease;
         }
         .req-id-cell { font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 12px; color: #60a5fa; white-space: nowrap; }
-        .req-title-cell { font-size: 13px; line-height: 1.45; color: #e2e8f0; max-width: 460px; }
+        .req-title-cell { font-size: 13px; line-height: 1.45; color: #e2e8f0; width: 100%; }
         .req-rfc-section { font-size: 11px; color: #94a3b8; margin-top: 2px; }
         .req-rfc-link { color: #94a3b8; text-decoration: none; display: inline-flex; align-items: center; gap: 3px; transition: color 0.15s ease; }
         .req-rfc-link:hover { color: #38bdf8; text-decoration: underline; }
@@ -848,6 +845,7 @@
             padding: 2px 6px;
             font-size: 11px;
             font-family: 'JetBrains Mono', monospace;
+            white-space: nowrap;
             text-decoration: none;
             transition: all 0.15s ease;
         }
@@ -911,6 +909,29 @@
             border: 1px solid #334155;
             cursor: not-allowed;
             opacity: 0.75;
+        }
+        .btn-publish-restricted {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            background: #1e293b;
+            color: #94a3b8;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            border: 1px solid #334155;
+            cursor: pointer;
+            opacity: 0.85;
+            text-decoration: none;
+            transition: all 0.15s ease;
+        }
+        .btn-publish-restricted:hover {
+            background: #273549;
+            color: #f8fafc;
+            border-color: #475569;
+            opacity: 1;
+            text-decoration: none;
         }
         .btn-published-link {
             display: inline-flex;
@@ -1040,11 +1061,13 @@
         }
         .snippet-code {
             flex: 1;
+            min-width: 0;
             font-family: 'JetBrains Mono', monospace;
             font-size: 12px;
             color: #38bdf8;
             white-space: nowrap;
-            overflow-x: auto;
+            overflow-x: hidden;
+            text-overflow: ellipsis;
             background: transparent;
             padding: 4px;
         }
@@ -1326,6 +1349,64 @@
             <span>Publishing compliance report to the Compliance Directory...</span>
         </div>
 
+        <div class="card" th:if="${run != null}">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
+                <h1 style="margin: 0;">Compliance Run Result</h1>
+                <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                    <a th:href="@{/}" class="btn-link">← Back to compliance runs</a>
+                    <a th:href="@{/runs/{id}/export(id=${run.id})}" class="btn-link">↓ Export as JSON</a>
+
+                    <!-- 1a. Publish Button: Eligible & Unpublished & Allowed Publisher -->
+                    <button th:if="${(publication == null and (isPublished == null or !isPublished) and (isPublishing == null or !isPublishing)) and (scorecard != null and scorecard.activeRequirementsCount > 0 and scorecard.publishEligible) and (canPublish == null or canPublish)}"
+                            type="button" id="open-publish-modal-btn" class="btn-publish-action"
+                            th:data-tooltip="${'Eligible for Public Directory (Score ≥ ' + (minPublishScore != null ? minPublishScore : 50) + '%)'}">
+                        <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"></path><path d="M12 12v9"></path><path d="m8 17 4 4 4-4"></path></svg>
+                        <span>Publish to Directory</span>
+                    </button>
+
+                    <!-- 1b. Publish Button: Eligible & Unpublished & Restricted User (Email Request) -->
+                    <a th:if="${(publication == null and (isPublished == null or !isPublished) and (isPublishing == null or !isPublishing)) and (scorecard != null and scorecard.activeRequirementsCount > 0 and scorecard.publishEligible) and (canPublish != null and !canPublish)}"
+                       id="request-publish-email-btn" class="btn-publish-restricted"
+                       th:href="${publishRequestMailtoUrl}"
+                       th:data-tooltip="${'Direct publishing is restricted to admins. Click to send an email (' + (supportEmail != null ? supportEmail : 'support@scimsandbox.net') + ') pre-filled with this Run ID.'}">
+                        <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="16" x="2" y="4" rx="2"></rect><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"></path></svg>
+                        <span>Publish to Directory</span>
+                    </a>
+
+                    <!-- 2. Publish Button: Ineligible & Unpublished (Disabled with Tooltip) -->
+                    <button th:if="${(publication == null and (isPublished == null or !isPublished) and (isPublishing == null or !isPublishing)) and (scorecard != null and scorecard.activeRequirementsCount > 0 and !scorecard.publishEligible)}"
+                            type="button" class="btn-publish-disabled" disabled th:data-tooltip="${scorecard.publishIneligibilityReason}">
+                        <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                        <span>Publish to Directory</span>
+                    </button>
+
+                    <!-- 2b. Publish Button: Publishing in Progress (Disabled) -->
+                    <button th:if="${isPublishing != null and isPublishing}"
+                            type="button" class="btn-publish-disabled" disabled data-tooltip="A publication for this validation run is currently in progress.">
+                        <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"></path><path d="M12 12v9"></path><path d="m8 17 4 4 4-4"></path></svg>
+                        <span>Publishing...</span>
+                    </button>
+
+                    <!-- 3. Link to Public Report when already Published -->
+                    <a th:if="${publication != null or (isPublished != null and isPublished)}"
+                       th:href="${publication != null and publication.reportUrl != null ? publication.reportUrl : ('https://scimsandbox.net/compliance/?run=' + run.id)}"
+                       target="_blank" rel="noopener noreferrer" class="btn-published-link">
+                        <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><path d="m9 12 2 2 4-4"></path></svg>
+                        <span>View on Directory ↗</span>
+                    </a>
+                </div>
+            </div>
+            <div class="meta">
+                <div><span class="key">ID</span> <span class="val" th:text="${run.id}">id</span></div>
+                <div><span class="key">Name</span> <span class="val" th:text="${run.name}">name</span></div>
+                <div><span class="key">Owner</span> <span class="val" th:text="${run.createdByEmail}">owner</span></div>
+                <div><span class="key">Target URL</span> <span class="val" th:text="${run.targetUrl}">url</span></div>
+                <div><span class="key">Date</span> <span class="val" th:text="${#temporals.format(run.executedAt, 'yyyy-MM-dd HH:mm:ssXXX')}">date</span></div>
+                <div><span class="key">Status</span> <span class="status-badge" th:text="${run.status}" th:classappend="${'status-' + #strings.toLowerCase(run.status)}">status</span></div>
+                <div><span class="key">Result</span> <span class="val" th:text="${run.passedTests + ' passed / ' + run.failedTests + ' failed' + (run.status != 'ERROR' and run.totalTests > run.passedTests + run.failedTests ? ' / ' + (run.totalTests - run.passedTests - run.failedTests) + ' skipped' : '') + ' / ' + run.totalTests + ' total'}">summary</span></div>
+            </div>
+        </div>
+
         <!-- Published on scimsandbox.net Banner -->
         <div th:if="${publication != null or (isPublished != null and isPublished)}" class="card published-banner-card">
             <div class="published-banner-header">
@@ -1387,9 +1468,13 @@
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="9" y1="21" x2="9" y2="9"></line></svg>
                         <strong style="font-size: 13px; color: #f8fafc;">Embed Compliance Badge in README.md</strong>
                     </div>
-                    <div class="badge-preview">
-                        <span style="font-size: 11px; color: #94a3b8; text-transform: uppercase; font-weight: 700; margin-right: 6px;">Live Badge:</span>
-                        <img th:src="${publication.badgeUrl}" alt="SCIM 2.0 Compliance" style="height: 20px; vertical-align: middle;">
+                    <div class="badge-preview" style="display: flex; align-items: center; gap: 6px;">
+                        <span style="font-size: 11px; color: #94a3b8; text-transform: uppercase; font-weight: 700;">Live Badge:</span>
+                        <img id="published-live-badge" th:src="${publication.badgeUrl}" th:attr="data-badge-url=${publication.badgeUrl}" alt="SCIM 2.0 Compliance" style="height: 20px; vertical-align: middle;">
+                        <span id="published-badge-deploying" style="display: none; align-items: center; gap: 6px; font-size: 11.5px; color: #94a3b8; background: #1e293b; border: 1px solid #334155; border-radius: 4px; padding: 2px 8px;">
+                            <span class="mini-spinner" style="width: 10px; height: 10px; border-width: 1.5px;"></span>
+                            <span>Deploying to CDN…</span>
+                        </span>
                     </div>
                 </div>
 
@@ -1404,7 +1489,7 @@
         </div>
 
         <!-- Ineligibility Banner -->
-        <div th:if="${(publication == null and (isPublished == null or !isPublished) and (isPublishing == null or !isPublishing)) and (scorecard != null and !scorecard.publishEligible)}" class="card ineligibility-banner-card">
+        <div th:if="${(publication == null and (isPublished == null or !isPublished) and (isPublishing == null or !isPublishing)) and (scorecard != null and scorecard.activeRequirementsCount > 0 and !scorecard.publishEligible)}" class="card ineligibility-banner-card">
             <div style="display: flex; align-items: flex-start; gap: 14px;">
                 <div class="ineligibility-icon-circle">
                     <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
@@ -1424,56 +1509,8 @@
             </div>
         </div>
 
-        <div class="card" th:if="${run != null}">
-            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; flex-wrap: wrap; gap: 12px;">
-                <h1 style="margin: 0;">Compliance Run Result</h1>
-                <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-                    <a th:href="@{/}" class="btn-link">← Back to compliance runs</a>
-                    <a th:href="@{/runs/{id}/export(id=${run.id})}" class="btn-link">↓ Export as JSON</a>
-
-                    <!-- 1. Publish Button: Eligible & Unpublished -->
-                    <button th:if="${(publication == null and (isPublished == null or !isPublished) and (isPublishing == null or !isPublishing)) and (scorecard != null and scorecard.publishEligible)}"
-                            type="button" id="open-publish-modal-btn" class="btn-publish-action">
-                        <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"></path><path d="M12 12v9"></path><path d="m8 17 4 4 4-4"></path></svg>
-                        <span>Publish to Directory</span>
-                    </button>
-
-                    <!-- 2. Publish Button: Ineligible & Unpublished (Disabled with Tooltip) -->
-                    <button th:if="${(publication == null and (isPublished == null or !isPublished) and (isPublishing == null or !isPublishing)) and (scorecard != null and !scorecard.publishEligible)}"
-                            type="button" class="btn-publish-disabled" disabled th:data-tooltip="${scorecard.publishIneligibilityReason}">
-                        <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
-                        <span>Publish to Directory</span>
-                    </button>
-
-                    <!-- 2b. Publish Button: Publishing in Progress (Disabled) -->
-                    <button th:if="${isPublishing != null and isPublishing}"
-                            type="button" class="btn-publish-disabled" disabled data-tooltip="A publication for this validation run is currently in progress.">
-                        <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"></path><path d="M12 12v9"></path><path d="m8 17 4 4 4-4"></path></svg>
-                        <span>Publishing...</span>
-                    </button>
-
-                    <!-- 3. Link to Public Report when already Published -->
-                    <a th:if="${publication != null or (isPublished != null and isPublished)}"
-                       th:href="${publication != null and publication.reportUrl != null ? publication.reportUrl : ('https://scimsandbox.net/compliance/?run=' + run.id)}"
-                       target="_blank" rel="noopener noreferrer" class="btn-published-link">
-                        <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><path d="m9 12 2 2 4-4"></path></svg>
-                        <span>View on Directory ↗</span>
-                    </a>
-                </div>
-            </div>
-            <div class="meta">
-                <div><span class="key">ID</span> <span class="val" th:text="${run.id}">id</span></div>
-                <div><span class="key">Name</span> <span class="val" th:text="${run.name}">name</span></div>
-                <div><span class="key">Owner</span> <span class="val" th:text="${run.createdByEmail}">owner</span></div>
-                <div><span class="key">Target URL</span> <span class="val" th:text="${run.targetUrl}">url</span></div>
-                <div><span class="key">Date</span> <span class="val" th:text="${#temporals.format(run.executedAt, 'yyyy-MM-dd HH:mm:ssXXX')}">date</span></div>
-                <div><span class="key">Status</span> <span class="status-badge" th:text="${run.status}" th:classappend="${'status-' + #strings.toLowerCase(run.status)}">status</span></div>
-                <div><span class="key">Result</span> <span class="val" th:text="${run.passedTests + ' passed / ' + run.failedTests + ' failed' + (run.status != 'ERROR' and run.totalTests > run.passedTests + run.failedTests ? ' / ' + (run.totalTests - run.passedTests - run.failedTests) + ' skipped' : '') + ' / ' + run.totalTests + ' total'}">summary</span></div>
-            </div>
-        </div>
-
         <!-- Compliance Scorecard Card -->
-        <div class="card scorecard-card" th:if="${scorecard != null}">
+        <div class="card scorecard-card" th:if="${scorecard != null and scorecard.activeRequirementsCount > 0}">
             <!-- Hero Conformance Score Header -->
             <div class="scorecard-hero"
                  th:classappend="${scorecard.colourGradient != null ? 'glow-' + #strings.toLowerCase(#strings.replace(scorecard.colourGradient.name(), '_', '-')) : ''}">
@@ -1482,7 +1519,6 @@
                      th:classappend="${scorecard.colourGradient != null ? 'gradient-' + #strings.toLowerCase(#strings.replace(scorecard.colourGradient.name(), '_', '-')) : 'gradient-emerald'}"
                      th:style="${scorecard.colourGradient != null ? 'background: ' + scorecard.colourGradient.cssLinearGradient() : ''}">
                     <span class="score-badge-number" th:text="${scorecard.coreScore + '%'}">100%</span>
-                    <span class="score-badge-label" th:text="${scorecard.conformanceTierLabel != null ? scorecard.conformanceTierLabel : (scorecard.colourGradient != null ? scorecard.colourGradient.getLabel() : 'Score')}">Certified RFC Compliant</span>
                 </div>
 
                 <!-- Hero Details & Metadata -->
@@ -1514,19 +1550,6 @@
                             <div class="score-stat-val" th:text="${scorecard.formattedNormativePoints}">431 / 431</div>
                             <div class="score-stat-key">Normative Points</div>
                         </div>
-                    </div>
-
-                    <!-- Publish Eligibility Status -->
-                    <div style="margin-top: 12px;">
-                        <span th:if="${scorecard.publishEligible}" class="eligibility-pill eligible">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
-                            <span th:text="${'Eligible for Public Directory (Score ≥ ' + (minPublishScore != null ? minPublishScore : 50) + '%)'}">Eligible for Public Directory (Score ≥ 50%)</span>
-                        </span>
-                        <span th:unless="${scorecard.publishEligible}" class="eligibility-pill ineligible"
-                              th:title="${scorecard.publishIneligibilityReason}">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                            <span th:text="${scorecard.publishIneligibilityReason != null ? scorecard.publishIneligibilityReason : 'Ineligible for Public Directory'}">Ineligible for Public Directory</span>
-                        </span>
                     </div>
                 </div>
             </div>
@@ -1696,17 +1719,16 @@
                     </div>
 
                     <!-- Traceability Matrix Table -->
-                    <div class="table-responsive" style="max-height: 600px; overflow-y: auto;">
+                    <div class="table-responsive" style="max-height: 600px; overflow-y: auto; overflow-x: hidden;">
                         <table class="overview-table matrix-table" id="rfcMatrixTable">
                             <thead>
                             <tr>
-                                <th style="min-width: 170px;">Requirement ID</th>
-                                <th style="min-width: 320px;">Specification Requirement</th>
-                                <th style="min-width: 90px;">Level</th>
-                                <th style="min-width: 110px;">Capability</th>
-                                <th style="min-width: 110px;">Status</th>
-                                <th style="min-width: 90px;">Weight</th>
-                                <th style="min-width: 140px;">Mapped Tests</th>
+                                <th>Requirement ID</th>
+                                <th>Specification Requirement</th>
+                                <th>Level</th>
+                                <th>Capability</th>
+                                <th>Status</th>
+                                <th>Mapped Tests</th>
                             </tr>
                             </thead>
                             <tbody>
@@ -1752,9 +1774,6 @@
                                     <span th:if="${req.status == 'FAILED'}" class="status-badge status-failed">FAILED</span>
                                     <span th:if="${req.status == 'UNTESTED'}" class="status-badge status-aborted" style="background: rgba(148, 163, 184, 0.15); color: #94a3b8; border-color: rgba(148, 163, 184, 0.3);">UNTESTED</span>
                                     <span th:if="${req.status == 'EXCLUDED_CAPABILITY'}" class="status-badge" style="background: rgba(100, 116, 139, 0.15); color: #94a3b8; border-color: rgba(100, 116, 139, 0.3);">EXCLUDED</span>
-                                </td>
-                                <td style="font-family: 'JetBrains Mono', monospace; font-size: 12px;">
-                                    <span th:text="${#numbers.formatDecimal(req.earnedWeight, 1, 1) + ' / ' + req.weight + ' pts'}">3.0 / 3 pts</span>
                                 </td>
                                 <td>
                                     <div th:if="${req.mappedTestIds != null and !#lists.isEmpty(req.mappedTestIds)}" class="test-id-pills">
@@ -1941,7 +1960,7 @@
                         <div class="form-group full-width checkbox-group">
                             <label class="checkbox-label" for="publish-show-submitter">
                                 <input type="checkbox" id="publish-show-submitter" name="showSubmitter" value="true" th:checked="${publishForm != null and publishForm.showSubmitter}">
-                                <span>Show my email (<strong th:text="${currentUser}">user@example.com</strong>) on the directory report as the verified submitter</span>
+                                <span>Show submitter email (<strong th:text="${run != null and run.createdByEmail != null ? run.createdByEmail : currentUser}">user@example.com</strong>) on the directory report as the verified submitter</span>
                             </label>
                             <span class="field-hint" style="margin-left: 26px;">If unchecked, submission is attributed anonymously as "Community Verified".</span>
                         </div>
@@ -2146,6 +2165,53 @@
                     copyTextToClipboard(snippetEl.textContent.trim(), copyBtn);
                 }
             });
+        }
+
+        var badgeImg = document.getElementById('published-live-badge');
+        var badgeDeploying = document.getElementById('published-badge-deploying');
+        if (badgeImg && badgeDeploying) {
+            var baseBadgeUrl = badgeImg.getAttribute('data-badge-url') || badgeImg.getAttribute('src');
+            var badgeRetryCount = 0;
+            var maxBadgeRetries = 20;
+            var badgeRetryTimer = null;
+
+            function onBadgeLoad() {
+                if (badgeImg.naturalWidth > 0) {
+                    if (badgeRetryTimer) {
+                        clearTimeout(badgeRetryTimer);
+                        badgeRetryTimer = null;
+                    }
+                    badgeDeploying.style.display = 'none';
+                    badgeImg.style.display = 'inline-block';
+                }
+            }
+
+            function scheduleBadgeRetry() {
+                if (!baseBadgeUrl) return;
+                badgeImg.style.display = 'none';
+                badgeDeploying.style.display = 'inline-flex';
+                if (badgeRetryCount >= maxBadgeRetries) {
+                    badgeDeploying.textContent = 'CDN deploy pending';
+                    return;
+                }
+                badgeRetryCount++;
+                if (badgeRetryTimer) clearTimeout(badgeRetryTimer);
+                badgeRetryTimer = setTimeout(function() {
+                    var sep = baseBadgeUrl.indexOf('?') === -1 ? '?' : '&';
+                    badgeImg.src = baseBadgeUrl + sep + 't=' + Date.now();
+                }, 3000);
+            }
+
+            badgeImg.addEventListener('load', onBadgeLoad);
+            badgeImg.addEventListener('error', scheduleBadgeRetry);
+
+            if (badgeImg.complete) {
+                if (badgeImg.naturalWidth === 0) {
+                    scheduleBadgeRetry();
+                } else {
+                    onBadgeLoad();
+                }
+            }
         }
 
         function copyTextToClipboard(text, btn) {

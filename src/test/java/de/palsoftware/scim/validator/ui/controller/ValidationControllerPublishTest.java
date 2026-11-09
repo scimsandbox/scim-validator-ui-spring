@@ -91,6 +91,7 @@ class ValidationControllerPublishTest {
                 gitHubCompliancePublisherService,
                 publicationRepository
         );
+        ReflectionTestUtils.setField(controller, "allowedPublishers", "developer@example.com");
         userAuth = new TestingAuthenticationToken("developer@example.com", "n/a");
         adminAuth = new TestingAuthenticationToken("admin@example.com", "n/a",
                 List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_ADMIN")));
@@ -611,6 +612,39 @@ class ValidationControllerPublishTest {
         assertThat(redirectAttributes.getFlashAttributes()).containsKey("errorMessage");
         assertThat(redirectAttributes.getFlashAttributes().get("errorMessage").toString())
                 .contains("Published compliance runs cannot be deleted");
+    }
+
+    @Test
+    void publishRun_nonAdminUserNotInAllowlist_rejectedWithFlashMessage() {
+        ReflectionTestUtils.setField(controller, "allowedPublishers", "");
+        UUID runId = UUID.randomUUID();
+        ValidationRun runEntity = createSampleRun(runId, "regular@example.com", "PASSED");
+        Authentication regularUserAuth = new TestingAuthenticationToken("regular@example.com", "n/a");
+
+        when(validationRunService.getRunEntity(runId, "regular@example.com", false)).thenReturn(runEntity);
+
+        CompliancePublishFormData form = new CompliancePublishFormData(
+                "My SCIM Server", "my-scim-server", "1.0.0", "Org", "https://example.org", "Apache-2.0", false);
+        BindingResult bindingResult = new BeanPropertyBindingResult(form, "publishForm");
+        RedirectAttributes redirectAttributes = new RedirectAttributesModelMap();
+
+        String view = controller.publishRun(runId, form, bindingResult, regularUserAuth, redirectAttributes);
+
+        assertThat(view).isEqualTo("redirect:/runs/" + runId);
+        assertThat(redirectAttributes.getFlashAttributes().get("errorMessage").toString())
+                .contains("Direct directory publishing is restricted to administrators")
+                .contains(runId.toString());
+        verify(gitHubCompliancePublisherService, never()).publish(any());
+    }
+
+    @Test
+    void isPublisherAllowed_supportsAdminExactEmailAndDomainWildcard() {
+        ReflectionTestUtils.setField(controller, "allowedPublishers", "partner@vendor.io, *@trusted.org");
+
+        assertThat(controller.isPublisherAllowed(adminAuth)).isTrue();
+        assertThat(controller.isPublisherAllowed(new TestingAuthenticationToken("partner@vendor.io", "n/a"))).isTrue();
+        assertThat(controller.isPublisherAllowed(new TestingAuthenticationToken("alice@trusted.org", "n/a"))).isTrue();
+        assertThat(controller.isPublisherAllowed(new TestingAuthenticationToken("stranger@other.com", "n/a"))).isFalse();
     }
 
     // ─────────────────────────────────────────────────────────────────────────

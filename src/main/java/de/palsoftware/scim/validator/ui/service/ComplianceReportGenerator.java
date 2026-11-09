@@ -104,17 +104,16 @@ public class ComplianceReportGenerator {
         Objects.requireNonNull(request, "request must not be null");
 
         ValidationRun run = null;
-        List<ValidationTestResult> testResults = null;
         ComplianceScorecardView scorecard = request.scorecard();
 
         if (runRepository != null && request.runId() != null) {
             run = runRepository.findById(request.runId()).orElse(null);
         }
-        if (testResultRepository != null && request.runId() != null) {
-            testResults = testResultRepository.findByRunIdOrderByStartedAtAsc(request.runId());
-        }
         if (scorecard == null && run != null && scoreService != null) {
             try {
+                List<ValidationTestResult> testResults = (testResultRepository != null && request.runId() != null)
+                        ? testResultRepository.findByRunIdOrderByStartedAtAsc(request.runId())
+                        : null;
                 List<ValidationHttpExchange> exchanges = (exchangeRepository != null && request.runId() != null)
                         ? exchangeRepository.findServiceProviderConfigExchangesByRunId(request.runId())
                         : Collections.emptyList();
@@ -132,7 +131,7 @@ public class ComplianceReportGenerator {
                 request,
                 run,
                 scorecard,
-                testResults,
+                Collections.emptyList(),
                 publishedAt
         );
     }
@@ -275,7 +274,10 @@ public class ComplianceReportGenerator {
                 ? publishedAt.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)
                 : OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
 
-        String submitter = request.showSubmitter() ? request.actorEmail() : null;
+        String resolvedSubmitterEmail = (run != null && run.getCreatedByEmail() != null && !run.getCreatedByEmail().isBlank())
+                ? run.getCreatedByEmail()
+                : request.actorEmail();
+        String submitter = request.showSubmitter() ? resolvedSubmitterEmail : null;
 
         boolean isSample = Boolean.TRUE.equals(request.isSampleFixture())
                 || isConfiguredSampleRun(request.runId(), sampleRunIdsConfig);
