@@ -274,7 +274,10 @@ public class ComplianceReportGenerator {
                 ? publishedAt.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)
                 : OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
 
-        String submitter = request.showSubmitter() ? request.actorEmail() : null;
+        String resolvedSubmitterEmail = (run != null && run.getCreatedByEmail() != null && !run.getCreatedByEmail().isBlank())
+                ? run.getCreatedByEmail()
+                : request.actorEmail();
+        String submitter = request.showSubmitter() ? resolvedSubmitterEmail : null;
 
         boolean isSample = Boolean.TRUE.equals(request.isSampleFixture())
                 || isConfiguredSampleRun(request.runId(), sampleRunIdsConfig);

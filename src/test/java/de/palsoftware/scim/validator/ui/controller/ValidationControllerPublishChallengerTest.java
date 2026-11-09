@@ -731,6 +731,10 @@ class ValidationControllerPublishChallengerTest {
             Authentication adminAuth = new TestingAuthenticationToken("admin@example.com", "n/a", "ROLE_ADMIN");
             controller.publishRun(runId, form, bindingResult, adminAuth, redirectAttributes);
 
+            ArgumentCaptor<CompliancePublishRequest> captor = ArgumentCaptor.forClass(CompliancePublishRequest.class);
+            verify(gitHubCompliancePublisherService).publish(captor.capture());
+            assertThat(captor.getValue().actorEmail()).isEqualTo("alice@example.com");
+
             verify(validationRunService).validatePublishQuota("alice@example.com");
             verify(validationRunService).recordPublication(eq(aliceRun), eq("admin@example.com"), any(CompliancePublishRequest.class), eq(pubResult));
         }

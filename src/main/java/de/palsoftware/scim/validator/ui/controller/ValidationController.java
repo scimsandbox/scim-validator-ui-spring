@@ -547,7 +547,7 @@ public class ValidationController {
                 scorecard.colourGradient().name(),
                 scorecard.supportedCapabilitiesCount(),
                 scorecard.totalCapabilitiesCount(),
-                userEmail,
+                quotaOwnerEmail,
                 runEntity.getTargetUrl(),
                 scorecard
         );
@@ -767,7 +767,9 @@ public class ValidationController {
         String scoreSummary = scorecard != null
                 ? (scorecard.coreScore() + "% (" + scorecard.supportedCapabilitiesCount() + "/" + scorecard.totalCapabilitiesCount() + " capabilities)")
                 : "N/A";
-        String senderEmail = (userEmail != null && !userEmail.isBlank()) ? userEmail : "N/A";
+        String senderEmail = (runView != null && runView.createdByEmail() != null && !runView.createdByEmail().isBlank())
+                ? runView.createdByEmail()
+                : ((userEmail != null && !userEmail.isBlank()) ? userEmail : "N/A");
 
         String body = "Hello SCIM Sandbox Team,\n\n"
                 + "I would like to request publication of my SCIM 2.0 compliance validation run to the public SCIM Compliance Directory:\n\n"

@@ -1960,7 +1960,7 @@
                         <div class="form-group full-width checkbox-group">
                             <label class="checkbox-label" for="publish-show-submitter">
                                 <input type="checkbox" id="publish-show-submitter" name="showSubmitter" value="true" th:checked="${publishForm != null and publishForm.showSubmitter}">
-                                <span>Show my email (<strong th:text="${currentUser}">user@example.com</strong>) on the directory report as the verified submitter</span>
+                                <span>Show submitter email (<strong th:text="${run != null and run.createdByEmail != null ? run.createdByEmail : currentUser}">user@example.com</strong>) on the directory report as the verified submitter</span>
                             </label>
                             <span class="field-hint" style="margin-left: 26px;">If unchecked, submission is attributed anonymously as "Community Verified".</span>
                         </div>
