@@ -1,17 +1,22 @@
 name: Build and Test
 
 on:
+  push:
+    branches:
+      - main
   pull_request:
     branches:
       - main
+  schedule:
+    - cron: "30 5 * * 1"
 
 permissions:
   contents: read
   packages: read
 
 concurrency:
-  group: pr-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: build-test-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build-and-test:
@@ -22,6 +27,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up JDK 25
         uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
@@ -41,3 +49,29 @@ jobs:
           set -euo pipefail
 
           mvn -B -ntp clean verify
+
+      # Scheduled weekly runs intentionally skip SonarQube Cloud because no code changed;
+      # the Monday schedule exists to re-verify the full Maven build and test suite.
+      - name: Check SonarQube Cloud availability
+        id: sonar-gate
+        if: >-
+          github.event_name == 'push' ||
+          (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+        shell: bash
+        env:
+          SONAR_TOKEN_PRESENT: ${{ secrets.SONAR_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+
+          echo "enabled=${SONAR_TOKEN_PRESENT}" >> "${GITHUB_OUTPUT}"
+
+      - name: Run SonarQube Cloud analysis
+        if: ${{ steps.sonar-gate.outputs.enabled == 'true' }}
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          mvn -B -ntp sonar:sonar

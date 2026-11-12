@@ -3,15 +3,18 @@ name: Release
 on:
   workflow_dispatch:
 
-permissions:
-  contents: write
-  packages: write
+permissions: {}
 
 jobs:
   release:
     name: Validate, tag, and publish release
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: write
+      packages: write
+    outputs:
+      tag_name: ${{ steps.version.outputs.tag_name }}
 
     steps:
       - name: Verify main branch
@@ -88,6 +91,63 @@ jobs:
             exit 1
           fi
 
+      - name: Validate build and tests
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          mvn -B -ntp clean verify
+
+      - name: Prepare Maven auth files
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+
+          cat > "${RUNNER_TEMP}/maven-settings.xml" <<EOF
+          <settings>
+            <servers>
+              <server>
+                <id>github</id>
+                <username>${GITHUB_ACTOR}</username>
+                <password>${GITHUB_TOKEN}</password>
+              </server>
+            </servers>
+          </settings>
+          EOF
+          printf '<settingsSecurity/>\n' > "${RUNNER_TEMP}/maven-settings-security.xml"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Build image for pre-release scan
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          secret-files: |
+            maven_settings=${{ runner.temp }}/maven-settings.xml
+            maven_security=${{ runner.temp }}/maven-settings-security.xml
+          tags: scim-validator-ui-spring:pre-release-scan
+
+      - name: Enforce pre-release Trivy vulnerability gate
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: scim-validator-ui-spring:pre-release-scan
+          format: table
+          exit-code: "1"
+          severity: CRITICAL,HIGH
+          trivyignores: ".trivyignore"
+          ignore-unfixed: true
+          vuln-type: os,library
+
       - name: Release with Maven Release Plugin
         shell: bash
         env:
@@ -120,3 +180,35 @@ jobs:
             --title "${{ steps.version.outputs.tag_name }}" \
             "dist/scim-validator-ui-spring-${{ steps.version.outputs.release_version }}.tar.gz#scim-validator-ui-spring-${{ steps.version.outputs.release_version }}.tar.gz" \
             "target/checkout/target/scim-validator-ui-spring-${{ steps.version.outputs.release_version }}.jar#scim-validator-ui-spring-${{ steps.version.outputs.release_version }}.jar"
+
+  attest:
+    name: Attest release artifacts
+    needs:
+      - release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Download release artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ needs.release.outputs.tag_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist
+          gh release download "${TAG_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pattern "*.tar.gz" \
+            --pattern "*.jar" \
+            --dir dist
+
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: "dist/*"
