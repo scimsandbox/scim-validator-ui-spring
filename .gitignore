@@ -1,5 +1,8 @@
 # Maven build output
 target/
+dist/
+.scannerwork/
+trivy-image.sarif
 pom.xml.tag
 pom.xml.releaseBackup
 pom.xml.versionsBackup
