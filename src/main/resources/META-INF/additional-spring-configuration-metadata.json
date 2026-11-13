@@ -67,8 +67,7 @@
     {
       "name": "app.compliance.public-base-url",
       "type": "java.lang.String",
-      "defaultValue": "https://scimsandbox.net",
-      "description": "Public base URL used when constructing published report and badge URLs."
+      "description": "Required. Public base URL of the SCIM Sandbox website, used for published report and badge URLs and the What's New link and feed."
     },
     {
       "name": "app.compliance.sample-run-ids",

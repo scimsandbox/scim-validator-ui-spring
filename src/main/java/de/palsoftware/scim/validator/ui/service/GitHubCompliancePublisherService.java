@@ -8,6 +8,7 @@ import de.palsoftware.scim.validator.ui.model.ValidationRunPublication;
 import de.palsoftware.scim.validator.ui.model.spec.*;
 import de.palsoftware.scim.validator.ui.repo.ValidationRunPublicationRepository;
 import de.palsoftware.scim.validator.ui.repo.ValidationRunRepository;
+import de.palsoftware.scim.validator.ui.util.BaseUrl;
 import de.palsoftware.scim.validator.ui.util.Slugifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -79,8 +80,8 @@ public class GitHubCompliancePublisherService {
     @Value("${app.github.api-url:${app.github.api-base-url:https://api.github.com}}")
     private String apiUrl = "https://api.github.com";
 
-    @Value("${app.compliance.public-base-url:https://scimsandbox.net}")
-    private String publicBaseUrl = "https://scimsandbox.net";
+    @Value("${app.compliance.public-base-url}")
+    private String publicBaseUrl;
 
     public static class GitHubMergeConflictException extends RuntimeException {
         public GitHubMergeConflictException(String message) {
@@ -382,9 +383,7 @@ public class GitHubCompliancePublisherService {
             if (existingEntry != null && existingEntry.runId() != null
                     && runId.toString().equalsIgnoreCase(existingEntry.runId().toString())) {
                 log.info("Compliance report for runId={} already exists in compliance/index.json; returning idempotent result", runId);
-                String baseUrl = publicBaseUrl != null && !publicBaseUrl.isBlank()
-                        ? publicBaseUrl.replaceAll("/+$", "")
-                        : "https://scimsandbox.net";
+                String baseUrl = getEffectivePublicBaseUrl();
                 String reportUrl = baseUrl + "/compliance/?run=" + runId;
                 String badgeUrl = baseUrl + "/compliance/badges/" + runId + ".svg";
                 String existingPrUrl = "https://github.com/" + repo + "/blob/" + branch + "/"
@@ -534,8 +533,7 @@ public class GitHubCompliancePublisherService {
     }
 
     private String getEffectivePublicBaseUrl() {
-        String url = publicBaseUrl != null && !publicBaseUrl.isBlank() ? publicBaseUrl : "https://scimsandbox.net";
-        return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
+        return BaseUrl.require("app.compliance.public-base-url", publicBaseUrl);
     }
 
     private String getEffectiveApiUrl() {
@@ -934,6 +932,10 @@ public class GitHubCompliancePublisherService {
 
     public void setBranch(String branch) {
         this.branch = branch;
+    }
+
+    public void setPublicBaseUrl(String publicBaseUrl) {
+        this.publicBaseUrl = publicBaseUrl;
     }
 
     public String getApiUrl() {

@@ -29,7 +29,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@WebMvcTest(controllers = PlaygroundController.class, excludeAutoConfiguration = {
+// Trailing slash on purpose: the controller must normalize it so links never contain "//".
+@WebMvcTest(controllers = PlaygroundController.class,
+        properties = "app.compliance.public-base-url=https://website.example.test/",
+        excludeAutoConfiguration = {
         OAuth2ClientAutoConfiguration.class,
         OAuth2ClientWebSecurityAutoConfiguration.class,
         SecurityAutoConfiguration.class,
@@ -123,6 +126,9 @@ class PlaygroundControllerTemplateTest {
                 // loose match would keep passing even if the outbound link were mislabelled.
                 .andExpect(content().string(containsString("aria-label=\"SCIM Server Manager\"")))
                 .andExpect(content().string(containsString("floating-side-btn-news")))
+                .andExpect(content().string(containsString("href=\"https://website.example.test/#news\"")))
+                .andExpect(content().string(containsString(
+                        "data-news-feed-url=\"https://website.example.test/news/index.json\"")))
                 .andExpect(content().string(containsString("/js/dock-news.js")))
                 .andExpect(content().string(containsString("Terms of Service")))
                 .andExpect(content().string(containsString("Privacy Policy")))

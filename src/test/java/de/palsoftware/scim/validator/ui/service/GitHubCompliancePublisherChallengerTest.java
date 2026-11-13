@@ -85,6 +85,7 @@ class GitHubCompliancePublisherChallengerTest {
         publisherService.setEnabled(true);
         publisherService.setRepo("scimsandbox/scim-website");
         publisherService.setBranch("main");
+        publisherService.setPublicBaseUrl("https://scimsandbox.net");
     }
 
     @AfterEach
@@ -1000,6 +1001,7 @@ class GitHubCompliancePublisherChallengerTest {
 
         ValidationRunService runService = new ValidationRunService(
                 runRepository, userRepository, null, null, publicationRepository, null, null);
+        runService.setPublicBaseUrl("https://scimsandbox.net");
 
         // 1. Reserve pending publication slot prior to GitHub merge
         runService.reservePublication(run, "actor@example.com", request);

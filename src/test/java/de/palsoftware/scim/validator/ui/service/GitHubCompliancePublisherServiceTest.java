@@ -93,6 +93,7 @@ class GitHubCompliancePublisherServiceTest {
         publisherService.setEnabled(true);
         publisherService.setRepo("scimsandbox/scim-website");
         publisherService.setBranch("main");
+        publisherService.setPublicBaseUrl("https://scimsandbox.net");
     }
 
     @AfterEach

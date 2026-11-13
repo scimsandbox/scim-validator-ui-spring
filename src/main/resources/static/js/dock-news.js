@@ -1,7 +1,7 @@
 /*
  * Shared Ecosystem News indicator for the right-side quick-navigation dock in SCIM Validation.
  * Checks /news/index.json and compares against the shared .scimsandbox.net cookie
- * (with localStorage fallback) to highlight unread updates.
+ * to highlight unread updates.
  */
 (function () {
     const NEWS_STORAGE_KEY = 'scim_news_seen';
@@ -33,14 +33,8 @@
         if (!btn) return;
 
         const dot = btn.querySelector('.news-unread-dot');
-        const feedUrl = btn.getAttribute('data-news-feed-url') || 'https://scimsandbox.net/news/index.json';
-        const FALLBACK_NEWS = [
-            {
-                id: '2026-11-09-full-scim-rfc-compliance',
-                publishedAt: '2026-11-09T20:00:00Z',
-                title: 'Full SCIM 2.0 & Extension Compliance (RFC 7643, 7644, 9865, 9967)'
-            }
-        ];
+        const feedUrl = btn.getAttribute('data-news-feed-url');
+        if (!feedUrl) return;
         let cachedItems = [];
 
         function applyBadgeState() {
@@ -65,6 +59,8 @@
             }
         }
 
+        // Re-check on return from the website tab, which sets the cookie. focus covers a visible
+        // window regaining focus; visibilitychange covers tab switches. Re-applying is idempotent.
         window.addEventListener('focus', applyBadgeState);
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'visible') {
@@ -75,13 +71,16 @@
         fetch(feedUrl, { credentials: 'omit' })
             .then((res) => (res.ok ? res.json() : null))
             .then((data) => {
-                const list = Array.isArray(data) && data.length > 0 ? data : FALLBACK_NEWS;
-                cachedItems = list.slice().sort((a, b) => Date.parse(b.publishedAt || 0) - Date.parse(a.publishedAt || 0));
+                if (!Array.isArray(data) || data.length === 0) return;
+                cachedItems = data
+                    .map((item) => ({ item, ms: Date.parse(item && item.publishedAt) }))
+                    .filter((entry) => Number.isFinite(entry.ms))
+                    .sort((a, b) => b.ms - a.ms)
+                    .map((entry) => entry.item);
                 applyBadgeState();
             })
             .catch(() => {
-                cachedItems = FALLBACK_NEWS.slice();
-                applyBadgeState();
+                // Feed unavailable: keep the neutral "What's New" state rather than flag stale news.
             });
     }
 

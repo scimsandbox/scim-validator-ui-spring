@@ -461,6 +461,7 @@ class ValidationRunServiceRetentionTest {
             TestableValidationRunService txService = new TestableValidationRunService(
                     runRepository, userRepository, publicationRepository);
             txService.setTransactionManager(recordingTxManager);
+            txService.setPublicBaseUrl("https://scimsandbox.net");
 
             ValidationRun run = createRun("To Reserve", false);
             var request = new de.palsoftware.scim.validator.ui.model.spec.CompliancePublishRequest(

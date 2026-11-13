@@ -87,7 +87,7 @@ app:
     max-published-per-user: ${APP_RUNS_MAX_PUBLISHED_PER_USER:50}
 
   compliance:
-    public-base-url: ${APP_COMPLIANCE_PUBLIC_BASE_URL:https://scimsandbox.net}
+    public-base-url: ${APP_COMPLIANCE_PUBLIC_BASE_URL}
     min-publish-score: ${APP_COMPLIANCE_MIN_PUBLISH_SCORE:50}
     min-core-coverage-percent: ${APP_COMPLIANCE_MIN_CORE_COVERAGE_PERCENT:50}
     reservation-timeout-seconds: ${APP_COMPLIANCE_RESERVATION_TIMEOUT_SECONDS:300}

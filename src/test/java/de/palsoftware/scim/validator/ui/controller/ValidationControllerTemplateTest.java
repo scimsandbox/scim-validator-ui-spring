@@ -34,7 +34,9 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@WebMvcTest(controllers = ValidationController.class, excludeAutoConfiguration = {
+@WebMvcTest(controllers = ValidationController.class,
+        properties = "app.compliance.public-base-url=https://website.example.test/",
+        excludeAutoConfiguration = {
                 OAuth2ClientAutoConfiguration.class,
                 OAuth2ClientWebSecurityAutoConfiguration.class,
                 SecurityAutoConfiguration.class,
@@ -70,7 +72,13 @@ class ValidationControllerTemplateTest {
                                 .principal(new TestingAuthenticationToken("user@example.com", "n/a")))
                                 .andExpect(status().isOk())
                                 .andExpect(content().string(org.hamcrest.Matchers
-                                                .containsString("action=\"/validator-ui/runs\"")));
+                                                .containsString("action=\"/validator-ui/runs\"")))
+                                .andExpect(content().string(org.hamcrest.Matchers
+                                                .containsString("href=\"https://website.example.test/#news\"")))
+                                .andExpect(content().string(org.hamcrest.Matchers.containsString(
+                                                "data-news-feed-url=\"https://website.example.test/news/index.json\"")))
+                                .andExpect(content().string(org.hamcrest.Matchers
+                                                .containsString("/js/dock-news.js")));
         }
 
         @Test
@@ -129,7 +137,11 @@ class ValidationControllerTemplateTest {
                                 .principal(new TestingAuthenticationToken("user@example.com", "n/a")))
                                 .andExpect(status().isOk())
                                 .andExpect(content().string(
-                                                org.hamcrest.Matchers.containsString("href=\"/validator-ui/\"")));
+                                                org.hamcrest.Matchers.containsString("href=\"/validator-ui/\"")))
+                                .andExpect(content().string(org.hamcrest.Matchers
+                                                .containsString("href=\"https://website.example.test/#news\"")))
+                                .andExpect(content().string(org.hamcrest.Matchers
+                                                .containsString("/js/dock-news.js")));
         }
 
         @Test

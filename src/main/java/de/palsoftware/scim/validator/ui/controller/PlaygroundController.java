@@ -5,6 +5,8 @@ import de.palsoftware.scim.validator.ui.dto.PlaygroundExecuteResponse;
 import de.palsoftware.scim.validator.ui.security.AuthenticatedUser;
 import de.palsoftware.scim.validator.ui.service.MgmtUserService;
 import de.palsoftware.scim.validator.ui.service.PlaygroundExecutionService;
+import de.palsoftware.scim.validator.ui.util.BaseUrl;
+import jakarta.annotation.PostConstruct;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
@@ -58,8 +60,14 @@ public class PlaygroundController {
     private final MgmtUserService mgmtUserService;
     private final String serverManagerUrl;
 
-    @Value("${app.compliance.public-base-url:https://scimsandbox.net}")
-    private String websiteUrl = "https://scimsandbox.net";
+    @Value("${app.compliance.public-base-url}")
+    private String websiteUrl;
+
+    /** Fails startup on a blank value; the required config is concatenated with fixed paths in the templates. */
+    @PostConstruct
+    void normalizeWebsiteUrl() {
+        websiteUrl = BaseUrl.require("app.compliance.public-base-url (APP_COMPLIANCE_PUBLIC_BASE_URL)", websiteUrl);
+    }
 
     public PlaygroundController(PlaygroundExecutionService executionService,
                                 MgmtUserService mgmtUserService,

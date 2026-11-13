@@ -57,7 +57,9 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@WebMvcTest(controllers = ValidationController.class, excludeAutoConfiguration = {
+@WebMvcTest(controllers = ValidationController.class,
+        properties = "app.compliance.public-base-url=https://website.example.test",
+        excludeAutoConfiguration = {
         OAuth2ClientAutoConfiguration.class,
         OAuth2ClientWebSecurityAutoConfiguration.class,
         SecurityAutoConfiguration.class,
