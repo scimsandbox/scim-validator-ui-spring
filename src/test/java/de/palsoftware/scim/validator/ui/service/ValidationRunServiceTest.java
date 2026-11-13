@@ -616,6 +616,219 @@ class ValidationRunServiceTest {
         }
     }
 
+    @Test
+    void constructorsSettersShutdownAndScrubSecretsEdgeCasesAreCovered() {
+        ValidationRunService fourArg = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository);
+        fourArg.shutdownExecutor();
+
+        ValidationRunService autowiredCtor = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository,
+                null, null, null, null, null, null, null);
+        autowiredCtor.setSpecCatalogService(null);
+        autowiredCtor.setTargetUrlPolicy(null);
+        autowiredCtor.setMaxActiveRunsPerUser(3);
+        assertThat(autowiredCtor.getMaxActiveRunsPerUser()).isEqualTo(3);
+        autowiredCtor.shutdownExecutor();
+
+        java.util.concurrent.ThreadPoolExecutor externalExec = ValidationRunService.createBoundedRunExecutor(1, 1);
+        try {
+            ValidationRunService nonOwning = new ValidationRunService(
+                    runRepository, mgmtUserRepository, testResultRepository, exchangeRepository,
+                    progressTracker, externalExec);
+            nonOwning.shutdownExecutor();
+            assertThat(externalExec.isShutdown()).isFalse();
+        } finally {
+            externalExec.shutdownNow();
+        }
+
+        assertThat(ValidationRunService.scrubSecrets(null, "tok")).isNull();
+        assertThat(ValidationRunService.scrubSecrets("", "tok")).isEmpty();
+        assertThat(ValidationRunService.scrubSecrets("plain text", null)).isEqualTo("plain text");
+        assertThat(ValidationRunService.scrubSecrets("plain text", "   ")).isEqualTo("plain text");
+        assertThat(ValidationRunService.scrubSecrets("leaked padded-secret-123 here", "  padded-secret-123  "))
+                .isEqualTo("leaked [REDACTED] here");
+    }
+
+    @Test
+    void executeRun_passedFailedErrorAndTransactionTemplateBranchesAreCovered() {
+        ValidationMgmtUser owner = new ValidationMgmtUser("user@example.com", OffsetDateTime.now());
+        when(mgmtUserRepository.findById("user@example.com")).thenReturn(Optional.of(owner));
+        when(runRepository.save(any(ValidationRun.class))).thenAnswer(inv -> {
+            ValidationRun r = inv.getArgument(0);
+            if (r.getId() == null) {
+                var f = ValidationRun.class.getDeclaredField("id");
+                f.setAccessible(true);
+                f.set(r, runId);
+            }
+            return r;
+        });
+        when(testResultRepository.save(any(ValidationTestResult.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        org.springframework.transaction.PlatformTransactionManager txManager =
+                org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class);
+        when(txManager.getTransaction(any())).thenReturn(new org.springframework.transaction.support.SimpleTransactionStatus());
+
+        TargetUrlPolicy publicPolicy = new TargetUrlPolicy(
+                false, host -> new java.net.InetAddress[]{java.net.InetAddress.getByName("93.184.216.34")});
+
+        // 1. PASSED branch + TransactionTemplate branch
+        ValidationRunService passedSvc = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, progressTracker, null) {
+            @Override
+            int discoverTestCount(String baseUrl, String authToken) {
+                return 1;
+            }
+
+            @Override
+            void executeLauncher(org.junit.platform.launcher.Launcher launcher,
+                                 LauncherDiscoveryRequest request,
+                                 org.junit.platform.launcher.TestExecutionListener listener) {
+                TestDescriptor d = org.mockito.Mockito.mock(TestDescriptor.class);
+                when(d.getUniqueId()).thenReturn(UniqueId.forEngine("test-engine").append("test", "pass"));
+                when(d.getType()).thenReturn(TestDescriptor.Type.TEST);
+                when(d.getDisplayName()).thenReturn("USR_01");
+                TestIdentifier id = TestIdentifier.from(d);
+                listener.executionStarted(id);
+                listener.executionFinished(id, TestExecutionResult.successful());
+            }
+        };
+        passedSvc.setTargetUrlPolicy(publicPolicy);
+        passedSvc.setTransactionManager(txManager);
+        try {
+            ValidationRunForm form = new ValidationRunForm("Pass Run", "https://example.com/scim/v2", "secret-12345");
+            assertThat(passedSvc.executeRun(form, "user@example.com").getRun().getStatus()).isEqualTo("PASSED");
+        } finally {
+            passedSvc.shutdownExecutor();
+        }
+
+        // 2. FAILED branch
+        ValidationRunService failedSvc = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, progressTracker, null) {
+            @Override
+            int discoverTestCount(String baseUrl, String authToken) {
+                return 1;
+            }
+
+            @Override
+            void executeLauncher(org.junit.platform.launcher.Launcher launcher,
+                                 LauncherDiscoveryRequest request,
+                                 org.junit.platform.launcher.TestExecutionListener listener) {
+                TestDescriptor d = org.mockito.Mockito.mock(TestDescriptor.class);
+                when(d.getUniqueId()).thenReturn(UniqueId.forEngine("test-engine").append("test", "fail"));
+                when(d.getType()).thenReturn(TestDescriptor.Type.TEST);
+                when(d.getDisplayName()).thenReturn("USR_02");
+                TestIdentifier id = TestIdentifier.from(d);
+                listener.executionFinished(id, TestExecutionResult.failed(new AssertionError("Failed with secret-12345")));
+            }
+        };
+        failedSvc.setTargetUrlPolicy(publicPolicy);
+        try {
+            ValidationRunForm form = new ValidationRunForm("Fail Run", "https://example.com/scim/v2", "secret-12345");
+            assertThat(failedSvc.executeRun(form, "user@example.com").getRun().getStatus()).isEqualTo("FAILED");
+        } finally {
+            failedSvc.shutdownExecutor();
+        }
+
+        // 3. ERROR catch branch (launcher throws RuntimeException containing token)
+        ValidationRunService errorSvc = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, progressTracker, null) {
+            @Override
+            int discoverTestCount(String baseUrl, String authToken) {
+                return 1;
+            }
+
+            @Override
+            void executeLauncher(org.junit.platform.launcher.Launcher launcher,
+                                 LauncherDiscoveryRequest request,
+                                 org.junit.platform.launcher.TestExecutionListener listener) {
+                throw new IllegalStateException("Crash carrying secret-12345");
+            }
+        };
+        errorSvc.setTargetUrlPolicy(publicPolicy);
+        try {
+            ValidationRunForm form = new ValidationRunForm("Error Run", "https://example.com/scim/v2", "secret-12345");
+            assertThat(errorSvc.executeRun(form, "user@example.com").getRun().getStatus()).isEqualTo("ERROR");
+            verify(progressTracker).failRun(eq(runId), eq("Crash carrying [REDACTED]"));
+        } finally {
+            errorSvc.shutdownExecutor();
+        }
+    }
+
+    @Test
+    void executeRunAsync_withActiveTransactionSynchronization_handlesCommitRejectionAndRollback() throws Exception {
+        ValidationMgmtUser anonOwner = new ValidationMgmtUser("   ", OffsetDateTime.now());
+        when(mgmtUserRepository.findById("   ")).thenReturn(Optional.of(anonOwner));
+        when(runRepository.saveAndFlush(any(ValidationRun.class))).thenAnswer(inv -> {
+            ValidationRun r = inv.getArgument(0);
+            var f = ValidationRun.class.getDeclaredField("id");
+            f.setAccessible(true);
+            f.set(r, runId);
+            return r;
+        });
+
+        TargetUrlPolicy publicPolicy = new TargetUrlPolicy(
+                false, host -> new java.net.InetAddress[]{java.net.InetAddress.getByName("93.184.216.34")});
+        ValidationRunForm form = new ValidationRunForm("SyncTx Run", "https://example.com/scim/v2", "secret-xyz");
+
+        // Case A: Transaction synchronization active + executor rejects on afterCommit + deleteById throws (cleanup catch)
+        java.util.concurrent.ThreadPoolExecutor shutExecutor = ValidationRunService.createBoundedRunExecutor(1, 1);
+        shutExecutor.shutdownNow();
+        org.mockito.Mockito.doThrow(new RuntimeException("db unavailable")).when(runRepository).deleteById(runId);
+
+        ValidationRunService txRejectedService = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, progressTracker, shutExecutor) {
+            @Override
+            int discoverTestCount(String baseUrl, String authToken) {
+                return 3;
+            }
+        };
+        txRejectedService.setTargetUrlPolicy(publicPolicy);
+        txRejectedService.setMaxActiveRunsPerUser(2);
+
+        org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+        try {
+            txRejectedService.executeRunAsync(form, "   ");
+            for (org.springframework.transaction.support.TransactionSynchronization sync :
+                    org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations()) {
+                sync.afterCommit();
+                sync.afterCompletion(org.springframework.transaction.support.TransactionSynchronization.STATUS_COMMITTED);
+            }
+        } finally {
+            org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
+        }
+        verify(progressTracker).failRun(eq(runId), org.mockito.ArgumentMatchers.contains("capacity reached"));
+
+        // Case B: Transaction synchronization rolled back -> releases active slot without running task
+        org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+        try {
+            txRejectedService.executeRunAsync(form, "   ");
+            for (org.springframework.transaction.support.TransactionSynchronization sync :
+                    org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations()) {
+                sync.afterCompletion(org.springframework.transaction.support.TransactionSynchronization.STATUS_ROLLED_BACK);
+            }
+        } finally {
+            org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
+        }
+
+        // Case C: runTestsInBackground exception branch scrubs token and marks run ERROR
+        when(runRepository.findById(runId)).thenReturn(Optional.of(sampleRun));
+        when(runRepository.save(any(ValidationRun.class))).thenAnswer(inv -> inv.getArgument(0));
+        ValidationRunService bgErrorService = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, progressTracker, shutExecutor) {
+            @Override
+            void executeLauncher(org.junit.platform.launcher.Launcher launcher,
+                                 LauncherDiscoveryRequest request,
+                                 org.junit.platform.launcher.TestExecutionListener listener) {
+                throw new RuntimeException("Background failure with secret-xyz");
+            }
+        };
+        bgErrorService.setTargetUrlPolicy(publicPolicy);
+        bgErrorService.runTestsInBackground(runId, form, 4);
+        assertThat(sampleRun.getStatus()).isEqualTo("ERROR");
+        verify(progressTracker).failRun(eq(runId), eq("Background failure with [REDACTED]"));
+    }
+
     // ─── helpers ────────────────────────────────────────────────────────
 
     private static void restoreProperty(String key, String value) {

@@ -244,4 +244,147 @@ class TargetUrlPolicyTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("must include a host");
     }
+
+    @Test
+    void isAllowLocalhostTargetsReflectsConfiguration() {
+        assertThat(new TargetUrlPolicy(false, fixedResolver("93.184.216.34")).isAllowLocalhostTargets()).isFalse();
+        assertThat(new TargetUrlPolicy(true, fixedResolver("93.184.216.34")).isAllowLocalhostTargets()).isTrue();
+    }
+
+    @Test
+    void staticValidateAllowsPublicIpLiteralWithoutExternalDns() {
+        assertThat(TargetUrlPolicy.validate("https://93.184.216.34/scim/v2")).isNotNull();
+        assertThatThrownBy(() -> TargetUrlPolicy.validate(null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("must not be empty");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "https://exa mple.com/scim/v2",
+            "://example.com/scim/v2",
+            "https://scim.example.com:0/scim/v2",
+            "https://scim.example.com:70000/scim/v2",
+            "https://.../scim/v2"
+    })
+    void malformedUriSchemePortAndDotOnlyHostsAreRejected(String url) {
+        TargetUrlPolicy policy = new TargetUrlPolicy(false, fixedResolver("93.184.216.34"));
+
+        assertThatThrownBy(() -> policy.validateUri(url))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void trailingDotsOnPublicHostnameAreNormalizedAndAllowed() {
+        TargetUrlPolicy policy = new TargetUrlPolicy(false, fixedResolver("93.184.216.34"));
+
+        assertThat(policy.validateUri("https://scim.example.com./scim/v2")).isNotNull();
+    }
+
+    @Test
+    void subdomainOfLocalhostIsRejectedEvenWhenAllowLocalhostTargetsTrue() {
+        TargetUrlPolicy localPolicy = new TargetUrlPolicy(true, fixedResolver("127.0.0.1"));
+
+        assertThatThrownBy(() -> localPolicy.validateUri("https://api.localhost/scim/v2"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("localhost targets are not allowed");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "https://93.184.216.34/scim/v2",
+            "https://[2606:2800:220:1:248:1893:25c8:1946]/scim/v2",
+            "https://[2606:2800::1]/scim/v2",
+            "https://[2606:2800::]/scim/v2"
+    })
+    void canonicalPublicIpv4AndIpv6LiteralsAreAllowed(String url) {
+        TargetUrlPolicy policy = new TargetUrlPolicy(
+                false,
+                host -> new InetAddress[]{InetAddress.getByName(host)});
+
+        assertThat(policy.validateUri(url)).isNotNull();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "https://1.2..4/scim/v2",
+            "https://1234.1.2.3/scim/v2",
+            "https://256.1.2.3/scim/v2",
+            "https://[::]/scim/v2",
+            "https://[::0.0.0.2]/scim/v2"
+    })
+    void malformedNumericAndUnspecifiedOrIpv4CompatibleLiteralsAreRejected(String url) {
+        TargetUrlPolicy policy = new TargetUrlPolicy(
+                false,
+                fixedResolver("93.184.216.34"));
+
+        assertThatThrownBy(() -> policy.validateUri(url))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void fourLabelAlphaHostnameIsNotTreatedAsIpv4LiteralAndIsAllowed() {
+        TargetUrlPolicy policy = new TargetUrlPolicy(false, fixedResolver("93.184.216.34"));
+
+        assertThat(policy.validateUri("https://a.b.c.example/scim/v2")).isNotNull();
+    }
+
+    @Test
+    void resolverReturningNullEmptyOrNullElementIsRejected() {
+        TargetUrlPolicy nullArrayPolicy = new TargetUrlPolicy(false, host -> null);
+        TargetUrlPolicy emptyArrayPolicy = new TargetUrlPolicy(false, host -> new InetAddress[0]);
+        TargetUrlPolicy nullElemPolicy = new TargetUrlPolicy(false, host -> new InetAddress[]{null});
+
+        assertThatThrownBy(() -> nullArrayPolicy.validateUri("https://scim.example.com/scim/v2"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("no addresses");
+        assertThatThrownBy(() -> emptyArrayPolicy.validateUri("https://scim.example.com/scim/v2"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("no addresses");
+        assertThatThrownBy(() -> nullElemPolicy.validateUri("https://scim.example.com/scim/v2"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("invalid resolved address");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "192.0.0.1",
+            "198.18.0.1",
+            "198.19.255.254",
+            "fec0::1"
+    })
+    void reservedBenchmarkIetfProtocolAndSiteLocalIpv6AddressesAreRejected(String resolvedIp) {
+        TargetUrlPolicy policy = new TargetUrlPolicy(false, fixedResolver(resolvedIp));
+
+        assertThatThrownBy(() -> policy.validateUri("https://scim.example.com/scim/v2"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "192.0.1.1",
+            "192.1.0.1",
+            "198.17.255.254",
+            "198.20.0.1",
+            "fe00::1",
+            "64:ff9a::1",
+            "64:fe9b::1",
+            "65:ff9b::1"
+    })
+    void nonReservedNeighboringIpv4AndIpv6RangesAreAllowed(String publicIp) {
+        TargetUrlPolicy policy = new TargetUrlPolicy(false, fixedResolver(publicIp));
+
+        assertThat(policy.validateUri("https://scim.example.com/scim/v2")).isNotNull();
+    }
+
+    @Test
+    void ipv6LoopbackTargetResolvingToNonLoopbackIpv6IsRejectedWhenLocalhostAllowed() {
+        TargetUrlPolicy policy = new TargetUrlPolicy(
+                true,
+                host -> new InetAddress[]{InetAddress.getByName("2606:2800:220:1:248:1893:25c8:1946")});
+
+        assertThatThrownBy(() -> policy.validateUri("http://[::1]:8080/scim/v2"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("non-loopback");
+    }
 }

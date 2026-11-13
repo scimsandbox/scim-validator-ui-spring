@@ -113,6 +113,40 @@ class AuthenticatedUserTest {
         assertThat(AuthenticatedUser.isAdmin(auth)).isFalse();
     }
 
+    @Test
+    void emailAndEmailOrNull_nonOidcBlankAndNonEmailPrincipals_handleAllBranches() {
+        Authentication blankAuth = new TestingAuthenticationToken("   ", "pass");
+        assertThatThrownBy(() -> AuthenticatedUser.email(blankAuth))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Unable to resolve");
+        assertThat(AuthenticatedUser.emailOrNull(blankAuth)).isNull();
+
+        Authentication plainUsernameAuth = new TestingAuthenticationToken("service-account", "pass");
+        assertThat(AuthenticatedUser.email(plainUsernameAuth)).isEqualTo("service-account");
+        assertThat(AuthenticatedUser.emailOrNull(plainUsernameAuth)).isEqualTo("service-account");
+    }
+
+    @Test
+    void isAdmin_nullAuthoritiesCollectionOrNullAuthorityElement_returnsFalse() {
+        Authentication nullAuthoritiesAuth = org.mockito.Mockito.mock(Authentication.class);
+        org.mockito.Mockito.when(nullAuthoritiesAuth.getAuthorities()).thenReturn(null);
+        assertThat(AuthenticatedUser.isAdmin(nullAuthoritiesAuth)).isFalse();
+
+        List<org.springframework.security.core.GrantedAuthority> withNull = new java.util.ArrayList<>();
+        withNull.add(null);
+        withNull.add(new SimpleGrantedAuthority("ROLE_ADMIN"));
+        Authentication mixedAuthoritiesAuth = org.mockito.Mockito.mock(Authentication.class);
+        org.mockito.Mockito.doReturn(withNull).when(mixedAuthoritiesAuth).getAuthorities();
+        assertThat(AuthenticatedUser.isAdmin(mixedAuthoritiesAuth)).isTrue();
+    }
+
+    @Test
+    void resolveEmailAndNormalizeEmail_nullInputsReturnNull() {
+        assertThat(AuthenticatedUser.resolveEmail(null)).isNull();
+        assertThat(AuthenticatedUser.normalizeEmail(null)).isNull();
+        assertThat(AuthenticatedUser.normalizeEmail("not-an-email")).isNull();
+    }
+
     private static OidcUser buildOidcUser(Map<String, Object> claims) {
         Instant issuedAt = Instant.now();
         Instant expiresAt = issuedAt.plusSeconds(3600);

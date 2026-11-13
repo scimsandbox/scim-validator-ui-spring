@@ -70,6 +70,10 @@ class PlaygroundExecutionServiceTest {
                 try (OutputStream os = exchange.getResponseBody()) {
                     os.write(bytes);
                 }
+            } else if ("HEAD".equalsIgnoreCase(exchange.getRequestMethod())) {
+                exchange.getResponseHeaders().set("Content-Type", "application/scim+json");
+                exchange.sendResponseHeaders(200, -1);
+                exchange.close();
             } else {
                 String response = "{\"totalResults\":1,\"Resources\":[{\"id\":\"u-12345\",\"userName\":\"alex.morgan\"}]}";
                 byte[] bytes = response.getBytes(StandardCharsets.UTF_8);
@@ -380,5 +384,88 @@ class PlaygroundExecutionServiceTest {
 
         assertThat(res.statusCode()).isEqualTo(0);
         assertThat(res.error()).contains("configured target origin");
+    }
+
+    @Test
+    void defaultConstructorUsesStrictProductionPolicy() {
+        PlaygroundExecutionService defaultService = new PlaygroundExecutionService();
+        PlaygroundExecuteResponse res = defaultService.execute(new PlaygroundExecuteRequest(
+                "http://localhost:8080/scim/v2",
+                null,
+                "GET",
+                "/Users",
+                null,
+                null
+        ));
+
+        assertThat(res.statusCode()).isEqualTo(0);
+        assertThat(res.error()).contains("localhost targets are not allowed");
+    }
+
+    @Test
+    void execute_putPatchDeleteHeadOptionsAndUnsupportedMethod_coverAllHttpVerbAndHeaderBranches() {
+        java.util.Map<String, String> mixedHeaders = new java.util.HashMap<>();
+        mixedHeaders.put("Host", "spoofed.example.com");
+        mixedHeaders.put("Connection", "close");
+        mixedHeaders.put("   ", "blank-name");
+        mixedHeaders.put("X-Null-Header", null);
+        mixedHeaders.put("X-Allowed-Custom", "ok-value");
+
+        for (String method : java.util.List.of("PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")) {
+            String body = ("PUT".equals(method) || "PATCH".equals(method)) ? "{\"active\":false}" : null;
+            PlaygroundExecuteResponse res = service.execute(new PlaygroundExecuteRequest(
+                    "http://127.0.0.1:" + serverPort + "/scim/v2",
+                    null,
+                    method,
+                    "/Users",
+                    mixedHeaders,
+                    body
+            ));
+            assertThat(res.statusCode()).isEqualTo(200);
+            assertThat(res.requestHeaders()).containsEntry("X-Allowed-Custom", "ok-value");
+            assertThat(res.requestHeaders()).doesNotContainKey("Host");
+            assertThat(res.requestHeaders()).doesNotContainKey("Connection");
+        }
+
+        PlaygroundExecuteResponse unsupported = service.execute(new PlaygroundExecuteRequest(
+                "http://127.0.0.1:" + serverPort + "/scim/v2",
+                null,
+                "TRACE",
+                "/Users",
+                null,
+                null
+        ));
+        assertThat(unsupported.statusCode()).isEqualTo(0);
+        assertThat(unsupported.error()).contains("Unsupported HTTP method: TRACE");
+    }
+
+    @Test
+    void execute_sameOriginPortAndDefaultSchemePortComparisonsWork() {
+        // Explicit port mismatch on same loopback host -> rejected by sameOrigin
+        int otherPort = serverPort == 8081 ? 8082 : 8081;
+        PlaygroundExecuteResponse portMismatch = service.execute(new PlaygroundExecuteRequest(
+                "http://127.0.0.1:" + serverPort + "/scim/v2",
+                null,
+                "GET",
+                "http://127.0.0.1:" + otherPort + "/scim/v2/Users",
+                null,
+                null
+        ));
+        assertThat(portMismatch.statusCode()).isEqualTo(0);
+        assertThat(portMismatch.error()).contains("configured target origin");
+
+        // Default https port 443 matches explicit :443 on same host (passes sameOrigin, then fails connect on .invalid)
+        PlaygroundExecutionService httpsOriginService = new PlaygroundExecutionService(
+                new TargetUrlPolicy(false, host -> new InetAddress[]{InetAddress.getByName("93.184.216.34")}));
+        PlaygroundExecuteResponse explicitPortMismatch = httpsOriginService.execute(new PlaygroundExecuteRequest(
+                "https://scim.invalid/scim/v2",
+                null,
+                "GET",
+                "https://scim.invalid:8443/scim/v2/Users",
+                null,
+                null
+        ));
+        assertThat(explicitPortMismatch.statusCode()).isEqualTo(0);
+        assertThat(explicitPortMismatch.error()).contains("configured target origin");
     }
 }

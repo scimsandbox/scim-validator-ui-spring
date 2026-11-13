@@ -142,4 +142,51 @@ class ValidationProgressTrackerTest {
         nowMs[0] = 1_600L + ValidationProgressTracker.DEFAULT_STALE_RUNNING_TTL_MS + 1_000L;
         assertThat(bounded.trackedCount()).isZero();
     }
+
+    @Test
+    void unregisteredRunOperationsNullProgressAndMaxEmittersEvictionWorkCleanly() {
+        assertThat(tracker.getProgress(null)).isNull();
+
+        // Calling updateProgress / completeRun / failRun before registerRun synthesizes fallback state
+        UUID u1 = UUID.randomUUID();
+        tracker.updateProgress(u1, 3, 10, 2, 1, "SpecA", "TestA");
+        assertThat(tracker.getProgress(u1).redirectUrl()).isEqualTo("/runs/" + u1);
+
+        UUID u2 = UUID.randomUUID();
+        tracker.completeRun(u2, "FAILED", 10, 8, 2);
+        assertThat(tracker.getProgress(u2).status()).isEqualTo("FAILED");
+        assertThat(tracker.subscribe(u2)).isNotNull();
+
+        UUID u3 = UUID.randomUUID();
+        tracker.failRun(u3, "boom");
+        assertThat(tracker.getProgress(u3).status()).isEqualTo("ERROR");
+        assertThat(tracker.subscribe(u3)).isNotNull();
+
+        UUID u4 = UUID.randomUUID();
+        tracker.completeRun(u4, "PASSED", 5, 5, 0);
+        assertThat(tracker.subscribe(u4)).isNotNull();
+
+        // Subscribing > 16 emitters on one active run evicts oldest emitter cleanly
+        UUID activeRun = UUID.randomUUID();
+        tracker.registerRun(activeRun, 20, "/runs/" + activeRun);
+        for (int i = 0; i < 18; i++) {
+            assertThat(tracker.subscribe(activeRun)).isNotNull();
+        }
+        tracker.updateProgress(activeRun, 5, 20, 5, 0, "SpecB", "TestB");
+        tracker.completeRun(activeRun, "PASSED", 20, 20, 0);
+    }
+
+    @Test
+    void maxCapacityWithSingleSlotProtectsNewlyRegisteredRun() {
+        ValidationProgressTracker singleSlot = new ValidationProgressTracker(1, 500L, () -> 1_000L);
+        UUID first = UUID.randomUUID();
+        UUID second = UUID.randomUUID();
+
+        singleSlot.registerRun(first, 10, "/runs/" + first);
+        singleSlot.registerRun(second, 10, "/runs/" + second);
+
+        assertThat(singleSlot.trackedCount()).isEqualTo(1);
+        assertThat(singleSlot.getProgress(second)).isNotNull();
+        assertThat(singleSlot.getProgress(first)).isNull();
+    }
 }

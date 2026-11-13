@@ -187,6 +187,94 @@ class SecurityConfigAndActuatorFilterTest {
         assertThat(matrixRes.getStatus()).isEqualTo(401);
     }
 
+    @Test
+    void actuatorFilter_additionalPathHeaderPortAndNullKeyBranches() throws Exception {
+        ActuatorApiKeyAuthFilter nullKeyZeroPortFilter = new ActuatorApiKeyAuthFilter(null, 0);
+
+        // Non-actuator normal path and root path pass straight through
+        MockHttpServletRequest appReq = new MockHttpServletRequest("GET", "/runs");
+        MockHttpServletResponse appRes = new MockHttpServletResponse();
+        AtomicBoolean appCalled = new AtomicBoolean(false);
+        nullKeyZeroPortFilter.doFilter(appReq, appRes, (req, res) -> appCalled.set(true));
+        assertThat(appCalled).isTrue();
+
+        // Empty requestURI with servletPath null -> "" -> "/" -> passes through
+        MockHttpServletRequest emptyUriReq = new MockHttpServletRequest("GET", "");
+        emptyUriReq.setServletPath(null);
+        AtomicBoolean emptyCalled = new AtomicBoolean(false);
+        nullKeyZeroPortFilter.doFilter(emptyUriReq, new MockHttpServletResponse(), (req, res) -> emptyCalled.set(true));
+        assertThat(emptyCalled).isTrue();
+
+        // Empty requestURI with servletPath "/actuator" and managementPort=0 -> 403
+        MockHttpServletRequest servletPathActuatorReq = new MockHttpServletRequest("GET", "");
+        servletPathActuatorReq.setServletPath("/actuator");
+        servletPathActuatorReq.setLocalPort(0);
+        MockHttpServletResponse servletPathRes = new MockHttpServletResponse();
+        nullKeyZeroPortFilter.doFilter(servletPathActuatorReq, servletPathRes, (req, res) -> {});
+        assertThat(servletPathRes.getStatus()).isEqualTo(403);
+
+        // Context path stripping + health path when expectedKeyDigest is null
+        MockHttpServletRequest ctxHealthReq = new MockHttpServletRequest("GET", "/validator-ui/actuator/health");
+        ctxHealthReq.setContextPath("/validator-ui");
+        AtomicBoolean ctxHealthCalled = new AtomicBoolean(false);
+        nullKeyZeroPortFilter.doFilter(ctxHealthReq, new MockHttpServletResponse(), (req, res) -> ctxHealthCalled.set(true));
+        assertThat(ctxHealthCalled).isTrue();
+
+        // Non-actuator traversal path passes through to downstream Spring Security firewall/router
+        MockHttpServletRequest nonActuatorTraversal = new MockHttpServletRequest("GET", "/api/../users");
+        AtomicBoolean nonActuatorCalled = new AtomicBoolean(false);
+        nullKeyZeroPortFilter.doFilter(nonActuatorTraversal, new MockHttpServletResponse(),
+                (req, res) -> nonActuatorCalled.set(true));
+        assertThat(nonActuatorCalled).isTrue();
+
+        // Encoded slash (%2f), backslash, and single-dot segment on /actuator return 400
+        for (String badActuatorUri : List.of("/actuator%2fprometheus", "/actuator\\prometheus", "/actuator/./prometheus")) {
+            MockHttpServletRequest badReq = new MockHttpServletRequest("GET", badActuatorUri);
+            MockHttpServletResponse badRes = new MockHttpServletResponse();
+            nullKeyZeroPortFilter.doFilter(badReq, badRes, (req, res) -> {});
+            assertThat(badRes.getStatus()).isEqualTo(400);
+        }
+
+        // Key-configured filter header edge cases: blank X-API-Key + valid Bearer, Basic auth, blank Bearer, invalid key on health
+        ActuatorApiKeyAuthFilter keyFilter = new ActuatorApiKeyAuthFilter("my-key", 9090);
+
+        MockHttpServletRequest blankXKeyValidBearer = new MockHttpServletRequest("GET", "/actuator");
+        blankXKeyValidBearer.addHeader("X-API-Key", "   ");
+        blankXKeyValidBearer.addHeader("Authorization", "Bearer my-key");
+        MockHttpServletResponse okRes = new MockHttpServletResponse();
+        keyFilter.doFilter(blankXKeyValidBearer, okRes, (req, res) -> {});
+        assertThat(okRes.getStatus()).isEqualTo(200);
+
+        MockHttpServletRequest basicAuthReq = new MockHttpServletRequest("GET", "/actuator/info");
+        basicAuthReq.addHeader("Authorization", "Basic dXNlcjpwYXNz");
+        MockHttpServletResponse basicRes = new MockHttpServletResponse();
+        keyFilter.doFilter(basicAuthReq, basicRes, (req, res) -> {});
+        assertThat(basicRes.getStatus()).isEqualTo(401);
+
+        MockHttpServletRequest blankBearerReq = new MockHttpServletRequest("GET", "/actuator/info");
+        blankBearerReq.addHeader("Authorization", "Bearer    ");
+        MockHttpServletResponse blankBearerRes = new MockHttpServletResponse();
+        keyFilter.doFilter(blankBearerReq, blankBearerRes, (req, res) -> {});
+        assertThat(blankBearerRes.getStatus()).isEqualTo(401);
+
+        SecurityContextHolder.clearContext();
+        MockHttpServletRequest healthInvalidKey = new MockHttpServletRequest("GET", "/actuator/health");
+        healthInvalidKey.addHeader("X-API-Key", "wrong-key");
+        keyFilter.doFilter(healthInvalidKey, new MockHttpServletResponse(), (req, res) -> {});
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    }
+
+    @Test
+    void securityConfig_beanFactoryAndNullOidcUserBranches() {
+        MgmtUserService mgmtUserService = mock(MgmtUserService.class);
+        SecurityConfig config = new SecurityConfig("scim-admin", "scim-user", "roles", "k", 9090, mgmtUserService);
+
+        assertThat(config.actuatorApiKeyAuthFilter()).isNotNull();
+        assertThat(config.oidcUserService()).isNotNull();
+        assertThatThrownBy(() -> config.processOidcUser(null))
+                .isInstanceOf(OAuth2AuthenticationException.class);
+    }
+
     private static OidcUser buildOidcUser(Map<String, Object> claims) {
         Instant now = Instant.now();
         OidcIdToken idToken = new OidcIdToken("id-token", now, now.plusSeconds(3600), claims);
