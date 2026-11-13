@@ -46,6 +46,7 @@ At minimum, set:
 - `AUTH0_CLIENT_SECRET`
 - `AUTH0_ISSUER_URI`
 - `AUTH0_REDIRECT_URI`
+- `APP_COMPLIANCE_PUBLIC_BASE_URL` (absolute http(s) URL of the public website, e.g. `https://scimsandbox.net`)
 
 Optional but commonly useful:
 

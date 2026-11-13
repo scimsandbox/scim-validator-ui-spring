@@ -21,6 +21,7 @@ import de.palsoftware.scim.validator.ui.repo.ValidationRunPublicationRepository;
 import de.palsoftware.scim.validator.ui.repo.ValidationRunRepository;
 import de.palsoftware.scim.validator.ui.repo.ValidationTestResultRepository;
 import de.palsoftware.scim.validator.ui.security.TargetUrlPolicy;
+import de.palsoftware.scim.validator.ui.util.BaseUrl;
 import de.palsoftware.scim.validator.ui.util.Slugifier;
 import org.junit.platform.engine.TestExecutionResult;
 import org.junit.platform.engine.support.descriptor.MethodSource;
@@ -146,8 +147,8 @@ public class ValidationRunService {
     @Value("${app.runs.max-published-per-user:50}")
     private int maxPublishedRunsPerUser = 50;
 
-    @Value("${app.compliance.public-base-url:https://scimsandbox.net}")
-    private String publicBaseUrl = "https://scimsandbox.net";
+    @Value("${app.compliance.public-base-url}")
+    private String publicBaseUrl;
 
     @Value("${app.compliance.reservation-timeout-seconds:300}")
     private long reservationTimeoutSeconds = 300;
@@ -266,8 +267,7 @@ public class ValidationRunService {
     }
 
     public String getEffectivePublicBaseUrl() {
-        String url = (publicBaseUrl != null && !publicBaseUrl.isBlank()) ? publicBaseUrl.trim() : "https://scimsandbox.net";
-        return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
+        return BaseUrl.require("app.compliance.public-base-url", publicBaseUrl);
     }
 
     public void setPublicBaseUrl(String publicBaseUrl) {

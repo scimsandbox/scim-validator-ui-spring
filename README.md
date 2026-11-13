@@ -130,7 +130,7 @@ For local development, that usually means either:
 | `APP_GITHUB_API_URL` | no | GitHub API base URL (`app.github.api-url`). Default: `https://api.github.com` |
 | `APP_COMPLIANCE_MIN_PUBLISH_SCORE` | no | Minimum Core RFC Conformance percentage required to publish (`app.compliance.min-publish-score`). Default: `50` |
 | `APP_COMPLIANCE_MIN_CORE_COVERAGE_PERCENT` | no | Minimum testable Core requirement execution coverage percentage required to publish (`app.compliance.min-core-coverage-percent`). Default: `50` |
-| `APP_COMPLIANCE_PUBLIC_BASE_URL` | no | Public compliance directory base URL (`app.compliance.public-base-url`). Default: `https://scimsandbox.net` |
+| `APP_COMPLIANCE_PUBLIC_BASE_URL` | yes | Public website base URL (`app.compliance.public-base-url`), e.g. `https://scimsandbox.net`; used for published report/badge URLs and the What's New link and `/news/index.json` feed |
 | `APP_COMPLIANCE_SAMPLE_RUN_IDS` | no | Comma-separated UUIDs of official sample fixture runs (`app.compliance.sample-run-ids`). |
 | `APP_COMPLIANCE_RESERVATION_TIMEOUT_SECONDS` | no | Seconds before a pending publication reservation is treated as stale and retryable (`app.compliance.reservation-timeout-seconds`). Default: `300` |
 | `APP_COMPLIANCE_RESERVATION_CLEANUP_INTERVAL_MS` | no | Milliseconds between background sweeps that purge stale pending publication reservations (`app.compliance.reservation-cleanup-interval-ms`). Default: `60000` |
@@ -152,6 +152,7 @@ export AUTH0_CLIENT_ID=your-auth0-client-id
 export AUTH0_CLIENT_SECRET=your-auth0-client-secret
 export AUTH0_ISSUER_URI=https://your-tenant.us.auth0.com/
 export AUTH0_REDIRECT_URI=http://localhost:8082/login/oauth2/code/auth0
+export APP_COMPLIANCE_PUBLIC_BASE_URL=https://scimsandbox.net
 ```
 
 ### 3. Start the app
@@ -222,6 +223,7 @@ docker run --rm \
   -e AUTH0_CLIENT_SECRET=your-auth0-client-secret \
   -e AUTH0_ISSUER_URI=https://your-tenant.us.auth0.com/ \
   -e AUTH0_REDIRECT_URI=http://localhost:8082/login/oauth2/code/auth0 \
+  -e APP_COMPLIANCE_PUBLIC_BASE_URL=https://scimsandbox.net \
   scim-validator-ui:dev
 ```
 

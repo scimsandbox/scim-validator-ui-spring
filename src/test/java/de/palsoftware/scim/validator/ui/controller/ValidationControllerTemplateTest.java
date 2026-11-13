@@ -31,10 +31,13 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@WebMvcTest(controllers = ValidationController.class, excludeAutoConfiguration = {
+@WebMvcTest(controllers = ValidationController.class,
+        properties = "app.compliance.public-base-url=https://website.example.test/",
+        excludeAutoConfiguration = {
                 OAuth2ClientAutoConfiguration.class,
                 OAuth2ClientWebSecurityAutoConfiguration.class,
                 SecurityAutoConfiguration.class,
@@ -70,7 +73,36 @@ class ValidationControllerTemplateTest {
                                 .principal(new TestingAuthenticationToken("user@example.com", "n/a")))
                                 .andExpect(status().isOk())
                                 .andExpect(content().string(org.hamcrest.Matchers
-                                                .containsString("action=\"/validator-ui/runs\"")));
+                                                .containsString("action=\"/validator-ui/runs\"")))
+                                .andExpect(content().string(org.hamcrest.Matchers
+                                                .containsString("href=\"https://website.example.test/#news\"")))
+                                .andExpect(content().string(org.hamcrest.Matchers.containsString(
+                                                "data-news-feed-url=\"https://website.example.test/news/index.json\"")))
+                                .andExpect(content().string(org.hamcrest.Matchers
+                                                .containsString("/js/dock-news.js")));
+        }
+
+        @Test
+        void indexRerenderedAfterFormErrorsStillBuildsTheNewsLink() throws Exception {
+                when(validationRunService.listRuns(anyString(), anyBoolean())).thenReturn(List.of());
+
+                // Blank form fields send POST /runs down the binding-error branch, which re-renders "index"
+                // from a hand-built model. The website URL must still be there, not "null/#news".
+                mockMvc.perform(post("/validator-ui/runs")
+                                .contextPath("/validator-ui")
+                                .param("name", "")
+                                .param("baseUrl", "")
+                                .param("authToken", "")
+                                .requestAttr("_csrf", CSRF_TOKEN)
+                                .principal(new TestingAuthenticationToken("user@example.com", "n/a")))
+                                .andExpect(status().isOk())
+                                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.view().name("index"))
+                                .andExpect(content().string(org.hamcrest.Matchers
+                                                .containsString("href=\"https://website.example.test/#news\"")))
+                                .andExpect(content().string(org.hamcrest.Matchers.containsString(
+                                                "data-news-feed-url=\"https://website.example.test/news/index.json\"")))
+                                .andExpect(content().string(org.hamcrest.Matchers.not(
+                                                org.hamcrest.Matchers.containsString("null/#news"))));
         }
 
         @Test
@@ -129,7 +161,11 @@ class ValidationControllerTemplateTest {
                                 .principal(new TestingAuthenticationToken("user@example.com", "n/a")))
                                 .andExpect(status().isOk())
                                 .andExpect(content().string(
-                                                org.hamcrest.Matchers.containsString("href=\"/validator-ui/\"")));
+                                                org.hamcrest.Matchers.containsString("href=\"/validator-ui/\"")))
+                                .andExpect(content().string(org.hamcrest.Matchers
+                                                .containsString("href=\"https://website.example.test/#news\"")))
+                                .andExpect(content().string(org.hamcrest.Matchers
+                                                .containsString("/js/dock-news.js")));
         }
 
         @Test
