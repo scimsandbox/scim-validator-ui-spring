@@ -334,4 +334,24 @@ class ValidationControllerTemplateTest {
                                 .andExpect(content().string(org.hamcrest.Matchers.not(
                                                 org.hamcrest.Matchers.containsString("Publish to Directory"))));
         }
+
+        @Test
+        void indexScript_doesNotLoadCredentialsFromQueryString() throws Exception {
+                when(validationRunService.listRuns(anyString(), anyBoolean())).thenReturn(List.of());
+
+                String html = mockMvc.perform(get("/validator-ui/")
+                                .contextPath("/validator-ui")
+                                .requestAttr("_csrf", CSRF_TOKEN)
+                                .principal(new TestingAuthenticationToken("user@example.com", "n/a")))
+                                .andExpect(status().isOk())
+                                .andReturn().getResponse().getContentAsString();
+
+                org.assertj.core.api.Assertions.assertThat(html)
+                                .doesNotContain("urlParams.get('token')")
+                                .doesNotContain("urlParams.get('url')")
+                                .doesNotContain("searchParams.get('token')")
+                                .doesNotContain("searchParams.get('url')")
+                                .contains("var hashStr = window.location.hash.substring(1);")
+                                .contains("var hashParams = new URLSearchParams(hashStr);");
+        }
 }

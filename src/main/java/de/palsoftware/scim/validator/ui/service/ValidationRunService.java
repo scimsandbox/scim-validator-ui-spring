@@ -23,6 +23,7 @@ import de.palsoftware.scim.validator.ui.repo.ValidationTestResultRepository;
 import de.palsoftware.scim.validator.ui.security.TargetUrlPolicy;
 import de.palsoftware.scim.validator.ui.util.BaseUrl;
 import de.palsoftware.scim.validator.ui.util.Slugifier;
+import jakarta.annotation.PreDestroy;
 import org.junit.platform.engine.TestExecutionResult;
 import org.junit.platform.engine.support.descriptor.MethodSource;
 import org.junit.platform.launcher.Launcher;
@@ -43,6 +44,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -57,13 +60,21 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
+import java.util.regex.Pattern;
 
 import static org.junit.platform.engine.discovery.DiscoverySelectors.selectClass;
 
@@ -78,10 +89,19 @@ import static org.junit.platform.engine.discovery.DiscoverySelectors.selectClass
  * or distributed locks.</p>
  */
 @Service
-@Transactional(readOnly = true)
 public class ValidationRunService {
 
     private static final Logger log = LoggerFactory.getLogger(ValidationRunService.class);
+
+    public static final int DEFAULT_MAX_CONCURRENT_RUNS = 4;
+    public static final int DEFAULT_MAX_QUEUE_SIZE = 8;
+    public static final int DEFAULT_MAX_ACTIVE_RUNS_PER_USER = 2;
+
+    private static final AtomicInteger RUNNER_THREAD_COUNTER = new AtomicInteger(0);
+    private static final Pattern AUTH_HEADER_SCRUB_PATTERN = Pattern.compile(
+            "(?im)(Authorization\\s*+:\\s*+(?:Bearer|Basic)\\s++)[^\\s,;\"'\\r\\n]++");
+    private static final Pattern BEARER_TOKEN_SCRUB_PATTERN = Pattern.compile(
+            "(?i)(\\bBearer\\s++)[A-Za-z0-9._~+/=-]{8,}+");
 
     private final ValidationRunRepository runRepository;
     private final ValidationMgmtUserRepository mgmtUserRepository;
@@ -90,12 +110,18 @@ public class ValidationRunService {
     private final ValidationRunPublicationRepository publicationRepository;
     private final ValidationProgressTracker progressTracker;
     private final ExecutorService executorService;
+    private final boolean ownsExecutor;
+
+    private TargetUrlPolicy targetUrlPolicy;
+    private PlatformTransactionManager transactionManager;
+    private SpecCatalogService specCatalogService;
 
     public ValidationRunService(ValidationRunRepository runRepository,
             ValidationMgmtUserRepository mgmtUserRepository,
             ValidationTestResultRepository testResultRepository,
             ValidationHttpExchangeRepository exchangeRepository) {
-        this(runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, null, new ValidationProgressTracker(), Executors.newCachedThreadPool());
+        this(runRepository, mgmtUserRepository, testResultRepository, exchangeRepository,
+                null, new ValidationProgressTracker(), null);
     }
 
     public ValidationRunService(ValidationRunRepository runRepository,
@@ -103,7 +129,8 @@ public class ValidationRunService {
             ValidationTestResultRepository testResultRepository,
             ValidationHttpExchangeRepository exchangeRepository,
             ValidationProgressTracker progressTracker) {
-        this(runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, null, progressTracker, Executors.newCachedThreadPool());
+        this(runRepository, mgmtUserRepository, testResultRepository, exchangeRepository,
+                null, progressTracker, null);
     }
 
     public ValidationRunService(ValidationRunRepository runRepository,
@@ -112,7 +139,30 @@ public class ValidationRunService {
             ValidationHttpExchangeRepository exchangeRepository,
             ValidationProgressTracker progressTracker,
             ExecutorService executorService) {
-        this(runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, null, progressTracker, executorService);
+        this(runRepository, mgmtUserRepository, testResultRepository, exchangeRepository,
+                null, progressTracker, executorService);
+    }
+
+    public ValidationRunService(ValidationRunRepository runRepository,
+            ValidationMgmtUserRepository mgmtUserRepository,
+            ValidationTestResultRepository testResultRepository,
+            ValidationHttpExchangeRepository exchangeRepository,
+            ValidationRunPublicationRepository publicationRepository,
+            ValidationProgressTracker progressTracker) {
+        this(runRepository, mgmtUserRepository, testResultRepository, exchangeRepository,
+                publicationRepository, progressTracker, null);
+    }
+
+    public ValidationRunService(ValidationRunRepository runRepository,
+            ValidationMgmtUserRepository mgmtUserRepository,
+            ValidationTestResultRepository testResultRepository,
+            ValidationHttpExchangeRepository exchangeRepository,
+            ValidationRunPublicationRepository publicationRepository,
+            ValidationProgressTracker progressTracker,
+            ExecutorService executorService) {
+        this(runRepository, mgmtUserRepository, testResultRepository, exchangeRepository,
+                publicationRepository, progressTracker, executorService,
+                null, null, null, null, null);
     }
 
     @Autowired
@@ -120,25 +170,76 @@ public class ValidationRunService {
             ValidationMgmtUserRepository mgmtUserRepository,
             ValidationTestResultRepository testResultRepository,
             ValidationHttpExchangeRepository exchangeRepository,
-            ValidationRunPublicationRepository publicationRepository,
-            ValidationProgressTracker progressTracker) {
-        this(runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, publicationRepository, progressTracker, Executors.newCachedThreadPool());
+            @Autowired(required = false) ValidationRunPublicationRepository publicationRepository,
+            ValidationProgressTracker progressTracker,
+            @Autowired(required = false) TargetUrlPolicy targetUrlPolicy,
+            @Autowired(required = false) PlatformTransactionManager transactionManager,
+            @Autowired(required = false) SpecCatalogService specCatalogService,
+            @Value("${app.runs.max-concurrent:4}") Integer maxConcurrentRuns,
+            @Value("${app.runs.max-queue-size:8}") Integer maxQueueSize) {
+        this(runRepository, mgmtUserRepository, testResultRepository, exchangeRepository,
+                publicationRepository, progressTracker, null,
+                targetUrlPolicy, transactionManager, specCatalogService, maxConcurrentRuns, maxQueueSize);
     }
 
-    public ValidationRunService(ValidationRunRepository runRepository,
+    private ValidationRunService(ValidationRunRepository runRepository,
             ValidationMgmtUserRepository mgmtUserRepository,
             ValidationTestResultRepository testResultRepository,
             ValidationHttpExchangeRepository exchangeRepository,
             ValidationRunPublicationRepository publicationRepository,
             ValidationProgressTracker progressTracker,
-            ExecutorService executorService) {
+            ExecutorService executorService,
+            TargetUrlPolicy targetUrlPolicy,
+            PlatformTransactionManager transactionManager,
+            SpecCatalogService specCatalogService,
+            Integer maxConcurrentRuns,
+            Integer maxQueueSize) {
         this.runRepository = runRepository;
         this.mgmtUserRepository = mgmtUserRepository;
         this.testResultRepository = testResultRepository;
         this.exchangeRepository = exchangeRepository;
         this.publicationRepository = publicationRepository;
         this.progressTracker = progressTracker != null ? progressTracker : new ValidationProgressTracker();
-        this.executorService = executorService != null ? executorService : Executors.newCachedThreadPool();
+        if (executorService != null) {
+            this.executorService = executorService;
+            this.ownsExecutor = false;
+        } else {
+            int poolSize = maxConcurrentRuns != null ? maxConcurrentRuns : DEFAULT_MAX_CONCURRENT_RUNS;
+            int queueSize = maxQueueSize != null ? maxQueueSize : DEFAULT_MAX_QUEUE_SIZE;
+            this.executorService = createBoundedRunExecutor(poolSize, queueSize);
+            this.ownsExecutor = true;
+        }
+        this.targetUrlPolicy = targetUrlPolicy != null ? targetUrlPolicy : new TargetUrlPolicy(false);
+        this.transactionManager = transactionManager;
+        this.specCatalogService = specCatalogService;
+    }
+
+    public static ThreadPoolExecutor createBoundedRunExecutor(int maxConcurrentRuns, int maxQueueSize) {
+        int poolSize = Math.max(1, maxConcurrentRuns);
+        int queueCapacity = Math.max(1, maxQueueSize);
+        ThreadPoolExecutor executor = new ThreadPoolExecutor(
+                poolSize,
+                poolSize,
+                60L,
+                TimeUnit.SECONDS,
+                new LinkedBlockingQueue<>(queueCapacity),
+                runnable -> {
+                    Thread thread = new Thread(runnable,
+                            "scim-validation-runner-" + RUNNER_THREAD_COUNTER.incrementAndGet());
+                    thread.setDaemon(true);
+                    return thread;
+                },
+                new ThreadPoolExecutor.AbortPolicy()
+        );
+        executor.allowCoreThreadTimeOut(true);
+        return executor;
+    }
+
+    @PreDestroy
+    public void shutdownExecutor() {
+        if (ownsExecutor) {
+            executorService.shutdownNow();
+        }
     }
 
     @Value("${app.runs.max-per-user:10}")
@@ -147,17 +248,14 @@ public class ValidationRunService {
     @Value("${app.runs.max-published-per-user:50}")
     private int maxPublishedRunsPerUser = 50;
 
+    @Value("${app.runs.max-active-per-user:2}")
+    private int maxActiveRunsPerUser = DEFAULT_MAX_ACTIVE_RUNS_PER_USER;
+
     @Value("${app.compliance.public-base-url}")
     private String publicBaseUrl;
 
     @Value("${app.compliance.reservation-timeout-seconds:300}")
     private long reservationTimeoutSeconds = 300;
-
-    @Autowired(required = false)
-    private PlatformTransactionManager transactionManager;
-
-    @Autowired(required = false)
-    private SpecCatalogService specCatalogService;
 
     public static final int DEFAULT_DISCOVERED_TEST_COUNT = 280;
 
@@ -169,9 +267,26 @@ public class ValidationRunService {
 
     private final Set<UUID> reconciliationRequiredRunIds = ConcurrentHashMap.newKeySet();
     private final Map<UUID, PendingReconciliation> pendingReconciliations = new ConcurrentHashMap<>();
+    private final Map<String, AtomicInteger> activeRunsByUser = new ConcurrentHashMap<>();
 
     public void setTransactionManager(PlatformTransactionManager transactionManager) {
         this.transactionManager = transactionManager;
+    }
+
+    public void setSpecCatalogService(SpecCatalogService specCatalogService) {
+        this.specCatalogService = specCatalogService;
+    }
+
+    public void setTargetUrlPolicy(TargetUrlPolicy targetUrlPolicy) {
+        this.targetUrlPolicy = targetUrlPolicy != null ? targetUrlPolicy : new TargetUrlPolicy(false);
+    }
+
+    public void setMaxActiveRunsPerUser(int maxActiveRunsPerUser) {
+        this.maxActiveRunsPerUser = Math.max(1, maxActiveRunsPerUser);
+    }
+
+    public int getMaxActiveRunsPerUser() {
+        return maxActiveRunsPerUser;
     }
 
     public void markReconciliationRequired(UUID runId) {
@@ -204,8 +319,12 @@ public class ValidationRunService {
         }
     }
 
-    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public Optional<CompliancePublicationResult> tryReconcilePendingPublication(ValidationRun run) {
+        return tryReconcilePendingPublicationInternal(run);
+    }
+
+    private Optional<CompliancePublicationResult> tryReconcilePendingPublicationInternal(ValidationRun run) {
         if (run == null || run.getId() == null) {
             return Optional.empty();
         }
@@ -239,7 +358,7 @@ public class ValidationRunService {
                 if (pending == null) {
                     return Optional.empty();
                 }
-                recordPublication(managed, pending.actorEmail(), pending.request(), pending.result());
+                recordPublicationInternal(managed, pending.actorEmail(), pending.request(), pending.result());
                 if (managed != run && managed.getPublication() != null) {
                     run.setPublication(managed.getPublication());
                 }
@@ -248,10 +367,20 @@ public class ValidationRunService {
         }
     }
 
-    private <T> T executeInIsolatedTransaction(java.util.function.Supplier<T> action) {
+    private <T> T executeInIsolatedTransaction(Supplier<T> action) {
         if (transactionManager != null) {
             TransactionTemplate txTemplate = new TransactionTemplate(transactionManager);
-            txTemplate.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+            txTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+            txTemplate.setReadOnly(false);
+            return txTemplate.execute(status -> action.get());
+        }
+        return action.get();
+    }
+
+    private <T> T executeInReadWriteTransaction(Supplier<T> action) {
+        if (transactionManager != null) {
+            TransactionTemplate txTemplate = new TransactionTemplate(transactionManager);
+            txTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRED);
             txTemplate.setReadOnly(false);
             return txTemplate.execute(status -> action.get());
         }
@@ -310,6 +439,60 @@ public class ValidationRunService {
         public int getMaxRuns() { return maxRuns; }
     }
 
+    private void validateTargetUrl(String url) {
+        TargetUrlPolicy policy = this.targetUrlPolicy != null ? this.targetUrlPolicy : new TargetUrlPolicy(false);
+        policy.validateUri(url);
+    }
+
+    private String acquireActiveRunSlot(String actorEmail) {
+        String key = (actorEmail != null && !actorEmail.isBlank())
+                ? actorEmail.trim().toLowerCase(Locale.ROOT)
+                : "__anonymous__";
+        int limit = Math.max(1, maxActiveRunsPerUser);
+        AtomicBoolean acquired = new AtomicBoolean(false);
+        activeRunsByUser.compute(key, (k, existing) -> {
+            int current = existing == null ? 0 : existing.get();
+            if (current >= limit) {
+                return existing;
+            }
+            acquired.set(true);
+            return new AtomicInteger(current + 1);
+        });
+        if (!acquired.get()) {
+            throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
+                    "Too many concurrent validation runs for your account (maximum " + limit
+                            + " active runs). Please wait for a running suite to finish.");
+        }
+        return key;
+    }
+
+    private void releaseActiveRunSlot(String slotKey) {
+        if (slotKey == null) {
+            return;
+        }
+        activeRunsByUser.computeIfPresent(slotKey, (k, counter) -> {
+            int remaining = counter.decrementAndGet();
+            return remaining <= 0 ? null : counter;
+        });
+    }
+
+    static String scrubSecrets(String text, String authToken) {
+        if (text == null || text.isEmpty()) {
+            return text;
+        }
+        String scrubbed = text;
+        if (authToken != null && !authToken.isBlank()) {
+            scrubbed = scrubbed.replace(authToken, "[REDACTED]");
+            String trimmed = authToken.trim();
+            if (!trimmed.isEmpty() && !trimmed.equals(authToken)) {
+                scrubbed = scrubbed.replace(trimmed, "[REDACTED]");
+            }
+        }
+        scrubbed = AUTH_HEADER_SCRUB_PATTERN.matcher(scrubbed).replaceAll("$1[REDACTED]");
+        scrubbed = BEARER_TOKEN_SCRUB_PATTERN.matcher(scrubbed).replaceAll("$1[REDACTED]");
+        return scrubbed;
+    }
+
     private boolean pruneOldUnpublishedRuns(String actorEmail) {
         List<ValidationRun> userRuns = runRepository.findOwnedRuns(actorEmail, Sort.by(Sort.Direction.ASC, "executedAt"));
         boolean oldRunDeleted = false;
@@ -327,7 +510,7 @@ public class ValidationRunService {
                         log.warn("Skipping deletion of run {} with active publication reservation during auto-pruning", runToDelete.getId());
                         continue;
                     }
-                    releasePublicationReservation(runToDelete);
+                    releasePublicationReservationInternal(runToDelete);
                 }
                 clearReconciliationRequired(runToDelete.getId());
                 runRepository.delete(runToDelete);
@@ -337,121 +520,193 @@ public class ValidationRunService {
         return oldRunDeleted;
     }
 
-    @Transactional
+    private record InitializedRun(ValidationRun run, boolean oldRunDeleted) {}
+
     public ExecutionResult executeRun(ValidationRunForm form, String actorEmail) {
-        TargetUrlPolicy.validate(form.baseUrl());
-        boolean oldRunDeleted = pruneOldUnpublishedRuns(actorEmail);
-
-        int plannedTotal = discoverTestCount(form.baseUrl(), form.authToken());
-
-        ValidationRun run = new ValidationRun();
-        run.setName(form.name().trim());
-        run.setTargetUrl(form.baseUrl().trim());
-        run.setExecutedAt(OffsetDateTime.now());
-        run.setStatus("RUNNING");
-        ValidationMgmtUser owner = mgmtUserRepository.findById(actorEmail)
-                .orElseThrow(() -> new IllegalStateException("Authenticated management user must exist"));
-        run.setCreatedByUser(owner);
-        run.setTotalTests(plannedTotal);
-        run.setPassedTests(0);
-        run.setFailedTests(0);
-        run = runRepository.save(run);
-
-        UUID runId = run.getId();
-        if (runId != null) {
-            progressTracker.registerRun(runId, plannedTotal, "/runs/" + runId);
-        }
-
-        ValidationExecutionListener listener = null;
+        validateTargetUrl(form.baseUrl());
+        String activeSlotKey = acquireActiveRunSlot(actorEmail);
         try {
-            ValidatorConfiguration.useRunOverrides(form.baseUrl(), form.authToken());
-            ScimBaseSpec.resetRunState();
+            int plannedTotal = discoverTestCount(form.baseUrl(), form.authToken());
+
+            InitializedRun initialized = executeInReadWriteTransaction(() -> {
+                boolean deleted = pruneOldUnpublishedRuns(actorEmail);
+                ValidationRun created = new ValidationRun();
+                created.setName(form.name().trim());
+                created.setTargetUrl(form.baseUrl().trim());
+                created.setExecutedAt(OffsetDateTime.now());
+                created.setStatus("RUNNING");
+                ValidationMgmtUser owner = mgmtUserRepository.findById(actorEmail)
+                        .orElseThrow(() -> new IllegalStateException("Authenticated management user must exist"));
+                created.setCreatedByUser(owner);
+                created.setTotalTests(plannedTotal);
+                created.setPassedTests(0);
+                created.setFailedTests(0);
+                return new InitializedRun(runRepository.save(created), deleted);
+            });
+
+            ValidationRun run = initialized.run();
+            boolean oldRunDeleted = initialized.oldRunDeleted();
+
+            UUID runId = run.getId();
             if (runId != null) {
-                ScimRunContext.beginRun(runId.toString());
+                progressTracker.registerRun(runId, plannedTotal, "/runs/" + runId);
             }
 
-            listener = new ValidationExecutionListener(run, plannedTotal, progressTracker, testResultRepository,
-                    exchangeRepository);
-            Launcher launcher = LauncherFactory.create();
-            executeLauncher(launcher, buildRequest(), listener);
+            ValidationExecutionListener listener = null;
+            try {
+                validateTargetUrl(form.baseUrl());
+                ValidatorConfiguration.useRunOverrides(form.baseUrl(), form.authToken());
+                ScimBaseSpec.resetRunState();
+                if (runId != null) {
+                    ScimRunContext.beginRun(runId.toString());
+                }
 
-            run.setTotalTests(listener.total);
-            run.setPassedTests(listener.passed);
-            run.setFailedTests(listener.failed);
-            run.setSkippedTests(listener.skipped);
-            run.setAbortedTests(listener.aborted);
-            String finalStatus;
-            if (listener.failed > 0) {
-                finalStatus = "FAILED";
-            } else if (listener.skipped > 0 || listener.aborted > 0) {
-                finalStatus = "PARTIAL";
-            } else {
-                finalStatus = "PASSED";
-            }
-            run.setStatus(finalStatus);
-            if (runId != null) {
-                progressTracker.completeRun(runId, finalStatus, listener.total, listener.passed, listener.failed);
-            }
-        } catch (Exception ex) {
-            log.error("Error executing validation run", ex);
-            run.setStatus("ERROR");
-            if (listener != null) {
+                listener = new ValidationExecutionListener(run, plannedTotal, progressTracker, testResultRepository,
+                        exchangeRepository, form.authToken());
+                Launcher launcher = LauncherFactory.create();
+                executeLauncher(launcher, buildRequest(), listener);
+
                 run.setTotalTests(listener.total);
                 run.setPassedTests(listener.passed);
                 run.setFailedTests(listener.failed);
                 run.setSkippedTests(listener.skipped);
                 run.setAbortedTests(listener.aborted);
-            } else {
-                run.setTotalTests(0);
+                String finalStatus;
+                if (listener.failed > 0) {
+                    finalStatus = "FAILED";
+                } else if (listener.skipped > 0 || listener.aborted > 0) {
+                    finalStatus = "PARTIAL";
+                } else {
+                    finalStatus = "PASSED";
+                }
+                run.setStatus(finalStatus);
+                if (runId != null) {
+                    progressTracker.completeRun(runId, finalStatus, listener.total, listener.passed, listener.failed);
+                }
+            } catch (Exception ex) {
+                if (ex instanceof InterruptedException) {
+                    Thread.currentThread().interrupt();
+                }
+                String safeMsg = scrubSecrets(ex.getMessage() != null ? ex.getMessage() : "Execution error", form.authToken());
+                log.error("Error executing validation run {}: {}", runId, safeMsg);
+                run.setStatus("ERROR");
+                if (listener != null) {
+                    run.setTotalTests(listener.total);
+                    run.setPassedTests(listener.passed);
+                    run.setFailedTests(listener.failed);
+                    run.setSkippedTests(listener.skipped);
+                    run.setAbortedTests(listener.aborted);
+                } else {
+                    run.setTotalTests(0);
+                }
+                if (runId != null) {
+                    progressTracker.failRun(runId, safeMsg);
+                }
+            } finally {
+                ScimRunContext.endRun();
+                ScimBaseSpec.resetRunState();
+                ValidatorConfiguration.clearRunOverrides();
             }
-            if (runId != null) {
-                progressTracker.failRun(runId, ex.getMessage() != null ? ex.getMessage() : "Execution error");
-            }
-        } finally {
-            ScimRunContext.endRun();
-            ScimBaseSpec.resetRunState();
-            ValidatorConfiguration.clearRunOverrides();
-        }
 
-        return new ExecutionResult(runRepository.save(run), oldRunDeleted, maxRunsPerUser);
+            ValidationRun finalRun = run;
+            ValidationRun savedRun = executeInReadWriteTransaction(() -> runRepository.save(finalRun));
+            return new ExecutionResult(savedRun, oldRunDeleted, maxRunsPerUser);
+        } finally {
+            releaseActiveRunSlot(activeSlotKey);
+        }
     }
 
-    @Transactional
     public ExecutionResult executeRunAsync(ValidationRunForm form, String actorEmail) {
-        TargetUrlPolicy.validate(form.baseUrl());
-        boolean oldRunDeleted = pruneOldUnpublishedRuns(actorEmail);
+        validateTargetUrl(form.baseUrl());
+        String activeSlotKey = acquireActiveRunSlot(actorEmail);
+        boolean backgroundTaskSubmitted = false;
+        try {
+            int plannedTotal = discoverTestCount(form.baseUrl(), form.authToken());
 
-        int plannedTotal = discoverTestCount(form.baseUrl(), form.authToken());
+            InitializedRun initialized = executeInReadWriteTransaction(() -> {
+                boolean deleted = pruneOldUnpublishedRuns(actorEmail);
+                ValidationRun created = new ValidationRun();
+                created.setName(form.name().trim());
+                created.setTargetUrl(form.baseUrl().trim());
+                created.setExecutedAt(OffsetDateTime.now());
+                created.setStatus("RUNNING");
+                ValidationMgmtUser owner = mgmtUserRepository.findById(actorEmail)
+                        .orElseThrow(() -> new IllegalStateException("Authenticated management user must exist"));
+                created.setCreatedByUser(owner);
+                created.setTotalTests(plannedTotal);
+                created.setPassedTests(0);
+                created.setFailedTests(0);
+                return new InitializedRun(runRepository.saveAndFlush(created), deleted);
+            });
 
-        ValidationRun run = new ValidationRun();
-        run.setName(form.name().trim());
-        run.setTargetUrl(form.baseUrl().trim());
-        run.setExecutedAt(OffsetDateTime.now());
-        run.setStatus("RUNNING");
-        ValidationMgmtUser owner = mgmtUserRepository.findById(actorEmail)
-                .orElseThrow(() -> new IllegalStateException("Authenticated management user must exist"));
-        run.setCreatedByUser(owner);
-        run.setTotalTests(plannedTotal);
-        run.setPassedTests(0);
-        run.setFailedTests(0);
-        run = runRepository.saveAndFlush(run);
+            ValidationRun run = initialized.run();
+            boolean oldRunDeleted = initialized.oldRunDeleted();
 
-        UUID runId = run.getId();
-        if (runId != null) {
-            progressTracker.registerRun(runId, plannedTotal, "/runs/" + runId);
-            if (TransactionSynchronizationManager.isSynchronizationActive()) {
-                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                    @Override
-                    public void afterCommit() {
-                        executorService.submit(() -> runTestsInBackground(runId, form, plannedTotal));
+            UUID runId = run.getId();
+            if (runId != null) {
+                progressTracker.registerRun(runId, plannedTotal, "/runs/" + runId);
+                Runnable backgroundTask = () -> {
+                    try {
+                        runTestsInBackground(runId, form, plannedTotal);
+                    } finally {
+                        releaseActiveRunSlot(activeSlotKey);
                     }
-                });
-            } else {
-                executorService.submit(() -> runTestsInBackground(runId, form, plannedTotal));
+                };
+                if (TransactionSynchronizationManager.isSynchronizationActive()) {
+                    TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            try {
+                                executorService.submit(backgroundTask);
+                            } catch (RejectedExecutionException rex) {
+                                releaseActiveRunSlot(activeSlotKey);
+                                handleRejectedBackgroundRun(runId);
+                            }
+                        }
+
+                        @Override
+                        public void afterCompletion(int status) {
+                            if (status != STATUS_COMMITTED) {
+                                releaseActiveRunSlot(activeSlotKey);
+                            }
+                        }
+                    });
+                    backgroundTaskSubmitted = true;
+                } else {
+                    try {
+                        executorService.submit(backgroundTask);
+                        backgroundTaskSubmitted = true;
+                    } catch (RejectedExecutionException rex) {
+                        progressTracker.failRun(runId, "Server validation capacity reached; please retry shortly.");
+                        cleanupUnstartedRun(runId);
+                        throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
+                                "Server validation capacity reached. Please wait a moment and try again.", rex);
+                    }
+                }
+            }
+
+            return new ExecutionResult(run, oldRunDeleted, maxRunsPerUser);
+        } finally {
+            if (!backgroundTaskSubmitted) {
+                releaseActiveRunSlot(activeSlotKey);
             }
         }
+    }
 
-        return new ExecutionResult(run, oldRunDeleted, maxRunsPerUser);
+    private void handleRejectedBackgroundRun(UUID runId) {
+        progressTracker.failRun(runId, "Server validation capacity reached; please retry shortly.");
+        cleanupUnstartedRun(runId);
+    }
+
+    private void cleanupUnstartedRun(UUID runId) {
+        try {
+            executeInReadWriteTransaction(() -> {
+                runRepository.deleteById(runId);
+                return null;
+            });
+        } catch (Exception cleanupEx) {
+            log.warn("Could not clean up rejected validation run {}: {}", runId, cleanupEx.getMessage());
+        }
     }
 
     void runTestsInBackground(UUID runId, ValidationRunForm form, int plannedTotal) {
@@ -477,6 +732,7 @@ public class ValidationRunService {
 
         ValidationExecutionListener listener = null;
         try {
+            validateTargetUrl(form.baseUrl());
             ValidatorConfiguration.useRunOverrides(form.baseUrl(), form.authToken());
             ScimBaseSpec.resetRunState();
             ScimRunContext.beginRun(runId.toString());
@@ -486,7 +742,8 @@ public class ValidationRunService {
                     plannedTotal,
                     progressTracker,
                     testResultRepository,
-                    exchangeRepository
+                    exchangeRepository,
+                    form.authToken()
             );
 
             Launcher launcher = LauncherFactory.create();
@@ -506,11 +763,16 @@ public class ValidationRunService {
                 finalStatus = "PASSED";
             }
             run.setStatus(finalStatus);
-            runRepository.save(run);
+            ValidationRun completedRun = run;
+            executeInReadWriteTransaction(() -> runRepository.save(completedRun));
 
             progressTracker.completeRun(runId, finalStatus, listener.total, listener.passed, listener.failed);
         } catch (Throwable ex) {
-            log.error("Error executing background validation run {}", runId, ex);
+            if (ex instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            String safeMsg = scrubSecrets(ex.getMessage() != null ? ex.getMessage() : "Execution error", form.authToken());
+            log.error("Error executing background validation run {}: {}", runId, safeMsg);
             run.setStatus("ERROR");
             if (listener != null) {
                 run.setTotalTests(listener.total);
@@ -521,8 +783,9 @@ public class ValidationRunService {
             } else {
                 run.setTotalTests(0);
             }
-            runRepository.save(run);
-            progressTracker.failRun(runId, ex.getMessage() != null ? ex.getMessage() : "Execution error");
+            ValidationRun failedRun = run;
+            executeInReadWriteTransaction(() -> runRepository.save(failedRun));
+            progressTracker.failRun(runId, safeMsg);
         } finally {
             ScimRunContext.endRun();
             ScimBaseSpec.resetRunState();
@@ -530,6 +793,7 @@ public class ValidationRunService {
         }
     }
 
+    @Transactional(readOnly = true)
     public long countOwnedRuns(String actorEmail) {
         if (actorEmail == null) {
             return 0;
@@ -537,6 +801,7 @@ public class ValidationRunService {
         return runRepository.countOwnedRuns(actorEmail);
     }
 
+    @Transactional(readOnly = true)
     public List<ValidationRunView> listRuns(String actorEmail, boolean admin) {
         List<ValidationRun> runs;
         Sort sort = Sort.by(Sort.Direction.DESC, "executedAt");
@@ -551,11 +816,13 @@ public class ValidationRunService {
                 .toList();
     }
 
+    @Transactional(readOnly = true)
     public ValidationRunView getRun(UUID runId, String actorEmail, boolean admin) {
         ValidationRun run = requireRunAccess(runId, actorEmail, admin);
         return ValidationRunView.from(run, getReservationTimeout());
     }
 
+    @Transactional(readOnly = true)
     public List<ValidationTestResultView> getTestResults(UUID runId, String actorEmail, boolean admin) {
         requireRunAccess(runId, actorEmail, admin);
         List<ValidationTestResult> testResults = testResultRepository.findByRunIdOrderByStartedAtAsc(runId);
@@ -596,13 +863,19 @@ public class ValidationRunService {
         runRepository.deleteById(runId);
     }
 
+    @Transactional(readOnly = true)
     public long countOwnedPublications(String actorEmail) {
+        return countOwnedPublicationsInternal(actorEmail);
+    }
+
+    private long countOwnedPublicationsInternal(String actorEmail) {
         if (actorEmail == null || publicationRepository == null) {
             return 0;
         }
         return publicationRepository.countOwnedPublications(actorEmail);
     }
 
+    @Transactional(readOnly = true)
     public List<ValidationRunPublication> listPublishedRuns(String actorEmail, boolean admin) {
         if (publicationRepository == null) {
             return List.of();
@@ -620,7 +893,7 @@ public class ValidationRunService {
 
     @EventListener(ApplicationReadyEvent.class)
     @Scheduled(fixedDelayString = "${app.compliance.reservation-cleanup-interval-ms:60000}")
-    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public void cleanupStalePendingReservations() {
         for (Map.Entry<UUID, PendingReconciliation> entry : pendingReconciliations.entrySet()) {
             UUID runId = entry.getKey();
@@ -633,7 +906,7 @@ public class ValidationRunService {
                     clearReconciliationRequired(runId);
                     continue;
                 }
-                if (tryReconcilePendingPublication(run).isPresent()) {
+                if (tryReconcilePendingPublicationInternal(run).isPresent()) {
                     log.info("Successfully reconciled pending compliance publication for runId={}", runId);
                 }
             } catch (Exception ex) {
@@ -641,7 +914,7 @@ public class ValidationRunService {
             }
         }
         try {
-            int purged = purgeStalePendingReservations();
+            int purged = purgeStalePendingReservationsInternal();
             if (purged > 0) {
                 log.info("Purged {} stale pending compliance publication reservation(s)", purged);
             }
@@ -650,8 +923,12 @@ public class ValidationRunService {
         }
     }
 
-    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public int purgeStalePendingReservations() {
+        return purgeStalePendingReservationsInternal();
+    }
+
+    private int purgeStalePendingReservationsInternal() {
         if (publicationRepository == null) {
             return 0;
         }
@@ -694,7 +971,7 @@ public class ValidationRunService {
     }
 
     public void validatePublishQuota(String actorEmail, UUID excludeRunId) {
-        long currentPublishedCount = countOwnedPublications(actorEmail);
+        long currentPublishedCount = countOwnedPublicationsInternal(actorEmail);
         long activePendingCount = countActivePendingReservations(actorEmail, excludeRunId);
         if (currentPublishedCount + activePendingCount >= maxPublishedRunsPerUser) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
@@ -754,10 +1031,12 @@ public class ValidationRunService {
         }
     }
 
+    @Transactional(readOnly = true)
     public ValidationRun getRunEntity(UUID runId, String actorEmail, boolean admin) {
         return requireRunAccess(runId, actorEmail, admin);
     }
 
+    @Transactional(readOnly = true)
     public List<ValidationTestResult> getRawTestResults(UUID runId) {
         if (testResultRepository == null) {
             return List.of();
@@ -765,6 +1044,7 @@ public class ValidationRunService {
         return testResultRepository.findByRunIdOrderByStartedAtAsc(runId);
     }
 
+    @Transactional(readOnly = true)
     public List<ValidationHttpExchange> getRawExchanges(UUID runId) {
         if (exchangeRepository == null) {
             return List.of();
@@ -773,6 +1053,7 @@ public class ValidationRunService {
         return exchanges != null ? exchanges : List.of();
     }
 
+    @Transactional(readOnly = true)
     public Optional<ValidationRunPublication> getPublication(UUID runId) {
         if (publicationRepository == null) {
             return Optional.empty();
@@ -781,7 +1062,7 @@ public class ValidationRunService {
                 .filter(p -> !p.isPendingReservation());
     }
 
-    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public ValidationRunPublication reservePublication(
             ValidationRun run,
             String actorEmail,
@@ -844,6 +1125,10 @@ public class ValidationRunService {
 
     @Transactional
     public void releasePublicationReservation(ValidationRun run) {
+        releasePublicationReservationInternal(run);
+    }
+
+    private void releasePublicationReservationInternal(ValidationRun run) {
         if (run == null || run.getId() == null || reconciliationRequiredRunIds.contains(run.getId())) {
             return;
         }
@@ -885,6 +1170,14 @@ public class ValidationRunService {
 
     @Transactional
     public ValidationRunPublication recordPublication(
+            ValidationRun run,
+            String actorEmail,
+            CompliancePublishRequest request,
+            CompliancePublicationResult result) {
+        return recordPublicationInternal(run, actorEmail, request, result);
+    }
+
+    private ValidationRunPublication recordPublicationInternal(
             ValidationRun run,
             String actorEmail,
             CompliancePublishRequest request,
@@ -1080,6 +1373,7 @@ public class ValidationRunService {
         private final ValidationProgressTracker progressTracker;
         private final ValidationTestResultRepository testResultRepository;
         private final ValidationHttpExchangeRepository exchangeRepository;
+        private final String authToken;
         private final Map<String, OffsetDateTime> starts = new LinkedHashMap<>();
 
         private int total;
@@ -1093,11 +1387,21 @@ public class ValidationRunService {
                 ValidationProgressTracker progressTracker,
                 ValidationTestResultRepository testResultRepository,
                 ValidationHttpExchangeRepository exchangeRepository) {
+            this(run, plannedTotal, progressTracker, testResultRepository, exchangeRepository, null);
+        }
+
+        ValidationExecutionListener(ValidationRun run,
+                int plannedTotal,
+                ValidationProgressTracker progressTracker,
+                ValidationTestResultRepository testResultRepository,
+                ValidationHttpExchangeRepository exchangeRepository,
+                String authToken) {
             this.run = run;
             this.plannedTotal = plannedTotal;
             this.progressTracker = progressTracker;
             this.testResultRepository = testResultRepository;
             this.exchangeRepository = exchangeRepository;
+            this.authToken = authToken;
         }
 
         int getTotal() {
@@ -1173,8 +1477,8 @@ public class ValidationRunService {
 
             Throwable throwable = testExecutionResult.getThrowable().orElse(null);
             if (throwable != null) {
-                testResult.setErrorMessage(throwable.getMessage());
-                testResult.setStackTrace(stackTrace(throwable));
+                testResult.setErrorMessage(scrubSecrets(throwable.getMessage(), authToken));
+                testResult.setStackTrace(scrubSecrets(stackTrace(throwable), authToken));
             }
 
             testResult = testResultRepository.save(testResult);
@@ -1189,11 +1493,11 @@ public class ValidationRunService {
                 exchange.setSequenceNumber(i + 1);
                 exchange.setMethod(captured.getMethod());
                 exchange.setUrl(captured.getUrl());
-                exchange.setRequestHeaders(captured.getRequestHeaders());
-                exchange.setRequestBody(captured.getRequestBody());
+                exchange.setRequestHeaders(scrubSecrets(captured.getRequestHeaders(), authToken));
+                exchange.setRequestBody(scrubSecrets(captured.getRequestBody(), authToken));
                 exchange.setResponseStatus(captured.getResponseStatus());
-                exchange.setResponseHeaders(captured.getResponseHeaders());
-                exchange.setResponseBody(captured.getResponseBody());
+                exchange.setResponseHeaders(scrubSecrets(captured.getResponseHeaders(), authToken));
+                exchange.setResponseBody(scrubSecrets(captured.getResponseBody(), authToken));
                 exchange.setCreatedAt(captured.getCreatedAt() == null ? OffsetDateTime.now() : captured.getCreatedAt());
                 persisted.add(exchange);
             }
@@ -1242,7 +1546,7 @@ public class ValidationRunService {
             testResult.setStatus("SKIPPED");
             testResult.setStartedAt(now);
             testResult.setFinishedAt(now);
-            testResult.setErrorMessage(reason);
+            testResult.setErrorMessage(scrubSecrets(reason, authToken));
 
             Object source = testIdentifier.getSource().orElse(null);
             if (source instanceof MethodSource methodSource) {

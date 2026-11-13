@@ -17,7 +17,7 @@ public class CompliancePublishFormData {
     @NotBlank(message = "Product slug is required")
     @Size(max = 120, message = "Product slug cannot exceed 120 characters")
     @Pattern(
-            regexp = "^(?![0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$)[a-z0-9]+(?:-[a-z0-9]+)*$",
+            regexp = "^(?![0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$)[a-z0-9]++(?:-[a-z0-9]++)*+$",
             message = "Product slug must only contain lowercase alphanumeric characters separated by single hyphens and cannot be a UUID")
     private String productSlug;
 

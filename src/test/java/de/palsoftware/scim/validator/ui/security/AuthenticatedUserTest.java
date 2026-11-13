@@ -25,45 +25,53 @@ class AuthenticatedUserTest {
     @Test
     void email_nullAuthentication_throws() {
         assertThatThrownBy(() -> AuthenticatedUser.email(null))
-            .isInstanceOf(IllegalStateException.class)
-            .hasMessageContaining("Missing authentication");
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Missing authentication");
     }
 
     @Test
-    void email_nonOidcPrincipal_returnsAuthName() {
-        Authentication auth = new TestingAuthenticationToken("john", "pass");
+    void emailOrNull_nullAuthentication_returnsNull() {
+        assertThat(AuthenticatedUser.emailOrNull(null)).isNull();
+    }
+
+    @Test
+    void email_nonOidcPrincipal_returnsNormalizedAuthName() {
+        Authentication auth = new TestingAuthenticationToken("  John.Doe@Example.com  ", "pass");
 
         String result = AuthenticatedUser.email(auth);
 
-        assertThat(result).isEqualTo("john");
+        assertThat(result).isEqualTo("john.doe@example.com");
+    }
+
+    @Test
+    void email_oidcPrincipalWithVerifiedEmail_returnsNormalizedEmail() {
+        OidcUser oidcUser = buildOidcUser(Map.of(
+                "sub", "oidc-sub-789",
+                "email", "  User@Example.COM ",
+                "email_verified", true,
+                "preferred_username", "spoofed@victim.com"
+        ));
+        Authentication auth = new TestingAuthenticationToken(oidcUser, "n/a");
+
+        assertThat(AuthenticatedUser.email(auth)).isEqualTo("user@example.com");
+        assertThat(AuthenticatedUser.emailOrNull(auth)).isEqualTo("user@example.com");
     }
 
     @ParameterizedTest
-    @MethodSource("usernameOidcCases")
-    void email_oidcClaims_returnExpectedEmail(Map<String, Object> claims, String expectedEmail) {
+    @MethodSource("unverifiedOrFallbackOnlyOidcCases")
+    void email_oidcWithoutVerifiedEmail_rejectsAndDoesNotFallbackToMutableClaims(Map<String, Object> claims) {
         OidcUser oidcUser = buildOidcUser(claims);
         Authentication auth = new TestingAuthenticationToken(oidcUser, "n/a");
 
-        String result = AuthenticatedUser.email(auth);
-
-        assertThat(result).isEqualTo(expectedEmail);
-    }
-
-    @Test
-    void email_oidcPrincipal_returnsEmail() {
-        OidcUser oidcUser = buildOidcUser(Map.of("sub", "oidc-sub-789", "email", "user@example.com"));
-        Authentication auth = new TestingAuthenticationToken(oidcUser, "n/a");
-
-        String result = AuthenticatedUser.email(auth);
-
-        assertThat(result).isEqualTo("user@example.com");
+        assertThatThrownBy(() -> AuthenticatedUser.email(auth))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("verified email");
+        assertThat(AuthenticatedUser.emailOrNull(auth)).isNull();
     }
 
     @Test
     void displayName_nullAuthentication_returnsNull() {
-        String result = AuthenticatedUser.displayName(null);
-
-        assertThat(result).isNull();
+        assertThat(AuthenticatedUser.displayName(null)).isNull();
     }
 
     @ParameterizedTest
@@ -79,38 +87,30 @@ class AuthenticatedUserTest {
 
     @Test
     void isAdmin_nullAuthentication_returnsFalse() {
-        boolean result = AuthenticatedUser.isAdmin(null);
-
-        assertThat(result).isFalse();
+        assertThat(AuthenticatedUser.isAdmin(null)).isFalse();
     }
 
     @Test
     void isAdmin_withRoleAdmin_returnsTrue() {
         Authentication auth = new TestingAuthenticationToken("user", "pass",
-            List.of(new SimpleGrantedAuthority("ROLE_ADMIN")));
+                List.of(new SimpleGrantedAuthority("ROLE_ADMIN")));
 
-        boolean result = AuthenticatedUser.isAdmin(auth);
-
-        assertThat(result).isTrue();
+        assertThat(AuthenticatedUser.isAdmin(auth)).isTrue();
     }
 
     @Test
     void isAdmin_withOtherRoles_returnsFalse() {
         Authentication auth = new TestingAuthenticationToken("user", "pass",
-            List.of(new SimpleGrantedAuthority("ROLE_USER")));
+                List.of(new SimpleGrantedAuthority("ROLE_USER")));
 
-        boolean result = AuthenticatedUser.isAdmin(auth);
-
-        assertThat(result).isFalse();
+        assertThat(AuthenticatedUser.isAdmin(auth)).isFalse();
     }
 
     @Test
     void isAdmin_noAuthorities_returnsFalse() {
         Authentication auth = new TestingAuthenticationToken("user", "pass");
 
-        boolean result = AuthenticatedUser.isAdmin(auth);
-
-        assertThat(result).isFalse();
+        assertThat(AuthenticatedUser.isAdmin(auth)).isFalse();
     }
 
     private static OidcUser buildOidcUser(Map<String, Object> claims) {
@@ -120,19 +120,22 @@ class AuthenticatedUserTest {
         return new DefaultOidcUser(Collections.emptyList(), idToken);
     }
 
-    private static Stream<Arguments> usernameOidcCases() {
+    private static Stream<Arguments> unverifiedOrFallbackOnlyOidcCases() {
         return Stream.of(
-            Arguments.of(Map.of("sub", "sub-123", "preferred_username", "preferred.user@example.com"), "preferred.user@example.com"),
-            Arguments.of(Map.of("sub", "sub-123", "upn", "user@contoso.com"), "user@contoso.com"),
-            Arguments.of(Map.of("sub", "sub-123", "email", "user@example.com"), "user@example.com"),
-            Arguments.of(Map.of("sub", "sub-456", "unique_name", "unique@example.com"), "unique@example.com")
+                Arguments.of(Map.of("sub", "sub-1", "email", "user@example.com", "email_verified", false)),
+                Arguments.of(Map.of("sub", "sub-2", "email", "user@example.com")),
+                Arguments.of(Map.of("sub", "sub-3", "email", "   ", "email_verified", true)),
+                Arguments.of(Map.of("sub", "sub-4", "preferred_username", "victim@example.com", "email_verified", true)),
+                Arguments.of(Map.of("sub", "sub-5", "upn", "victim@contoso.com", "email_verified", true)),
+                Arguments.of(Map.of("sub", "sub-6", "unique_name", "victim@example.com", "email_verified", true))
         );
     }
 
     private static Stream<Arguments> displayNameOidcCases() {
         return Stream.of(
-            Arguments.of(Map.of("sub", "sub-123", "email", "display@example.com"), "display@example.com"),
-            Arguments.of(Map.of("sub", "sub-123", "preferred_username", "fallback.user@example.com"), "fallback.user@example.com")
+                Arguments.of(Map.of("sub", "sub-123", "email", "display@example.com", "email_verified", true), "display@example.com"),
+                Arguments.of(Map.of("sub", "sub-123", "email", "display@example.com", "email_verified", false), null),
+                Arguments.of(Map.of("sub", "sub-123", "preferred_username", "fallback.user@example.com", "email_verified", true), null)
         );
     }
 }

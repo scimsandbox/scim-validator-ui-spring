@@ -55,7 +55,7 @@ management:
     port: 9090
   endpoint:
     health:
-      show-components: always
+      show-components: when_authorized
   endpoints:
     web:
       exposure:
@@ -75,8 +75,9 @@ logging:
 
 app:
   security:
+    allow-localhost-targets: ${ALLOW_LOCALHOST_TARGETS:false}
     actuator:
-      api-key: ${ACTUATOR_API_KEY}
+      api-key: ${ACTUATOR_API_KEY:}
     oidc:
       role-claim: https://scimplayground.dev/roles
       admin-role: admin
@@ -85,6 +86,9 @@ app:
   runs:
     max-per-user: ${APP_RUNS_MAX_PER_USER:10}
     max-published-per-user: ${APP_RUNS_MAX_PUBLISHED_PER_USER:50}
+    max-concurrent: ${APP_RUNS_MAX_CONCURRENT:4}
+    max-queue-size: ${APP_RUNS_MAX_QUEUE_SIZE:8}
+    max-active-per-user: ${APP_RUNS_MAX_ACTIVE_PER_USER:2}
 
   compliance:
     public-base-url: ${APP_COMPLIANCE_PUBLIC_BASE_URL}

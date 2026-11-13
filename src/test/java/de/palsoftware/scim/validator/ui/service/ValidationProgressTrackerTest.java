@@ -109,4 +109,37 @@ class ValidationProgressTrackerTest {
         SseEmitter emitter = tracker.subscribe(runId);
         assertThat(emitter).isNotNull();
     }
+
+    @Test
+    void evictsExpiredTerminalAndStaleRunsAndBoundsTrackedSize() {
+        long[] nowMs = {1_000L};
+        ValidationProgressTracker bounded = new ValidationProgressTracker(3, 500L, () -> nowMs[0]);
+
+        UUID run1 = UUID.randomUUID();
+        UUID run2 = UUID.randomUUID();
+        UUID run3 = UUID.randomUUID();
+        bounded.registerRun(run1, 10, "/runs/" + run1);
+        bounded.completeRun(run1, "PASSED", 10, 10, 0);
+
+        nowMs[0] = 1_200L;
+        bounded.registerRun(run2, 10, "/runs/" + run2);
+        bounded.registerRun(run3, 10, "/runs/" + run3);
+        assertThat(bounded.trackedCount()).isEqualTo(3);
+
+        // Advance past terminal TTL (500ms) for run1
+        nowMs[0] = 1_600L;
+        assertThat(bounded.getProgress(run1)).isNull();
+        assertThat(bounded.trackedCount()).isEqualTo(2);
+
+        // Overflow beyond maxTrackedRuns=3 caps size at 3
+        UUID run4 = UUID.randomUUID();
+        UUID run5 = UUID.randomUUID();
+        bounded.registerRun(run4, 10, "/runs/" + run4);
+        bounded.registerRun(run5, 10, "/runs/" + run5);
+        assertThat(bounded.trackedCount()).isEqualTo(3);
+
+        // Advance past DEFAULT_STALE_RUNNING_TTL_MS -> stale running entries are evicted
+        nowMs[0] = 1_600L + ValidationProgressTracker.DEFAULT_STALE_RUNNING_TTL_MS + 1_000L;
+        assertThat(bounded.trackedCount()).isZero();
+    }
 }

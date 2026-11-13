@@ -1,6 +1,7 @@
 package de.palsoftware.scim.validator.ui.security;
 
 import de.palsoftware.scim.validator.ui.service.MgmtUserService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -18,6 +19,7 @@ import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.security.oauth2.core.oidc.user.DefaultOidcUser;
 import org.springframework.security.oauth2.core.oidc.user.OidcUser;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.logout.LogoutFilter;
 import org.springframework.security.web.authentication.logout.LogoutSuccessHandler;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
@@ -39,26 +41,48 @@ public class SecurityConfig {
     private final String adminRole;
     private final String userRole;
     private final String roleClaim;
+    private final String actuatorApiKey;
+    private final int managementPort;
     private final MgmtUserService mgmtUserService;
 
+    public SecurityConfig(String adminRole,
+                          String userRole,
+                          String roleClaim,
+                          MgmtUserService mgmtUserService) {
+        this(adminRole, userRole, roleClaim, "", 9090, mgmtUserService);
+    }
+
+    @Autowired
     public SecurityConfig(@Value("${app.security.oidc.admin-role}") String adminRole,
                           @Value("${app.security.oidc.user-role}") String userRole,
                           @Value("${app.security.oidc.role-claim}") String roleClaim,
+                          @Value("${app.security.actuator.api-key:}") String actuatorApiKey,
+                          @Value("${management.server.port:9090}") int managementPort,
                           @Lazy MgmtUserService mgmtUserService) {
         this.adminRole = adminRole;
         this.userRole = userRole;
         this.roleClaim = roleClaim;
+        this.actuatorApiKey = actuatorApiKey;
+        this.managementPort = managementPort;
         this.mgmtUserService = mgmtUserService;
     }
 
     @Bean
+    public ActuatorApiKeyAuthFilter actuatorApiKeyAuthFilter() {
+        return new ActuatorApiKeyAuthFilter(actuatorApiKey, managementPort);
+    }
+
+    @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http,
-                                                   LogoutSuccessHandler oidcLogoutSuccessHandler) throws Exception {
+                                                   LogoutSuccessHandler oidcLogoutSuccessHandler,
+                                                   ActuatorApiKeyAuthFilter actuatorApiKeyAuthFilter) throws Exception {
         CsrfTokenRequestAttributeHandler requestHandler = new CsrfTokenRequestAttributeHandler();
         requestHandler.setCsrfRequestAttributeName(null);
 
-        http.authorizeHttpRequests(authorize -> authorize
-                .requestMatchers("/actuator/**").permitAll()
+        http.addFilterBefore(actuatorApiKeyAuthFilter, LogoutFilter.class)
+            .authorizeHttpRequests(authorize -> authorize
+                .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
+                .requestMatchers("/actuator", "/actuator/**").hasAuthority("ROLE_ACTUATOR")
                 // favicon*.svg rather than an exact match: this app serves one badge per section
                 // (favicon.svg for SCIM Compliance, favicon-playground.svg for SCIM Playground).
                 .requestMatchers("/css/**", "/js/**", "/images/**", "/favicon*.svg", "/favicon.ico", "/error").permitAll()
@@ -70,7 +94,7 @@ public class SecurityConfig {
             .csrf(csrf -> csrf
                 .csrfTokenRepository(csrfTokenRepository())
                 .csrfTokenRequestHandler(requestHandler));
-        
+
         return http.build();
     }
 
@@ -79,26 +103,33 @@ public class SecurityConfig {
         return new OidcClientInitiatedLogoutSuccessHandler(clientRegistrationRepository);
     }
 
-    private OidcUserService oidcUserService() {
+    OidcUserService oidcUserService() {
         OidcUserService delegate = new OidcUserService();
         return new OidcUserService() {
             @Override
             public OidcUser loadUser(OidcUserRequest userRequest) throws OAuth2AuthenticationException {
                 OidcUser oidcUser = delegate.loadUser(userRequest);
-                Set<GrantedAuthority> mappedAuthorities = new HashSet<>(oidcUser.getAuthorities());
-
-                addMappedAuthorities(extractClaimValues(oidcUser.getClaim(roleClaim)), mappedAuthorities);
-
-                String email = AuthenticatedUser.resolveEmail(oidcUser);
-                if (email == null) {
-                    throw new OAuth2AuthenticationException(
-                            new OAuth2Error("invalid_token", "An email claim is required for management access", null));
-                }
-                mgmtUserService.provisionUser(email);
-
-                return new DefaultOidcUser(mappedAuthorities, oidcUser.getIdToken(), oidcUser.getUserInfo());
+                return processOidcUser(oidcUser);
             }
         };
+    }
+
+    OidcUser processOidcUser(OidcUser oidcUser) {
+        if (oidcUser == null || !Boolean.TRUE.equals(oidcUser.getEmailVerified())) {
+            throw new OAuth2AuthenticationException(
+                    new OAuth2Error("unverified_email", "A verified email address is required for management access", null));
+        }
+        String email = AuthenticatedUser.resolveEmail(oidcUser);
+        if (email == null) {
+            throw new OAuth2AuthenticationException(
+                    new OAuth2Error("invalid_token", "A valid verified email claim is required for management access", null));
+        }
+
+        Set<GrantedAuthority> mappedAuthorities = new HashSet<>(oidcUser.getAuthorities());
+        addMappedAuthorities(extractClaimValues(oidcUser.getClaim(roleClaim)), mappedAuthorities);
+        mgmtUserService.provisionUser(email);
+
+        return new DefaultOidcUser(mappedAuthorities, oidcUser.getIdToken(), oidcUser.getUserInfo());
     }
 
     @SuppressWarnings("java:S3330")

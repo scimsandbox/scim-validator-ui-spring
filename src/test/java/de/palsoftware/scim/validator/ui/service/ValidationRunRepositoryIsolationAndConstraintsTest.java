@@ -148,15 +148,13 @@ public class ValidationRunRepositoryIsolationAndConstraintsTest {
                 }
 
                 // 1. Raw insert with mismatched email (adminEmail instead of aliceEmail) MUST fail composite FK
-                assertThatThrownBy(() -> {
-                    try (PreparedStatement ps = conn.prepareStatement(
-                            "INSERT INTO validation_run_publication (run_id, created_by_email, product_name, product_slug, product_version, license_type, core_score, supported_capabilities, total_capabilities, report_url, badge_url, published_at) "
-                                    + "VALUES (?, ?, 'Prod', 'prod', '1.0.0', 'Apache-2.0', 95, 8, 10, 'https://scimsandbox.net/r', 'https://scimsandbox.net/b', CURRENT_TIMESTAMP)")) {
-                        ps.setObject(1, aliceRunId);
-                        ps.setString(2, adminEmail);
-                        ps.executeUpdate();
-                    }
-                }).isInstanceOf(SQLException.class);
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "INSERT INTO validation_run_publication (run_id, created_by_email, product_name, product_slug, product_version, license_type, core_score, supported_capabilities, total_capabilities, report_url, badge_url, published_at) "
+                                + "VALUES (?, ?, 'Prod', 'prod', '1.0.0', 'Apache-2.0', 95, 8, 10, 'https://scimsandbox.net/r', 'https://scimsandbox.net/b', CURRENT_TIMESTAMP)")) {
+                    ps.setObject(1, aliceRunId);
+                    ps.setString(2, adminEmail);
+                    assertThatThrownBy(ps::executeUpdate).isInstanceOf(SQLException.class);
+                }
 
                 // 2. Admin publishing Alice's run via ValidationRunService.recordPublication uses run owner's email and succeeds against composite FK
                 ValidationRun aliceRun = new ValidationRun();
@@ -194,12 +192,10 @@ public class ValidationRunRepositoryIsolationAndConstraintsTest {
                 }
 
                 // 3. ON DELETE RESTRICT prevents deleting the published validation_run
-                assertThatThrownBy(() -> {
-                    try (PreparedStatement ps = conn.prepareStatement("DELETE FROM validation_run WHERE id = ?")) {
-                        ps.setObject(1, aliceRunId);
-                        ps.executeUpdate();
-                    }
-                }).isInstanceOf(SQLException.class);
+                try (PreparedStatement ps = conn.prepareStatement("DELETE FROM validation_run WHERE id = ?")) {
+                    ps.setObject(1, aliceRunId);
+                    assertThatThrownBy(ps::executeUpdate).isInstanceOf(SQLException.class);
+                }
 
                 // 4. CHECK constraint rejects core_score > 100
                 UUID secondRunId = UUID.randomUUID();
@@ -210,15 +206,13 @@ public class ValidationRunRepositoryIsolationAndConstraintsTest {
                     ps.setString(2, aliceEmail);
                     ps.executeUpdate();
                 }
-                assertThatThrownBy(() -> {
-                    try (PreparedStatement ps = conn.prepareStatement(
-                            "INSERT INTO validation_run_publication (run_id, created_by_email, product_name, product_slug, product_version, license_type, core_score, supported_capabilities, total_capabilities, report_url, badge_url, published_at) "
-                                    + "VALUES (?, ?, 'Prod', 'prod', '2.0.0', 'Apache-2.0', 105, 8, 10, 'https://scimsandbox.net/r', 'https://scimsandbox.net/b', CURRENT_TIMESTAMP)")) {
-                        ps.setObject(1, secondRunId);
-                        ps.setString(2, aliceEmail);
-                        ps.executeUpdate();
-                    }
-                }).isInstanceOf(SQLException.class);
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "INSERT INTO validation_run_publication (run_id, created_by_email, product_name, product_slug, product_version, license_type, core_score, supported_capabilities, total_capabilities, report_url, badge_url, published_at) "
+                                + "VALUES (?, ?, 'Prod', 'prod', '2.0.0', 'Apache-2.0', 105, 8, 10, 'https://scimsandbox.net/r', 'https://scimsandbox.net/b', CURRENT_TIMESTAMP)")) {
+                    ps.setObject(1, secondRunId);
+                    ps.setString(2, aliceEmail);
+                    assertThatThrownBy(ps::executeUpdate).isInstanceOf(SQLException.class);
+                }
             }
         }
 
@@ -1047,6 +1041,8 @@ public class ValidationRunRepositoryIsolationAndConstraintsTest {
                 ValidationMgmtUserRepository userRepository,
                 ValidationRunPublicationRepository publicationRepository) {
             super(runRepository, userRepository, null, null, publicationRepository, null, Executors.newCachedThreadPool());
+            setTargetUrlPolicy(new de.palsoftware.scim.validator.ui.security.TargetUrlPolicy(
+                    false, host -> new java.net.InetAddress[]{java.net.InetAddress.getByName("93.184.216.34")}));
         }
 
         @Override

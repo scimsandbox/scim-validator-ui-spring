@@ -7,6 +7,7 @@ import de.palsoftware.scim.validator.ui.dto.PlaygroundExecuteResponse;
 import de.palsoftware.scim.validator.ui.security.TargetUrlPolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
@@ -23,6 +24,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 
 @Service
 public class PlaygroundExecutionService {
@@ -34,17 +37,34 @@ public class PlaygroundExecutionService {
     private static final int MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
     /** Pretty-printing parses and re-serialises, so it costs several extra copies of the body. */
     private static final int MAX_PRETTY_PRINT_BYTES = 256 * 1024;
+    private static final Set<String> RESTRICTED_CUSTOM_HEADERS = Set.of(
+            "accept",
+            "authorization",
+            "content-type",
+            "host",
+            "connection",
+            "content-length",
+            "transfer-encoding",
+            "upgrade"
+    );
 
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
+    private final TargetUrlPolicy targetUrlPolicy;
 
     public PlaygroundExecutionService() {
+        this(new TargetUrlPolicy(false));
+    }
+
+    @Autowired
+    public PlaygroundExecutionService(TargetUrlPolicy targetUrlPolicy) {
         this.httpClient = HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_1_1)
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .connectTimeout(CONNECT_TIMEOUT)
                 .build();
         this.objectMapper = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
+        this.targetUrlPolicy = Objects.requireNonNull(targetUrlPolicy, "TargetUrlPolicy must not be null");
     }
 
     public PlaygroundExecuteResponse execute(PlaygroundExecuteRequest request) {
@@ -55,8 +75,14 @@ public class PlaygroundExecutionService {
         Map<String, String> requestHeadersMap = new LinkedHashMap<>();
 
         try {
+            URI baseUri = targetUrlPolicy.validateUri(request.baseUrl());
+            URI targetUri = targetUrlPolicy.validateUri(fullUrl);
+            if (!sameOrigin(baseUri, targetUri)) {
+                throw new IllegalArgumentException("Invalid URL: endpoint must remain on the configured target origin");
+            }
+
             HttpRequest.Builder httpRequestBuilder = HttpRequest.newBuilder()
-                    .uri(TargetUrlPolicy.validate(fullUrl))
+                    .uri(targetUri)
                     .timeout(REQUEST_TIMEOUT);
 
             // Add standard or provided Accept header
@@ -89,35 +115,10 @@ public class PlaygroundExecutionService {
             }
 
             // Add any additional custom headers
-            if (request.headers() != null) {
-                for (Map.Entry<String, String> entry : request.headers().entrySet()) {
-                    String name = entry.getKey();
-                    String val = entry.getValue();
-                    if (name != null && val != null && !name.isBlank()) {
-                        if (!name.equalsIgnoreCase("Accept") &&
-                            !name.equalsIgnoreCase("Authorization") &&
-                            !name.equalsIgnoreCase("Content-Type")) {
-                            httpRequestBuilder.header(name, val);
-                            requestHeadersMap.put(name, val);
-                        }
-                    }
-                }
-            }
+            addCustomHeaders(request.headers(), httpRequestBuilder, requestHeadersMap);
 
             // Configure HTTP Method and Body
-            HttpRequest.BodyPublisher bodyPublisher = hasBody
-                    ? HttpRequest.BodyPublishers.ofString(request.body())
-                    : HttpRequest.BodyPublishers.noBody();
-
-            switch (method) {
-                case "GET" -> httpRequestBuilder.GET();
-                case "POST" -> httpRequestBuilder.POST(bodyPublisher);
-                case "PUT" -> httpRequestBuilder.PUT(bodyPublisher);
-                case "PATCH" -> httpRequestBuilder.method("PATCH", bodyPublisher);
-                case "DELETE" -> httpRequestBuilder.DELETE();
-                case "HEAD" -> httpRequestBuilder.method("HEAD", HttpRequest.BodyPublishers.noBody());
-                default -> httpRequestBuilder.method(method, bodyPublisher);
-            }
+            configureRequestMethod(httpRequestBuilder, method, request.body(), hasBody);
 
             HttpRequest httpRequest = httpRequestBuilder.build();
             HttpResponse<String> httpResponse = httpClient.send(httpRequest, responseInfo ->
@@ -173,6 +174,62 @@ public class PlaygroundExecutionService {
             log.error("Unexpected error executing playground request: {}", detail);
             return PlaygroundExecuteResponse.error("Execution error: " + detail, method, fullUrl, duration);
         }
+    }
+
+    private static void addCustomHeaders(
+            Map<String, String> headers,
+            HttpRequest.Builder httpRequestBuilder,
+            Map<String, String> requestHeadersMap) {
+        if (headers == null) {
+            return;
+        }
+        for (Map.Entry<String, String> entry : headers.entrySet()) {
+            String name = entry.getKey();
+            String val = entry.getValue();
+            if (name != null && val != null && !name.isBlank()
+                    && !RESTRICTED_CUSTOM_HEADERS.contains(name.trim().toLowerCase(Locale.ROOT))) {
+                httpRequestBuilder.header(name, val);
+                requestHeadersMap.put(name, val);
+            }
+        }
+    }
+
+    private static void configureRequestMethod(
+            HttpRequest.Builder httpRequestBuilder,
+            String method,
+            String body,
+            boolean hasBody) {
+        HttpRequest.BodyPublisher bodyPublisher = hasBody
+                ? HttpRequest.BodyPublishers.ofString(body)
+                : HttpRequest.BodyPublishers.noBody();
+
+        switch (method) {
+            case "GET" -> httpRequestBuilder.GET();
+            case "POST" -> httpRequestBuilder.POST(bodyPublisher);
+            case "PUT" -> httpRequestBuilder.PUT(bodyPublisher);
+            case "PATCH" -> httpRequestBuilder.method("PATCH", bodyPublisher);
+            case "DELETE" -> httpRequestBuilder.DELETE();
+            case "HEAD" -> httpRequestBuilder.method("HEAD", HttpRequest.BodyPublishers.noBody());
+            case "OPTIONS" -> httpRequestBuilder.method("OPTIONS", HttpRequest.BodyPublishers.noBody());
+            default -> throw new IllegalArgumentException("Unsupported HTTP method: " + method);
+        }
+    }
+
+    private static boolean sameOrigin(URI left, URI right) {
+        String leftScheme = left.getScheme() != null ? left.getScheme().toLowerCase(Locale.ROOT) : "";
+        String rightScheme = right.getScheme() != null ? right.getScheme().toLowerCase(Locale.ROOT) : "";
+        String leftHost = left.getHost() != null ? left.getHost().toLowerCase(Locale.ROOT) : "";
+        String rightHost = right.getHost() != null ? right.getHost().toLowerCase(Locale.ROOT) : "";
+        return leftScheme.equals(rightScheme)
+                && leftHost.equals(rightHost)
+                && effectivePort(left) == effectivePort(right);
+    }
+
+    private static int effectivePort(URI uri) {
+        if (uri.getPort() != -1) {
+            return uri.getPort();
+        }
+        return "https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80;
     }
 
     /**

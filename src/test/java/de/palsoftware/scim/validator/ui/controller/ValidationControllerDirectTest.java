@@ -4,6 +4,7 @@ import de.palsoftware.scim.validator.ui.dto.ValidationProgress;
 import de.palsoftware.scim.validator.ui.dto.ValidationRunForm;
 import de.palsoftware.scim.validator.ui.dto.ValidationRunView;
 import de.palsoftware.scim.validator.ui.model.ValidationRun;
+import de.palsoftware.scim.validator.ui.security.TargetUrlPolicy;
 import de.palsoftware.scim.validator.ui.service.MgmtUserService;
 import de.palsoftware.scim.validator.ui.service.ValidationProgressTracker;
 import de.palsoftware.scim.validator.ui.service.ValidationRunService;
@@ -40,6 +41,8 @@ class ValidationControllerDirectTest {
         runService = new TestValidationRunService();
         progressTracker = new ValidationProgressTracker();
         controller = new ValidationController(runService, new TestMgmtUserService(), progressTracker, "https://manager.example.com");
+        controller.setTargetUrlPolicy(new TargetUrlPolicy(
+                false, host -> new java.net.InetAddress[]{java.net.InetAddress.getByName("93.184.216.34")}));
         authentication = new TestingAuthenticationToken("testuser@example.com", "n/a");
     }
 

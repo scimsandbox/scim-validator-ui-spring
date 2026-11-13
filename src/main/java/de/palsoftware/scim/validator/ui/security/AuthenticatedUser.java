@@ -4,6 +4,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.oauth2.core.oidc.user.OidcUser;
 
+import java.util.Collection;
 import java.util.Locale;
 
 public final class AuthenticatedUser {
@@ -21,7 +22,7 @@ public final class AuthenticatedUser {
             if (resolved != null) {
                 return resolved;
             }
-            throw new IllegalStateException("Authenticated principal is missing an email address");
+            throw new IllegalStateException("Authenticated principal is missing a verified email address");
         }
         String fallback = authentication.getName();
         if (fallback == null || fallback.isBlank()) {
@@ -31,34 +32,52 @@ public final class AuthenticatedUser {
         return normalized != null ? normalized : fallback;
     }
 
-    public static String displayName(Authentication authentication) {
+    public static String emailOrNull(Authentication authentication) {
         if (authentication == null) {
             return null;
         }
-        return email(authentication);
+        Object principal = authentication.getPrincipal();
+        if (principal instanceof OidcUser oidcUser) {
+            return resolveEmail(oidcUser);
+        }
+        String fallback = authentication.getName();
+        if (fallback == null || fallback.isBlank()) {
+            return null;
+        }
+        String normalized = normalizeEmail(fallback);
+        return normalized != null ? normalized : fallback;
+    }
+
+    public static String displayName(Authentication authentication) {
+        return emailOrNull(authentication);
     }
 
     public static boolean isAdmin(Authentication authentication) {
         if (authentication == null) {
             return false;
         }
-        for (GrantedAuthority authority : authentication.getAuthorities()) {
-            if ("ROLE_ADMIN".equals(authority.getAuthority())) {
+        Collection<? extends GrantedAuthority> authorities = authentication.getAuthorities();
+        if (authorities == null) {
+            return false;
+        }
+        for (GrantedAuthority authority : authorities) {
+            if (authority != null && "ROLE_ADMIN".equals(authority.getAuthority())) {
                 return true;
             }
         }
         return false;
     }
 
+    /**
+     * Resolves the authenticated OIDC user's canonical email ONLY when {@code email_verified} is
+     * explicitly {@code true}. Mutable or unverified claims such as {@code preferred_username},
+     * {@code upn}, and {@code unique_name} are never used as identity fallbacks.
+     */
     public static String resolveEmail(OidcUser oidcUser) {
-        if (oidcUser == null) {
+        if (oidcUser == null || !Boolean.TRUE.equals(oidcUser.getEmailVerified())) {
             return null;
         }
-        return normalizeEmail(firstNonBlank(
-                oidcUser.getEmail(),
-                oidcUser.getClaimAsString("upn"),
-                oidcUser.getClaimAsString("unique_name"),
-                oidcUser.getPreferredUsername()));
+        return normalizeEmail(oidcUser.getEmail());
     }
 
     public static String normalizeEmail(String value) {
@@ -70,14 +89,5 @@ public final class AuthenticatedUser {
             return null;
         }
         return normalized;
-    }
-
-    private static String firstNonBlank(String... values) {
-        for (String value : values) {
-            if (value != null && !value.isBlank()) {
-                return value;
-            }
-        }
-        return null;
     }
 }

@@ -5,6 +5,7 @@ import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import de.palsoftware.scim.validator.ui.dto.PlaygroundExecuteRequest;
 import de.palsoftware.scim.validator.ui.dto.PlaygroundExecuteResponse;
+import de.palsoftware.scim.validator.ui.security.TargetUrlPolicy;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -12,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
@@ -27,7 +29,13 @@ class PlaygroundExecutionServiceTest {
     private static final AtomicReference<String> lastReceivedBody = new AtomicReference<>();
     private static final AtomicReference<String> lastReceivedMethod = new AtomicReference<>();
 
-    private final PlaygroundExecutionService service = new PlaygroundExecutionService();
+    private final PlaygroundExecutionService service = new PlaygroundExecutionService(
+            new TargetUrlPolicy(true, host -> {
+                if ("127.0.0.1".equals(host) || "localhost".equalsIgnoreCase(host)) {
+                    return new InetAddress[]{InetAddress.getByName("127.0.0.1")};
+                }
+                return new InetAddress[]{InetAddress.getByName("93.184.216.34")};
+            }));
 
     @BeforeAll
     static void startServer() throws IOException {
@@ -318,5 +326,59 @@ class PlaygroundExecutionServiceTest {
 
         assertThat(res.statusCode()).isEqualTo(0);
         assertThat(res.error()).contains("Invalid URL");
+    }
+
+    @Test
+    void execute_productionPolicy_blocksLocalhostPrivateDnsAndManagementPort() {
+        PlaygroundExecutionService strictService = new PlaygroundExecutionService(
+                new TargetUrlPolicy(false, host -> new InetAddress[]{InetAddress.getByName("10.0.0.25")}));
+
+        PlaygroundExecuteResponse localRes = strictService.execute(new PlaygroundExecuteRequest(
+                "http://127.0.0.1:" + serverPort + "/scim/v2",
+                "secret-token",
+                "GET",
+                "/Users",
+                null,
+                null
+        ));
+        assertThat(localRes.statusCode()).isEqualTo(0);
+        assertThat(localRes.error()).contains("localhost targets are not allowed");
+
+        PlaygroundExecuteResponse rebindRes = strictService.execute(new PlaygroundExecuteRequest(
+                "https://rebind.example.com/scim/v2",
+                "secret-token",
+                "GET",
+                "/Users",
+                null,
+                null
+        ));
+        assertThat(rebindRes.statusCode()).isEqualTo(0);
+        assertThat(rebindRes.error()).contains("private RFC 1918 target addresses are not allowed");
+
+        PlaygroundExecuteResponse mgmtPortRes = service.execute(new PlaygroundExecuteRequest(
+                "http://127.0.0.1:9090/actuator",
+                null,
+                "GET",
+                "/prometheus",
+                null,
+                null
+        ));
+        assertThat(mgmtPortRes.statusCode()).isEqualTo(0);
+        assertThat(mgmtPortRes.error()).contains("9090");
+    }
+
+    @Test
+    void execute_crossOriginEndpointOverride_isRejectedBeforeSendingBearerToken() {
+        PlaygroundExecuteResponse res = service.execute(new PlaygroundExecuteRequest(
+                "http://127.0.0.1:" + serverPort + "/scim/v2",
+                "secret-token-xyz",
+                "GET",
+                "https://evil.example.org/exfil",
+                null,
+                null
+        ));
+
+        assertThat(res.statusCode()).isEqualTo(0);
+        assertThat(res.error()).contains("configured target origin");
     }
 }

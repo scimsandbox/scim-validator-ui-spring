@@ -552,6 +552,8 @@ public class ValidationRunServiceChallengerTest {
                 ValidationMgmtUserRepository userRepository,
                 ValidationRunPublicationRepository publicationRepository) {
             super(runRepository, userRepository, null, null, publicationRepository, null, Executors.newCachedThreadPool());
+            setTargetUrlPolicy(new de.palsoftware.scim.validator.ui.security.TargetUrlPolicy(
+                    false, host -> new java.net.InetAddress[]{java.net.InetAddress.getByName("93.184.216.34")}));
         }
 
         @Override

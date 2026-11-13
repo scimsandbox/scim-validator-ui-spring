@@ -1,5 +1,6 @@
 package de.palsoftware.scim.validator.ui.service;
 
+import de.palsoftware.scim.validator.ui.dto.ValidationRunForm;
 import de.palsoftware.scim.validator.ui.dto.ValidationRunView;
 import de.palsoftware.scim.validator.ui.dto.ValidationTestResultView;
 import de.palsoftware.scim.validator.ui.model.ValidationHttpExchange;
@@ -10,6 +11,7 @@ import de.palsoftware.scim.validator.ui.repo.ValidationMgmtUserRepository;
 import de.palsoftware.scim.validator.ui.repo.ValidationHttpExchangeRepository;
 import de.palsoftware.scim.validator.ui.repo.ValidationRunRepository;
 import de.palsoftware.scim.validator.ui.repo.ValidationTestResultRepository;
+import de.palsoftware.scim.validator.ui.security.TargetUrlPolicy;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -461,9 +463,11 @@ class ValidationRunServiceTest {
                 listener.executionSkipped(id2, "Optional capability not supported");
             }
         };
+        partialRunService.setTargetUrlPolicy(new TargetUrlPolicy(
+                false, host -> new java.net.InetAddress[]{java.net.InetAddress.getByName("93.184.216.34")}));
 
-        de.palsoftware.scim.validator.ui.dto.ValidationRunForm form =
-                new de.palsoftware.scim.validator.ui.dto.ValidationRunForm("Partial Run", "https://example.com/scim/v2", "token");
+        ValidationRunForm form =
+                new ValidationRunForm("Partial Run", "https://example.com/scim/v2", "token");
         ValidationRunService.ExecutionResult result = partialRunService.executeRun(form, "user@example.com");
 
         assertThat(result.getRun().getStatus()).isEqualTo("PARTIAL");
@@ -491,6 +495,125 @@ class ValidationRunServiceTest {
 
         assertThat(reloadedRun.getSkippedTests()).isEqualTo(2);
         assertThat(reloadedRun.getAbortedTests()).isEqualTo(1);
+    }
+
+    @Test
+    void scrubSecrets_redactsRawBearerTokenAndAuthorizationHeadersFromPersistedArtifacts() {
+        String rawSecret = "super-secret-scim-bearer-9876543210";
+        String input = "Request failed with Authorization: Bearer " + rawSecret
+                + " and echoed token=" + rawSecret + " plus Bearer anotherLongBearerToken12345";
+
+        String scrubbed = ValidationRunService.scrubSecrets(input, rawSecret);
+
+        assertThat(scrubbed)
+                .doesNotContain(rawSecret)
+                .doesNotContain("anotherLongBearerToken12345")
+                .contains("[REDACTED]");
+    }
+
+    @Test
+    void executeRunAsync_whenBoundedExecutorQueueFull_rejectsWith429AndCleansUpRun() throws Exception {
+        ValidationMgmtUser owner = new ValidationMgmtUser("user@example.com", OffsetDateTime.now());
+        when(mgmtUserRepository.findById("user@example.com")).thenReturn(Optional.of(owner));
+        when(runRepository.saveAndFlush(any(ValidationRun.class))).thenAnswer(inv -> {
+            ValidationRun r = inv.getArgument(0);
+            var f = ValidationRun.class.getDeclaredField("id");
+            f.setAccessible(true);
+            f.set(r, UUID.randomUUID());
+            return r;
+        });
+
+        java.util.concurrent.CountDownLatch blockWorker = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.ThreadPoolExecutor tinyExecutor = ValidationRunService.createBoundedRunExecutor(1, 1);
+        try {
+            // Occupy the single worker thread and single queue slot
+            tinyExecutor.submit(() -> {
+                try {
+                    blockWorker.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+            tinyExecutor.submit(() -> {});
+
+            ValidationRunService boundedService = new ValidationRunService(
+                    runRepository, mgmtUserRepository, testResultRepository, exchangeRepository,
+                    progressTracker, tinyExecutor) {
+                @Override
+                int discoverTestCount(String baseUrl, String authToken) {
+                    return 5;
+                }
+            };
+            boundedService.setTargetUrlPolicy(new TargetUrlPolicy(
+                    false, host -> new java.net.InetAddress[]{java.net.InetAddress.getByName("93.184.216.34")}));
+            boundedService.setMaxActiveRunsPerUser(5);
+
+            ValidationRunForm form = new ValidationRunForm("Overflow Run", "https://example.com/scim/v2", "tok");
+            assertThatThrownBy(() -> boundedService.executeRunAsync(form, "user@example.com"))
+                    .isInstanceOf(ResponseStatusException.class)
+                    .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
+                            .isEqualTo(org.springframework.http.HttpStatus.TOO_MANY_REQUESTS));
+
+            verify(runRepository).deleteById(any(UUID.class));
+        } finally {
+            blockWorker.countDown();
+            tinyExecutor.shutdownNow();
+        }
+    }
+
+    @Test
+    void executeRunAsync_whenPerUserActiveLimitExceeded_rejectsWith429UntilCompleted() throws Exception {
+        ValidationMgmtUser owner = new ValidationMgmtUser("user@example.com", OffsetDateTime.now());
+        when(mgmtUserRepository.findById("user@example.com")).thenReturn(Optional.of(owner));
+        when(runRepository.saveAndFlush(any(ValidationRun.class))).thenAnswer(inv -> {
+            ValidationRun r = inv.getArgument(0);
+            var f = ValidationRun.class.getDeclaredField("id");
+            f.setAccessible(true);
+            f.set(r, runId);
+            return r;
+        });
+        when(runRepository.findById(runId)).thenReturn(Optional.of(sampleRun));
+
+        java.util.concurrent.CountDownLatch releaseRun = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch startedRun = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.ThreadPoolExecutor executor = ValidationRunService.createBoundedRunExecutor(2, 4);
+        try {
+            ValidationRunService perUserLimitedService = new ValidationRunService(
+                    runRepository, mgmtUserRepository, testResultRepository, exchangeRepository,
+                    progressTracker, executor) {
+                @Override
+                int discoverTestCount(String baseUrl, String authToken) {
+                    return 2;
+                }
+
+                @Override
+                void executeLauncher(org.junit.platform.launcher.Launcher launcher,
+                                     LauncherDiscoveryRequest request,
+                                     org.junit.platform.launcher.TestExecutionListener listener) {
+                    startedRun.countDown();
+                    try {
+                        releaseRun.await();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+            };
+            perUserLimitedService.setTargetUrlPolicy(new TargetUrlPolicy(
+                    false, host -> new java.net.InetAddress[]{java.net.InetAddress.getByName("93.184.216.34")}));
+            perUserLimitedService.setMaxActiveRunsPerUser(1);
+
+            ValidationRunForm form = new ValidationRunForm("Run 1", "https://example.com/scim/v2", "tok");
+            perUserLimitedService.executeRunAsync(form, "user@example.com");
+            assertThat(startedRun.await(3, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+
+            assertThatThrownBy(() -> perUserLimitedService.executeRunAsync(form, "USER@example.com"))
+                    .isInstanceOf(ResponseStatusException.class)
+                    .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
+                            .isEqualTo(org.springframework.http.HttpStatus.TOO_MANY_REQUESTS));
+        } finally {
+            releaseRun.countDown();
+            executor.shutdownNow();
+        }
     }
 
     // ─── helpers ────────────────────────────────────────────────────────
