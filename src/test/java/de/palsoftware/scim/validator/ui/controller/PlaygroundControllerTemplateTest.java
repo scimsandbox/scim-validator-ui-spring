@@ -122,6 +122,8 @@ class PlaygroundControllerTemplateTest {
                 // name is not enough here: "SCIM Playground" is now this page's own nav label, so a
                 // loose match would keep passing even if the outbound link were mislabelled.
                 .andExpect(content().string(containsString("aria-label=\"SCIM Server Manager\"")))
+                .andExpect(content().string(containsString("floating-side-btn-news")))
+                .andExpect(content().string(containsString("/js/dock-news.js")))
                 .andExpect(content().string(containsString("Terms of Service")))
                 .andExpect(content().string(containsString("Privacy Policy")))
                 .andExpect(content().string(containsString("bmc-widget")));

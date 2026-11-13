@@ -58,6 +58,9 @@ public class PlaygroundController {
     private final MgmtUserService mgmtUserService;
     private final String serverManagerUrl;
 
+    @Value("${app.compliance.public-base-url:https://scimsandbox.net}")
+    private String websiteUrl = "https://scimsandbox.net";
+
     public PlaygroundController(PlaygroundExecutionService executionService,
                                 MgmtUserService mgmtUserService,
                                 @Value("${app.server-manager.url}") String serverManagerUrl) {
@@ -83,6 +86,7 @@ public class PlaygroundController {
         model.addAttribute(ATTR_CURRENT_USER, resolveDisplayName(authentication));
         model.addAttribute(ATTR_CURRENT_USER_ROLE, currentUserRole(authentication));
         model.addAttribute("serverManagerUrl", serverManagerUrl);
+        model.addAttribute("websiteUrl", websiteUrl);
         return "playground";
     }
 

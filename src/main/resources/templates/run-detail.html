@@ -384,6 +384,7 @@
         }
         [data-tooltip]::after {
             content: attr(data-tooltip);
+            content: attr(data-tooltip) / "";
             bottom: calc(100% + 7px);
             left: 50%;
             transform: translateX(-50%) translateY(3px);
@@ -507,9 +508,49 @@
             transform: scale(1.12) !important;
         }
 
+        .floating-side-btn:focus-visible {
+            outline: 2px solid #60a5fa;
+            outline-offset: 2px;
+        }
+
         .floating-side-btn svg {
             width: 24px;
             height: 24px;
+        }
+
+        .floating-side-btn-news.has-unread-news {
+            color: #fbbf24;
+            box-shadow: inset 0 0 0 1px rgba(251, 191, 36, 0.45), 0 0 14px rgba(245, 158, 11, 0.25);
+        }
+
+        .news-unread-dot {
+            position: absolute;
+            top: 6px;
+            right: 6px;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #f59e0b;
+            border: 2px solid #1e293b;
+            box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.75);
+            animation: news-dot-pulse 2s ease-out infinite;
+            pointer-events: none;
+        }
+
+        .news-unread-dot[hidden] {
+            display: none;
+        }
+
+        @keyframes news-dot-pulse {
+            0% {
+                box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.75);
+            }
+            70% {
+                box-shadow: 0 0 0 7px rgba(245, 158, 11, 0);
+            }
+            100% {
+                box-shadow: 0 0 0 0 rgba(245, 158, 11, 0);
+            }
         }
 
         /* ── Milestone 4 Scorecard & Publishing Styles ── */
@@ -2266,9 +2307,14 @@
 <!-- Floating Side Dock -->
 <aside class="floating-side-dock" aria-label="Quick Navigation">
     <a th:href="${serverManagerUrl}" href="https://ui.scimsandbox.net" target="_blank" rel="noopener noreferrer" class="floating-side-btn" data-tooltip="SCIM Server Manager" data-tooltip-pos="left" aria-label="SCIM Server Manager">
-        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"></rect><rect width="20" height="8" x="2" y="14" rx="2" ry="2"></rect><line x1="6" x2="6.01" y1="6" y2="6"></line><line x1="6" x2="6.01" y1="18" y2="18"></line></svg>
+        <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"></rect><rect width="20" height="8" x="2" y="14" rx="2" ry="2"></rect><line x1="6" x2="6.01" y1="6" y2="6"></line><line x1="6" x2="6.01" y1="18" y2="18"></line></svg>
+    </a>
+    <a th:href="|${websiteUrl ?: 'https://scimsandbox.net'}/#news|" href="https://scimsandbox.net/#news" th:attr="data-news-feed-url=|${websiteUrl ?: 'https://scimsandbox.net'}/news/index.json|" data-news-feed-url="https://scimsandbox.net/news/index.json" target="_blank" rel="noopener noreferrer" class="floating-side-btn floating-side-btn-news" data-tooltip="What's New" data-tooltip-pos="left" aria-label="What's New">
+        <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 11 18-5v12L3 14v-3z"></path><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"></path></svg>
+        <span class="news-unread-dot" aria-hidden="true" hidden></span>
     </a>
 </aside>
+<script th:src="@{/js/dock-news.js}" src="/js/dock-news.js" defer></script>
 <details class="bmc-widget">
     <summary aria-label="Buy me a coffee">
         <img th:src="@{/images/buy-me-a-coffee-icon.svg}" src="/images/buy-me-a-coffee-icon.svg" alt="Buy Me a Coffee icon">

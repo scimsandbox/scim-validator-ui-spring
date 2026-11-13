@@ -84,6 +84,9 @@ public class ValidationController {
     @Value("${app.compliance.support-email:support@scimsandbox.net}")
     private String supportEmail = "support@scimsandbox.net";
 
+    @Value("${app.compliance.public-base-url:https://scimsandbox.net}")
+    private String websiteUrl = "https://scimsandbox.net";
+
     public ValidationController(ValidationRunService validationRunService,
             MgmtUserService mgmtUserService,
             ValidationProgressTracker validationProgressTracker,
@@ -132,6 +135,7 @@ public class ValidationController {
         model.addAttribute(ATTR_CURRENT_USER_ROLE, currentUserRole(authentication));
         model.addAttribute("maxRuns", validationRunService.getMaxRunsPerUser());
         model.addAttribute("serverManagerUrl", serverManagerUrl);
+        model.addAttribute("websiteUrl", websiteUrl);
 
         populatePublishedRunsModel(model, userEmail, admin, showOthersEnabled);
         return "index";
@@ -356,6 +360,7 @@ public class ValidationController {
         model.addAttribute(ATTR_CURRENT_USER, resolveDisplayName(authentication));
         model.addAttribute(ATTR_CURRENT_USER_ROLE, currentUserRole(authentication));
         model.addAttribute("serverManagerUrl", serverManagerUrl);
+        model.addAttribute("websiteUrl", websiteUrl);
         return "run-detail";
     }
 
