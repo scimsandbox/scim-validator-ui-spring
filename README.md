@@ -152,6 +152,7 @@ export AUTH0_CLIENT_ID=your-auth0-client-id
 export AUTH0_CLIENT_SECRET=your-auth0-client-secret
 export AUTH0_ISSUER_URI=https://your-tenant.us.auth0.com/
 export AUTH0_REDIRECT_URI=http://localhost:8082/login/oauth2/code/auth0
+export APP_COMPLIANCE_PUBLIC_BASE_URL=https://scimsandbox.net
 ```
 
 ### 3. Start the app
@@ -222,6 +223,7 @@ docker run --rm \
   -e AUTH0_CLIENT_SECRET=your-auth0-client-secret \
   -e AUTH0_ISSUER_URI=https://your-tenant.us.auth0.com/ \
   -e AUTH0_REDIRECT_URI=http://localhost:8082/login/oauth2/code/auth0 \
+  -e APP_COMPLIANCE_PUBLIC_BASE_URL=https://scimsandbox.net \
   scim-validator-ui:dev
 ```
 

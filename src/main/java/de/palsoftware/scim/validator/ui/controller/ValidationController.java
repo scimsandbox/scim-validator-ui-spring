@@ -22,8 +22,6 @@ import de.palsoftware.scim.validator.ui.service.MgmtUserService;
 import de.palsoftware.scim.validator.ui.service.SpecCatalogService;
 import de.palsoftware.scim.validator.ui.service.ValidationProgressTracker;
 import de.palsoftware.scim.validator.ui.service.ValidationRunService;
-import de.palsoftware.scim.validator.ui.util.BaseUrl;
-import jakarta.annotation.PostConstruct;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -86,15 +84,6 @@ public class ValidationController {
     @Value("${app.compliance.support-email:support@scimsandbox.net}")
     private String supportEmail = "support@scimsandbox.net";
 
-    @Value("${app.compliance.public-base-url}")
-    private String websiteUrl;
-
-    /** Fails startup on a blank value; the required config is concatenated with fixed paths in the templates. */
-    @PostConstruct
-    void normalizeWebsiteUrl() {
-        websiteUrl = BaseUrl.require("app.compliance.public-base-url (APP_COMPLIANCE_PUBLIC_BASE_URL)", websiteUrl);
-    }
-
     public ValidationController(ValidationRunService validationRunService,
             MgmtUserService mgmtUserService,
             ValidationProgressTracker validationProgressTracker,
@@ -143,7 +132,6 @@ public class ValidationController {
         model.addAttribute(ATTR_CURRENT_USER_ROLE, currentUserRole(authentication));
         model.addAttribute("maxRuns", validationRunService.getMaxRunsPerUser());
         model.addAttribute("serverManagerUrl", serverManagerUrl);
-        model.addAttribute("websiteUrl", websiteUrl);
 
         populatePublishedRunsModel(model, userEmail, admin, showOthersEnabled);
         return "index";
@@ -368,7 +356,6 @@ public class ValidationController {
         model.addAttribute(ATTR_CURRENT_USER, resolveDisplayName(authentication));
         model.addAttribute(ATTR_CURRENT_USER_ROLE, currentUserRole(authentication));
         model.addAttribute("serverManagerUrl", serverManagerUrl);
-        model.addAttribute("websiteUrl", websiteUrl);
         return "run-detail";
     }
 

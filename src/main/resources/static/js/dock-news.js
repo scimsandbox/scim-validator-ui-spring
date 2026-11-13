@@ -1,7 +1,12 @@
 /*
- * Shared Ecosystem News indicator for the right-side quick-navigation dock in SCIM Validation.
- * Checks /news/index.json and compares against the shared .scimsandbox.net cookie
- * to highlight unread updates.
+ * Ecosystem News indicator for the right-side quick-navigation dock.
+ * Checks /news/index.json against the time the user last saw the news to highlight unread updates.
+ * "Seen" is the newer of two timestamps under the same key, scim_news_seen:
+ *   - the shared .scimsandbox.net cookie written by the website's news tab, and
+ *   - a per-origin localStorage mark written when the dock button is clicked. The cookie is not
+ *     readable from deployments outside .scimsandbox.net (previews, self-hosted), where the
+ *     indicator would otherwise stay on forever.
+ * Keep this file identical in scim-server-ui-spring and scim-validator-ui-spring.
  */
 (function () {
     const NEWS_STORAGE_KEY = 'scim_news_seen';
@@ -22,10 +27,29 @@
         return null;
     }
 
+    function readLocalSeen() {
+        try {
+            return window.localStorage.getItem(NEWS_STORAGE_KEY);
+        } catch {
+            return null; // storage blocked (privacy mode, disabled cookies)
+        }
+    }
+
+    function markSeenLocally() {
+        try {
+            window.localStorage.setItem(NEWS_STORAGE_KEY, new Date().toISOString());
+        } catch {
+            // storage blocked: the cookie from the website remains the only signal
+        }
+    }
+
+    function toMs(value) {
+        const ms = value ? Date.parse(value) : NaN;
+        return Number.isFinite(ms) ? ms : 0;
+    }
+
     function getSeenTimestampMs() {
-        const cookieVal = readCookie(NEWS_STORAGE_KEY);
-        const cMs = cookieVal ? Date.parse(cookieVal) : NaN;
-        return Number.isFinite(cMs) ? cMs : 0;
+        return Math.max(toMs(readCookie(NEWS_STORAGE_KEY)), toMs(readLocalSeen()));
     }
 
     function initDockNewsIndicator() {
@@ -59,6 +83,12 @@
             }
         }
 
+        // Opening the news counts as seeing it, whether or not the website's cookie is readable here.
+        ['click', 'auxclick'].forEach((type) => btn.addEventListener(type, () => {
+            markSeenLocally();
+            applyBadgeState();
+        }));
+
         // Re-check on return from the website tab, which sets the cookie. focus covers a visible
         // window regaining focus; visibilitychange covers tab switches. Re-applying is idempotent.
         window.addEventListener('focus', applyBadgeState);
@@ -68,7 +98,9 @@
             }
         });
 
-        fetch(feedUrl, { credentials: 'omit' })
+        // no-cache: revalidate with the server on every load (cheap 304) so a new post shows up
+        // immediately instead of after the feed's max-age / stale-while-revalidate window.
+        fetch(feedUrl, { credentials: 'omit', cache: 'no-cache' })
             .then((res) => (res.ok ? res.json() : null))
             .then((data) => {
                 if (!Array.isArray(data) || data.length === 0) return;
