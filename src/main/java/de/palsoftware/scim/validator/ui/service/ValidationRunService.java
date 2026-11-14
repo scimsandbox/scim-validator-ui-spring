@@ -13,6 +13,7 @@ import de.palsoftware.scim.validator.ui.model.ValidationHttpExchange;
 import de.palsoftware.scim.validator.ui.model.ValidationRun;
 import de.palsoftware.scim.validator.ui.model.ValidationRunPublication;
 import de.palsoftware.scim.validator.ui.model.ValidationTestResult;
+import de.palsoftware.scim.validator.ui.model.spec.ComplianceCatalogEntry;
 import de.palsoftware.scim.validator.ui.model.spec.CompliancePublicationResult;
 import de.palsoftware.scim.validator.ui.model.spec.CompliancePublishRequest;
 import de.palsoftware.scim.validator.ui.repo.ValidationMgmtUserRepository;
@@ -54,6 +55,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -96,12 +98,37 @@ public class ValidationRunService {
     public static final int DEFAULT_MAX_CONCURRENT_RUNS = 4;
     public static final int DEFAULT_MAX_QUEUE_SIZE = 8;
     public static final int DEFAULT_MAX_ACTIVE_RUNS_PER_USER = 2;
+    public static final int MAX_DB_TEXT_BYTES = 2 * 1024 * 1024;
+
+    static final String TRUNCATED_SUFFIX = "...[truncated]";
+    static final String DEFAULT_PUBLIC_COMPLIANCE_BASE_URL = "https://scimsandbox.org";
+    private static final int MAX_RUN_NAME_CHARS = 200;
+    private static final int MAX_TARGET_URL_CHARS = 500;
+    private static final int MAX_TEST_IDENTIFIER_CHARS = 500;
+    private static final int MAX_DISPLAY_NAME_CHARS = 500;
+    private static final int MAX_CLASS_NAME_CHARS = 300;
+    private static final int MAX_TEST_NAME_CHARS = 300;
+    private static final int MAX_EXCHANGE_METHOD_CHARS = 16;
+    private static final int MAX_EXCHANGE_URL_CHARS = 1000;
+    private static final int MAX_PRODUCT_NAME_CHARS = 120;
+    private static final int MAX_PRODUCT_SLUG_CHARS = 120;
+    private static final int MAX_PRODUCT_VERSION_CHARS = 60;
+    private static final int MAX_VENDOR_NAME_CHARS = 120;
+    private static final int MAX_LICENSE_TYPE_CHARS = 40;
+    private static final int MAX_PUBLICATION_URL_CHARS = 500;
 
     private static final AtomicInteger RUNNER_THREAD_COUNTER = new AtomicInteger(0);
     private static final Pattern AUTH_HEADER_SCRUB_PATTERN = Pattern.compile(
             "(?im)(Authorization\\s*+:\\s*+(?:Bearer|Basic)\\s++)[^\\s,;\"'\\r\\n]++");
     private static final Pattern BEARER_TOKEN_SCRUB_PATTERN = Pattern.compile(
             "(?i)(\\bBearer\\s++)[A-Za-z0-9._~+/=-]{8,}+");
+    private static final Pattern SAFE_PRODUCT_SLUG_PATTERN = Pattern.compile(
+            "^[a-z0-9]++(?:-[a-z0-9]++)*+$");
+    private static final Pattern SAFE_HTTP_URL_SCHEME_HOST_PATTERN = Pattern.compile(
+            "^https?://[^/?#@\\s]\\S*+$",
+            Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS);
+    private static final Pattern HTTP_URL_USERINFO_PATTERN = Pattern.compile(
+            "^(?i)https?://[^/?#]*@");
 
     private final ValidationRunRepository runRepository;
     private final ValidationMgmtUserRepository mgmtUserRepository;
@@ -439,9 +466,11 @@ public class ValidationRunService {
         public int getMaxRuns() { return maxRuns; }
     }
 
-    private void validateTargetUrl(String url) {
+    private String validateTargetUrl(String url) {
+        String normalized = validateAndNormalizeTargetUrl(url);
         TargetUrlPolicy policy = this.targetUrlPolicy != null ? this.targetUrlPolicy : new TargetUrlPolicy(false);
-        policy.validateUri(url);
+        policy.validateUri(normalized);
+        return normalized;
     }
 
     private String acquireActiveRunSlot(String actorEmail) {
@@ -493,6 +522,43 @@ public class ValidationRunService {
         return scrubbed;
     }
 
+    static String truncateUtf8Bytes(String value, int maxBytes) {
+        if (value == null) {
+            return null;
+        }
+        byte[] utf8 = value.getBytes(StandardCharsets.UTF_8);
+        if (utf8.length <= maxBytes) {
+            return value;
+        }
+        if (maxBytes <= 0) {
+            return "";
+        }
+        int suffixLen = TRUNCATED_SUFFIX.length();
+        if (maxBytes <= suffixLen) {
+            return TRUNCATED_SUFFIX.substring(0, maxBytes);
+        }
+        int budget = maxBytes - suffixLen;
+        int end = budget;
+        while (end > 0 && (utf8[end] & 0xC0) == 0x80) {
+            end--;
+        }
+        return new String(utf8, 0, end, StandardCharsets.UTF_8) + TRUNCATED_SUFFIX;
+    }
+
+    static String truncateChars(String value, int maxChars) {
+        if (value == null || value.length() <= maxChars) {
+            return value;
+        }
+        if (maxChars <= 0) {
+            return "";
+        }
+        int end = maxChars;
+        if (Character.isHighSurrogate(value.charAt(end - 1))) {
+            end--;
+        }
+        return value.substring(0, end);
+    }
+
     private boolean pruneOldUnpublishedRuns(String actorEmail) {
         List<ValidationRun> userRuns = runRepository.findOwnedRuns(actorEmail, Sort.by(Sort.Direction.ASC, "executedAt"));
         boolean oldRunDeleted = false;
@@ -520,19 +586,71 @@ public class ValidationRunService {
         return oldRunDeleted;
     }
 
+    static boolean isDisallowedUrlSpaceOrControl(char c) {
+        return Character.isWhitespace(c)
+                || Character.isSpaceChar(c)
+                || Character.isISOControl(c)
+                || c == '\u0085'
+                || c == '\u180E'
+                || c == '\uFEFF';
+    }
+
+    static String trimUnicodeSpaces(String value) {
+        if (value == null || value.isEmpty()) {
+            return value;
+        }
+        int start = 0;
+        int end = value.length();
+        while (start < end && isDisallowedUrlSpaceOrControl(value.charAt(start))) {
+            start++;
+        }
+        while (end > start && isDisallowedUrlSpaceOrControl(value.charAt(end - 1))) {
+            end--;
+        }
+        return (start == 0 && end == value.length()) ? value : value.substring(start, end);
+    }
+
+    static String validateAndNormalizeTargetUrl(String rawBaseUrl) {
+        if (rawBaseUrl == null) {
+            throw new IllegalArgumentException("Invalid URL: target must not be empty");
+        }
+        String normalized = trimUnicodeSpaces(rawBaseUrl);
+        if (normalized.isEmpty()) {
+            throw new IllegalArgumentException("Invalid URL: target must not be empty");
+        }
+        if (normalized.length() > MAX_TARGET_URL_CHARS) {
+            throw new IllegalArgumentException(
+                    "Invalid URL: target URL must not exceed " + MAX_TARGET_URL_CHARS + " characters");
+        }
+        for (int i = 0; i < normalized.length(); i++) {
+            if (isDisallowedUrlSpaceOrControl(normalized.charAt(i))) {
+                throw new IllegalArgumentException(
+                        "Invalid URL: target URL must not contain whitespace or control characters");
+            }
+        }
+        return normalized;
+    }
+
+    private static String normalizeRunName(String rawName) {
+        if (rawName == null) {
+            return "";
+        }
+        return truncateChars(rawName.trim(), MAX_RUN_NAME_CHARS);
+    }
+
     private record InitializedRun(ValidationRun run, boolean oldRunDeleted) {}
 
     public ExecutionResult executeRun(ValidationRunForm form, String actorEmail) {
-        validateTargetUrl(form.baseUrl());
+        String normalizedTargetUrl = validateTargetUrl(form.baseUrl());
         String activeSlotKey = acquireActiveRunSlot(actorEmail);
         try {
-            int plannedTotal = discoverTestCount(form.baseUrl(), form.authToken());
+            int plannedTotal = discoverTestCount(normalizedTargetUrl, form.authToken());
 
             InitializedRun initialized = executeInReadWriteTransaction(() -> {
                 boolean deleted = pruneOldUnpublishedRuns(actorEmail);
                 ValidationRun created = new ValidationRun();
-                created.setName(form.name().trim());
-                created.setTargetUrl(form.baseUrl().trim());
+                created.setName(normalizeRunName(form.name()));
+                created.setTargetUrl(normalizedTargetUrl);
                 created.setExecutedAt(OffsetDateTime.now());
                 created.setStatus("RUNNING");
                 ValidationMgmtUser owner = mgmtUserRepository.findById(actorEmail)
@@ -554,8 +672,8 @@ public class ValidationRunService {
 
             ValidationExecutionListener listener = null;
             try {
-                validateTargetUrl(form.baseUrl());
-                ValidatorConfiguration.useRunOverrides(form.baseUrl(), form.authToken());
+                String innerTargetUrl = validateTargetUrl(form.baseUrl());
+                ValidatorConfiguration.useRunOverrides(innerTargetUrl, form.authToken());
                 ScimBaseSpec.resetRunState();
                 if (runId != null) {
                     ScimRunContext.beginRun(runId.toString());
@@ -617,17 +735,17 @@ public class ValidationRunService {
     }
 
     public ExecutionResult executeRunAsync(ValidationRunForm form, String actorEmail) {
-        validateTargetUrl(form.baseUrl());
+        String normalizedTargetUrl = validateTargetUrl(form.baseUrl());
         String activeSlotKey = acquireActiveRunSlot(actorEmail);
         boolean backgroundTaskSubmitted = false;
         try {
-            int plannedTotal = discoverTestCount(form.baseUrl(), form.authToken());
+            int plannedTotal = discoverTestCount(normalizedTargetUrl, form.authToken());
 
             InitializedRun initialized = executeInReadWriteTransaction(() -> {
                 boolean deleted = pruneOldUnpublishedRuns(actorEmail);
                 ValidationRun created = new ValidationRun();
-                created.setName(form.name().trim());
-                created.setTargetUrl(form.baseUrl().trim());
+                created.setName(normalizeRunName(form.name()));
+                created.setTargetUrl(normalizedTargetUrl);
                 created.setExecutedAt(OffsetDateTime.now());
                 created.setStatus("RUNNING");
                 ValidationMgmtUser owner = mgmtUserRepository.findById(actorEmail)
@@ -732,8 +850,8 @@ public class ValidationRunService {
 
         ValidationExecutionListener listener = null;
         try {
-            validateTargetUrl(form.baseUrl());
-            ValidatorConfiguration.useRunOverrides(form.baseUrl(), form.authToken());
+            String normalizedTargetUrl = validateTargetUrl(form.baseUrl());
+            ValidatorConfiguration.useRunOverrides(normalizedTargetUrl, form.authToken());
             ScimBaseSpec.resetRunState();
             ScimRunContext.beginRun(runId.toString());
 
@@ -1115,8 +1233,8 @@ public class ValidationRunService {
         }
         populatePublicationMetadata(reservation, managedRun, ownerEmail, request);
         String baseUrl = getEffectivePublicBaseUrl();
-        reservation.setReportUrl(baseUrl + "/compliance/?run=" + managedRun.getId());
-        reservation.setBadgeUrl(baseUrl + "/compliance/badges/" + managedRun.getId() + ".svg");
+        reservation.setReportUrl(resolveValidReportUrl(baseUrl + "/compliance/?run=" + managedRun.getId(), null, managedRun.getId()));
+        reservation.setBadgeUrl(resolveValidBadgeUrl(baseUrl + "/compliance/badges/" + managedRun.getId() + ".svg", null, managedRun.getId()));
         reservation.setPrUrl(PENDING_RESERVATION_PR_URL);
         reservation.setPublishedAt(now);
 
@@ -1187,16 +1305,20 @@ public class ValidationRunService {
         String ownerEmail = resolveOwnerEmail(managedRun, run, actorEmail);
 
         if (existing != null && existing.isPendingReservation()) {
+            String fallbackReportUrl = existing.getReportUrl();
+            String fallbackBadgeUrl = existing.getBadgeUrl();
             boolean originalShowSubmitter = existing.isShowSubmitter();
             populatePublicationMetadata(existing, managedRun, ownerEmail, request);
             if (result != null && result.reconciledCatalogEntry() != null) {
                 applyReconciledCatalogMetadata(existing, result.reconciledCatalogEntry(), originalShowSubmitter);
             }
             existing.markNotNew();
-            existing.setReportUrl(result.reportUrl());
-            existing.setBadgeUrl(result.badgeUrl());
-            existing.setPrUrl(result.prUrl());
-            existing.setPublishedAt(result.publishedAt() != null ? result.publishedAt() : OffsetDateTime.now(ZoneOffset.UTC));
+            existing.setReportUrl(resolveValidReportUrl(result != null ? result.reportUrl() : null, fallbackReportUrl, managedRun.getId()));
+            existing.setBadgeUrl(resolveValidBadgeUrl(result != null ? result.badgeUrl() : null, fallbackBadgeUrl, managedRun.getId()));
+            existing.setPrUrl(sanitizePrUrl(result != null ? result.prUrl() : null));
+            existing.setPublishedAt(result != null && result.publishedAt() != null
+                    ? result.publishedAt()
+                    : OffsetDateTime.now(ZoneOffset.UTC));
             ValidationRunPublication saved = persistPublicationAndSyncRun(existing, managedRun, run);
             clearReconciliationRequired(managedRun.getId());
             return saved;
@@ -1205,10 +1327,10 @@ public class ValidationRunService {
         if (run.isPublished() || managedRun.isPublished() || existing != null) {
             throw new IllegalStateException("Validation run has already been published: " + managedRun.getId());
         }
-        String effectiveSlug = (result != null && result.reconciledCatalogEntry() != null
-                && result.reconciledCatalogEntry().productSlug() != null)
-                ? result.reconciledCatalogEntry().productSlug()
-                : request.productSlug();
+        String fallbackSlug = sanitizeRequestedProductSlug(request.productSlug(), request.productName());
+        String effectiveSlug = (result != null && result.reconciledCatalogEntry() != null)
+                ? sanitizeReconciledProductSlug(result.reconciledCatalogEntry().productSlug(), fallbackSlug)
+                : fallbackSlug;
         validateOwnerQuotaAndSlug(ownerEmail, effectiveSlug, managedRun.getId());
 
         ValidationRunPublication publication = new ValidationRunPublication();
@@ -1216,10 +1338,12 @@ public class ValidationRunService {
         if (result != null && result.reconciledCatalogEntry() != null) {
             applyReconciledCatalogMetadata(publication, result.reconciledCatalogEntry(), request.showSubmitter());
         }
-        publication.setReportUrl(result.reportUrl());
-        publication.setBadgeUrl(result.badgeUrl());
-        publication.setPrUrl(result.prUrl());
-        publication.setPublishedAt(result.publishedAt() != null ? result.publishedAt() : OffsetDateTime.now(ZoneOffset.UTC));
+        publication.setReportUrl(resolveValidReportUrl(result != null ? result.reportUrl() : null, null, managedRun.getId()));
+        publication.setBadgeUrl(resolveValidBadgeUrl(result != null ? result.badgeUrl() : null, null, managedRun.getId()));
+        publication.setPrUrl(sanitizePrUrl(result != null ? result.prUrl() : null));
+        publication.setPublishedAt(result != null && result.publishedAt() != null
+                ? result.publishedAt()
+                : OffsetDateTime.now(ZoneOffset.UTC));
 
         ValidationRunPublication saved = persistPublicationAndSyncRun(publication, managedRun, run);
         clearReconciliationRequired(managedRun.getId());
@@ -1228,26 +1352,216 @@ public class ValidationRunService {
 
     private void applyReconciledCatalogMetadata(
             ValidationRunPublication target,
-            de.palsoftware.scim.validator.ui.model.spec.ComplianceCatalogEntry entry,
+            ComplianceCatalogEntry entry,
             boolean fallbackShowSubmitter) {
-        if (entry.productName() != null) {
-            target.setProductName(entry.productName());
-        }
-        if (entry.productSlug() != null) {
-            target.setProductSlug(entry.productSlug());
-        }
-        if (entry.productVersion() != null) {
-            target.setProductVersion(entry.productVersion());
-        }
-        target.setVendorName(entry.vendorName());
-        target.setProjectUrl(entry.projectUrl());
-        if (entry.licenseType() != null) {
-            target.setLicenseType(entry.licenseType());
-        }
+        target.setProductName(sanitizeNonBlankBounded(
+                entry.productName(), MAX_PRODUCT_NAME_CHARS, target.getProductName(), "productName"));
+        target.setProductSlug(sanitizeReconciledProductSlug(entry.productSlug(), target.getProductSlug()));
+        target.setProductVersion(sanitizeNonBlankBounded(
+                entry.productVersion(), MAX_PRODUCT_VERSION_CHARS, target.getProductVersion(), "productVersion"));
+        target.setVendorName(sanitizeOptionalBounded(
+                entry.vendorName(), MAX_VENDOR_NAME_CHARS, target.getVendorName(), "vendorName"));
+        target.setProjectUrl(sanitizeReconciledProjectUrl(entry.projectUrl(), target.getProjectUrl()));
+        target.setLicenseType(sanitizeNonBlankBounded(
+                entry.licenseType(), MAX_LICENSE_TYPE_CHARS, target.getLicenseType(), "licenseType"));
         target.setShowSubmitter(fallbackShowSubmitter);
-        target.setCoreScore(entry.coreScore());
-        target.setSupportedCapabilities(entry.supportedCapabilities());
-        target.setTotalCapabilities(entry.totalCapabilities());
+
+        if (entry.coreScore() >= 0 && entry.coreScore() <= 100) {
+            target.setCoreScore(entry.coreScore());
+        } else {
+            log.warn("Ignoring out-of-range reconciled catalog coreScore={} and keeping fallback {}",
+                    entry.coreScore(), target.getCoreScore());
+        }
+
+        if (entry.totalCapabilities() > 0
+                && entry.supportedCapabilities() >= 0
+                && entry.supportedCapabilities() <= entry.totalCapabilities()) {
+            target.setSupportedCapabilities(entry.supportedCapabilities());
+            target.setTotalCapabilities(entry.totalCapabilities());
+        } else {
+            log.warn("Ignoring invalid reconciled catalog capabilities ({}/{}) and keeping fallback ({}/{})",
+                    entry.supportedCapabilities(), entry.totalCapabilities(),
+                    target.getSupportedCapabilities(), target.getTotalCapabilities());
+        }
+    }
+
+    static boolean isValidPublicationHttpUrl(String candidate) {
+        if (candidate == null || candidate.isEmpty() || candidate.length() > MAX_PUBLICATION_URL_CHARS) {
+            return false;
+        }
+        for (int i = 0; i < candidate.length(); i++) {
+            if (isDisallowedUrlSpaceOrControl(candidate.charAt(i))) {
+                return false;
+            }
+        }
+        return SAFE_HTTP_URL_SCHEME_HOST_PATTERN.matcher(candidate).matches()
+                && !HTTP_URL_USERINFO_PATTERN.matcher(candidate).find();
+    }
+
+    static String sanitizeOptionalHttpUrl(String candidate) {
+        if (candidate == null) {
+            return null;
+        }
+        String trimmed = trimUnicodeSpaces(candidate);
+        if (trimmed.isEmpty()) {
+            return null;
+        }
+        return isValidPublicationHttpUrl(trimmed) ? trimmed : null;
+    }
+
+    static String sanitizePrUrl(String prUrl) {
+        if (prUrl == null) {
+            return null;
+        }
+        String trimmed = trimUnicodeSpaces(prUrl);
+        if (trimmed.isEmpty()) {
+            return null;
+        }
+        if (isValidPublicationHttpUrl(trimmed)) {
+            return trimmed;
+        }
+        log.warn("Ignoring malformed or sentinel publication prUrl (length={}) to satisfy DB constraints", trimmed.length());
+        return null;
+    }
+
+    static String sanitizeRequestedProductSlug(String requestedSlug, String fallbackProductName) {
+        String candidate = Slugifier.slugify(requestedSlug);
+        if (candidate.isEmpty()) {
+            candidate = Slugifier.slugify(fallbackProductName);
+        }
+        if (candidate.isEmpty()) {
+            candidate = "scim-product";
+        }
+        if (Slugifier.isUuidFormatted(candidate)) {
+            candidate = "product-" + candidate;
+        }
+        if (candidate.length() > MAX_PRODUCT_SLUG_CHARS) {
+            int end = MAX_PRODUCT_SLUG_CHARS;
+            while (end > 0 && candidate.charAt(end - 1) == '-') {
+                end--;
+            }
+            candidate = candidate.substring(0, end);
+        }
+        if (candidate.isEmpty()
+                || !SAFE_PRODUCT_SLUG_PATTERN.matcher(candidate).matches()
+                || Slugifier.isUuidFormatted(candidate)) {
+            return "scim-product";
+        }
+        return candidate;
+    }
+
+    static String sanitizeReconciledProductSlug(String reconciledSlug, String fallbackSlug) {
+        if (reconciledSlug != null) {
+            String normalized = trimUnicodeSpaces(reconciledSlug).toLowerCase(Locale.ROOT);
+            if (!normalized.isEmpty()
+                    && normalized.length() <= MAX_PRODUCT_SLUG_CHARS
+                    && SAFE_PRODUCT_SLUG_PATTERN.matcher(normalized).matches()
+                    && !Slugifier.isUuidFormatted(normalized)) {
+                return normalized;
+            }
+            log.warn("Ignoring invalid reconciled catalog productSlug '{}' and keeping fallback slug '{}'",
+                    reconciledSlug, fallbackSlug);
+        }
+        return fallbackSlug;
+    }
+
+    private static String sanitizeReconciledProjectUrl(String reconciledProjectUrl, String fallbackProjectUrl) {
+        if (reconciledProjectUrl == null) {
+            return null;
+        }
+        String trimmed = trimUnicodeSpaces(reconciledProjectUrl);
+        if (trimmed.isEmpty()) {
+            return null;
+        }
+        if (isValidPublicationHttpUrl(trimmed)) {
+            return trimmed;
+        }
+        log.warn("Ignoring malformed reconciled catalog projectUrl (length={}) and falling back", trimmed.length());
+        return sanitizeOptionalHttpUrl(fallbackProjectUrl);
+    }
+
+    private static boolean containsControlChars(String s) {
+        for (int i = 0; i < s.length(); i++) {
+            if (Character.isISOControl(s.charAt(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String sanitizeNonBlankBounded(String candidate, int maxChars, String fallback, String fieldName) {
+        if (candidate != null) {
+            String trimmed = candidate.trim();
+            if (!trimmed.isEmpty() && trimmed.length() <= maxChars && !containsControlChars(trimmed)) {
+                return trimmed;
+            }
+            log.warn("Ignoring invalid reconciled catalog {} (length={}) and keeping fallback value",
+                    fieldName, trimmed.length());
+        }
+        return fallback;
+    }
+
+    private static String sanitizeOptionalBounded(String candidate, int maxChars, String fallback, String fieldName) {
+        if (candidate == null || candidate.isBlank()) {
+            return null;
+        }
+        String trimmed = candidate.trim();
+        if (trimmed.length() <= maxChars && !containsControlChars(trimmed)) {
+            return trimmed;
+        }
+        log.warn("Ignoring invalid reconciled catalog {} (length={}) and keeping fallback value",
+                fieldName, trimmed.length());
+        return fallback != null && !fallback.isBlank() && fallback.trim().length() <= maxChars
+                && !containsControlChars(fallback.trim())
+                ? fallback.trim()
+                : null;
+    }
+
+    private String resolveFallbackPublicBaseUrl() {
+        if (publicBaseUrl != null && !trimUnicodeSpaces(publicBaseUrl).isEmpty()) {
+            try {
+                return getEffectivePublicBaseUrl();
+            } catch (RuntimeException ignored) {
+                // Fall back to default public compliance URL if unconfigured/invalid in unit tests
+            }
+        }
+        return DEFAULT_PUBLIC_COMPLIANCE_BASE_URL;
+    }
+
+    String resolveValidReportUrl(String candidateUrl, String fallbackUrl, UUID runId) {
+        String sanitized = sanitizeOptionalHttpUrl(candidateUrl);
+        if (sanitized != null) {
+            return sanitized;
+        }
+        String sanitizedFallback = sanitizeOptionalHttpUrl(fallbackUrl);
+        if (sanitizedFallback != null) {
+            return sanitizedFallback;
+        }
+        String constructed = resolveFallbackPublicBaseUrl() + "/compliance/?run=" + runId;
+        if (isValidPublicationHttpUrl(constructed)) {
+            return constructed;
+        }
+        log.warn("Configured publicBaseUrl produced invalid reportUrl (length={}); falling back to default domain",
+                constructed.length());
+        return DEFAULT_PUBLIC_COMPLIANCE_BASE_URL + "/compliance/?run=" + runId;
+    }
+
+    String resolveValidBadgeUrl(String candidateUrl, String fallbackUrl, UUID runId) {
+        String sanitized = sanitizeOptionalHttpUrl(candidateUrl);
+        if (sanitized != null) {
+            return sanitized;
+        }
+        String sanitizedFallback = sanitizeOptionalHttpUrl(fallbackUrl);
+        if (sanitizedFallback != null) {
+            return sanitizedFallback;
+        }
+        String constructed = resolveFallbackPublicBaseUrl() + "/compliance/badges/" + runId + ".svg";
+        if (isValidPublicationHttpUrl(constructed)) {
+            return constructed;
+        }
+        log.warn("Configured publicBaseUrl produced invalid badgeUrl (length={}); falling back to default domain",
+                constructed.length());
+        return DEFAULT_PUBLIC_COMPLIANCE_BASE_URL + "/compliance/badges/" + runId + ".svg";
     }
 
     private ValidationRun resolveManagedRun(ValidationRun run) {
@@ -1285,12 +1599,14 @@ public class ValidationRunService {
             CompliancePublishRequest request) {
         target.setRun(managedRun);
         target.setCreatedByEmail(ownerEmail);
-        target.setProductName(request.productName());
-        target.setProductSlug(request.productSlug());
-        target.setProductVersion(request.productVersion());
-        target.setVendorName(request.vendorName());
-        target.setProjectUrl(request.projectUrl());
-        target.setLicenseType(request.licenseType());
+        target.setProductName(truncateChars(request.productName(), MAX_PRODUCT_NAME_CHARS));
+        target.setProductSlug(sanitizeRequestedProductSlug(request.productSlug(), request.productName()));
+        target.setProductVersion(truncateChars(request.productVersion(), MAX_PRODUCT_VERSION_CHARS));
+        target.setVendorName(request.vendorName() != null && !request.vendorName().isBlank()
+                ? truncateChars(request.vendorName().trim(), MAX_VENDOR_NAME_CHARS)
+                : null);
+        target.setProjectUrl(sanitizeOptionalHttpUrl(request.projectUrl()));
+        target.setLicenseType(truncateChars(request.licenseType(), MAX_LICENSE_TYPE_CHARS));
         target.setShowSubmitter(request.showSubmitter());
         target.setCoreScore(request.coreScore());
         target.setSupportedCapabilities(request.supportedCapabilities());
@@ -1463,22 +1779,22 @@ public class ValidationRunService {
 
             ValidationTestResult testResult = new ValidationTestResult();
             testResult.setRun(run);
-            testResult.setTestIdentifier(uniqueId);
-            testResult.setDisplayName(testIdentifier.getDisplayName());
+            testResult.setTestIdentifier(truncateChars(uniqueId, MAX_TEST_IDENTIFIER_CHARS));
+            testResult.setDisplayName(truncateChars(testIdentifier.getDisplayName(), MAX_DISPLAY_NAME_CHARS));
             testResult.setStatus(normalizeStatus(testExecutionResult.getStatus()));
             testResult.setStartedAt(startedAt);
             testResult.setFinishedAt(finishedAt);
 
             Object source = testIdentifier.getSource().orElse(null);
             if (source instanceof MethodSource methodSource) {
-                testResult.setClassName(methodSource.getClassName());
-                testResult.setTestName(methodSource.getMethodName());
+                testResult.setClassName(truncateChars(methodSource.getClassName(), MAX_CLASS_NAME_CHARS));
+                testResult.setTestName(truncateChars(methodSource.getMethodName(), MAX_TEST_NAME_CHARS));
             }
 
             Throwable throwable = testExecutionResult.getThrowable().orElse(null);
             if (throwable != null) {
-                testResult.setErrorMessage(scrubSecrets(throwable.getMessage(), authToken));
-                testResult.setStackTrace(scrubSecrets(stackTrace(throwable), authToken));
+                testResult.setErrorMessage(truncateUtf8Bytes(scrubSecrets(throwable.getMessage(), authToken), MAX_DB_TEXT_BYTES));
+                testResult.setStackTrace(truncateUtf8Bytes(scrubSecrets(stackTrace(throwable), authToken), MAX_DB_TEXT_BYTES));
             }
 
             testResult = testResultRepository.save(testResult);
@@ -1491,13 +1807,13 @@ public class ValidationRunService {
                 exchange.setRun(run);
                 exchange.setTestResult(testResult);
                 exchange.setSequenceNumber(i + 1);
-                exchange.setMethod(captured.getMethod());
-                exchange.setUrl(captured.getUrl());
-                exchange.setRequestHeaders(scrubSecrets(captured.getRequestHeaders(), authToken));
-                exchange.setRequestBody(scrubSecrets(captured.getRequestBody(), authToken));
+                exchange.setMethod(truncateChars(captured.getMethod(), MAX_EXCHANGE_METHOD_CHARS));
+                exchange.setUrl(truncateChars(captured.getUrl(), MAX_EXCHANGE_URL_CHARS));
+                exchange.setRequestHeaders(truncateUtf8Bytes(scrubSecrets(captured.getRequestHeaders(), authToken), MAX_DB_TEXT_BYTES));
+                exchange.setRequestBody(truncateUtf8Bytes(scrubSecrets(captured.getRequestBody(), authToken), MAX_DB_TEXT_BYTES));
                 exchange.setResponseStatus(captured.getResponseStatus());
-                exchange.setResponseHeaders(scrubSecrets(captured.getResponseHeaders(), authToken));
-                exchange.setResponseBody(scrubSecrets(captured.getResponseBody(), authToken));
+                exchange.setResponseHeaders(truncateUtf8Bytes(scrubSecrets(captured.getResponseHeaders(), authToken), MAX_DB_TEXT_BYTES));
+                exchange.setResponseBody(truncateUtf8Bytes(scrubSecrets(captured.getResponseBody(), authToken), MAX_DB_TEXT_BYTES));
                 exchange.setCreatedAt(captured.getCreatedAt() == null ? OffsetDateTime.now() : captured.getCreatedAt());
                 persisted.add(exchange);
             }
@@ -1541,17 +1857,17 @@ public class ValidationRunService {
 
             ValidationTestResult testResult = new ValidationTestResult();
             testResult.setRun(run);
-            testResult.setTestIdentifier(uniqueId);
-            testResult.setDisplayName(testIdentifier.getDisplayName());
+            testResult.setTestIdentifier(truncateChars(uniqueId, MAX_TEST_IDENTIFIER_CHARS));
+            testResult.setDisplayName(truncateChars(testIdentifier.getDisplayName(), MAX_DISPLAY_NAME_CHARS));
             testResult.setStatus("SKIPPED");
             testResult.setStartedAt(now);
             testResult.setFinishedAt(now);
-            testResult.setErrorMessage(scrubSecrets(reason, authToken));
+            testResult.setErrorMessage(truncateUtf8Bytes(scrubSecrets(reason, authToken), MAX_DB_TEXT_BYTES));
 
             Object source = testIdentifier.getSource().orElse(null);
             if (source instanceof MethodSource methodSource) {
-                testResult.setClassName(methodSource.getClassName());
-                testResult.setTestName(methodSource.getMethodName());
+                testResult.setClassName(truncateChars(methodSource.getClassName(), MAX_CLASS_NAME_CHARS));
+                testResult.setTestName(truncateChars(methodSource.getMethodName(), MAX_TEST_NAME_CHARS));
             }
 
             testResultRepository.save(testResult);
