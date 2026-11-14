@@ -520,20 +520,21 @@ class ValidationRunServiceTest {
                 .doesNotContain(rawSecret)
                 .doesNotContain("anotherLongBearerToken12345")
                 .contains("[REDACTED]");
+
+        // Short tokens (< 8 chars) must NOT corrupt non-secret JSON fields, while still redacting Authorization headers
+        String shortJsonAndHeaders = "Authorization: Bearer test\r\n"
+                + "{\"Authorization\":\"Bearer test\",\"userName\":\"test\",\"active\":true}\r\n"
+                + "Authorization: Basic x";
+        String scrubbedShort = ValidationRunService.scrubSecrets(shortJsonAndHeaders, "test");
+        assertThat(scrubbedShort)
+                .contains("Authorization: Bearer [REDACTED]")
+                .contains("\"Authorization\":\"Bearer [REDACTED]\"")
+                .contains("Authorization: Basic [REDACTED]")
+                .contains("\"userName\":\"test\"");
     }
 
     @Test
-    void executeRunAsync_whenBoundedExecutorQueueFull_rejectsWith429AndCleansUpRun() throws Exception {
-        ValidationMgmtUser owner = new ValidationMgmtUser("user@example.com", OffsetDateTime.now());
-        when(mgmtUserRepository.findById("user@example.com")).thenReturn(Optional.of(owner));
-        when(runRepository.saveAndFlush(any(ValidationRun.class))).thenAnswer(inv -> {
-            ValidationRun r = inv.getArgument(0);
-            var f = ValidationRun.class.getDeclaredField("id");
-            f.setAccessible(true);
-            f.set(r, UUID.randomUUID());
-            return r;
-        });
-
+    void executeRunAsync_whenBoundedExecutorQueueFull_rejectsWith429BeforePruningOrSaving() throws Exception {
         java.util.concurrent.CountDownLatch blockWorker = new java.util.concurrent.CountDownLatch(1);
         java.util.concurrent.ThreadPoolExecutor tinyExecutor = ValidationRunService.createBoundedRunExecutor(1, 1);
         try {
@@ -552,7 +553,7 @@ class ValidationRunServiceTest {
                     progressTracker, tinyExecutor) {
                 @Override
                 int discoverTestCount(String baseUrl, String authToken) {
-                    return 5;
+                    throw new AssertionError("discoverTestCount must not be invoked when executor rejects");
                 }
             };
             boundedService.setTargetUrlPolicy(new TargetUrlPolicy(
@@ -565,10 +566,175 @@ class ValidationRunServiceTest {
                     .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
                             .isEqualTo(org.springframework.http.HttpStatus.TOO_MANY_REQUESTS));
 
-            verify(runRepository).deleteById(any(UUID.class));
+            verify(runRepository, org.mockito.Mockito.never()).delete(any(ValidationRun.class));
+            verify(runRepository, org.mockito.Mockito.never()).deleteById(any(UUID.class));
+            verify(runRepository, org.mockito.Mockito.never()).saveAndFlush(any(ValidationRun.class));
         } finally {
             blockWorker.countDown();
             tinyExecutor.shutdownNow();
+        }
+    }
+
+    @Test
+    void executeRun_whenGlobalConcurrentLimitExceeded_rejectsWith429WithoutPruningOrSaving() throws Exception {
+        ValidationMgmtUser owner = new ValidationMgmtUser("user1@example.com", OffsetDateTime.now());
+        when(mgmtUserRepository.findById("user1@example.com")).thenReturn(Optional.of(owner));
+        when(runRepository.save(any(ValidationRun.class))).thenAnswer(inv -> {
+            ValidationRun r = inv.getArgument(0);
+            if (r.getId() == null) {
+                var f = ValidationRun.class.getDeclaredField("id");
+                f.setAccessible(true);
+                f.set(r, runId);
+            }
+            return r;
+        });
+
+        java.util.concurrent.CountDownLatch inFlight = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+
+        ValidationRunService syncLimitedService = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, progressTracker, null) {
+            @Override
+            int discoverTestCount(String baseUrl, String authToken) {
+                return 1;
+            }
+
+            @Override
+            void executeLauncher(org.junit.platform.launcher.Launcher launcher,
+                                 LauncherDiscoveryRequest request,
+                                 org.junit.platform.launcher.TestExecutionListener listener) {
+                inFlight.countDown();
+                try {
+                    release.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        };
+        syncLimitedService.setTargetUrlPolicy(new TargetUrlPolicy(
+                false, host -> new java.net.InetAddress[]{java.net.InetAddress.getByName("93.184.216.34")}));
+        syncLimitedService.setMaxConcurrentRuns(1);
+        syncLimitedService.setMaxActiveRunsPerUser(5);
+
+        java.util.concurrent.ExecutorService callerPool = java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            ValidationRunForm form1 = new ValidationRunForm("Sync 1", "https://example.com/scim/v2", "tok12345");
+            java.util.concurrent.Future<ValidationRunService.ExecutionResult> firstCall =
+                    callerPool.submit(() -> syncLimitedService.executeRun(form1, "user1@example.com"));
+
+            assertThat(inFlight.await(3, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+
+            ValidationRunForm form2 = new ValidationRunForm("Sync 2", "https://example.com/scim/v2", "tok12345");
+            assertThatThrownBy(() -> syncLimitedService.executeRun(form2, "user2@example.com"))
+                    .isInstanceOf(ResponseStatusException.class)
+                    .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
+                            .isEqualTo(org.springframework.http.HttpStatus.TOO_MANY_REQUESTS));
+
+            verify(runRepository, org.mockito.Mockito.never()).delete(any(ValidationRun.class));
+
+            release.countDown();
+            assertThat(firstCall.get(3, java.util.concurrent.TimeUnit.SECONDS)).isNotNull();
+        } finally {
+            release.countDown();
+            callerPool.shutdownNow();
+            syncLimitedService.shutdownExecutor();
+        }
+    }
+
+    @Test
+    void executeRunAndAsync_resolveDnsOncePerRunAndPinTargetDuringExecution() throws Exception {
+        ValidationMgmtUser owner = new ValidationMgmtUser("user@example.com", OffsetDateTime.now());
+        when(mgmtUserRepository.findById("user@example.com")).thenReturn(Optional.of(owner));
+        when(runRepository.save(any(ValidationRun.class))).thenAnswer(inv -> {
+            ValidationRun r = inv.getArgument(0);
+            if (r.getId() == null) {
+                var f = ValidationRun.class.getDeclaredField("id");
+                f.setAccessible(true);
+                f.set(r, runId);
+            }
+            return r;
+        });
+        when(runRepository.saveAndFlush(any(ValidationRun.class))).thenAnswer(inv -> {
+            ValidationRun r = inv.getArgument(0);
+            var f = ValidationRun.class.getDeclaredField("id");
+            f.setAccessible(true);
+            f.set(r, runId);
+            return r;
+        });
+        when(runRepository.findById(runId)).thenReturn(Optional.of(sampleRun));
+
+        java.util.concurrent.atomic.AtomicInteger dnsLookups = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicReference<TargetUrlPolicy.ResolvedTarget> pinnedInDiscover =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicReference<TargetUrlPolicy.ResolvedTarget> pinnedInExecute =
+                new java.util.concurrent.atomic.AtomicReference<>();
+
+        TargetUrlPolicy countingPolicy = new TargetUrlPolicy(false, host -> {
+            dnsLookups.incrementAndGet();
+            return new java.net.InetAddress[]{java.net.InetAddress.getByName("93.184.216.34")};
+        });
+
+        ValidationRunService pinnedService = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, progressTracker, null) {
+            @Override
+            int discoverTestCount(String baseUrl, String authToken) {
+                pinnedInDiscover.set(de.palsoftware.scim.validator.ui.security.PinnedTargetHttpSupport.currentPinnedTarget());
+                return 1;
+            }
+
+            @Override
+            void executeLauncher(org.junit.platform.launcher.Launcher launcher,
+                                 LauncherDiscoveryRequest request,
+                                 org.junit.platform.launcher.TestExecutionListener listener) {
+                pinnedInExecute.set(de.palsoftware.scim.validator.ui.security.PinnedTargetHttpSupport.currentPinnedTarget());
+            }
+        };
+        pinnedService.setTargetUrlPolicy(countingPolicy);
+        try {
+            ValidationRunForm form = new ValidationRunForm("Pinned Run", "https://example.com/scim/v2", "tok12345");
+            pinnedService.executeRun(form, "user@example.com");
+
+            assertThat(dnsLookups.get()).isEqualTo(1);
+            assertThat(pinnedInDiscover.get()).isNotNull();
+            assertThat(pinnedInExecute.get()).isSameAs(pinnedInDiscover.get());
+            assertThat(de.palsoftware.scim.validator.ui.security.PinnedTargetHttpSupport.currentPinnedTarget()).isNull();
+
+            // Async path also resolves DNS exactly once across foreground + background worker
+            dnsLookups.set(0);
+            pinnedInDiscover.set(null);
+            pinnedInExecute.set(null);
+
+            ValidationRun asyncSample = sampleRun;
+            java.util.concurrent.CountDownLatch bgDone = new java.util.concurrent.CountDownLatch(1);
+            ValidationRunService asyncPinnedService = new ValidationRunService(
+                    runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, progressTracker, null) {
+                @Override
+                int discoverTestCount(String baseUrl, String authToken) {
+                    pinnedInDiscover.set(de.palsoftware.scim.validator.ui.security.PinnedTargetHttpSupport.currentPinnedTarget());
+                    return 1;
+                }
+
+                @Override
+                void executeLauncher(org.junit.platform.launcher.Launcher launcher,
+                                     LauncherDiscoveryRequest request,
+                                     org.junit.platform.launcher.TestExecutionListener listener) {
+                    pinnedInExecute.set(de.palsoftware.scim.validator.ui.security.PinnedTargetHttpSupport.currentPinnedTarget());
+                    bgDone.countDown();
+                }
+            };
+            asyncPinnedService.setTargetUrlPolicy(countingPolicy);
+            try {
+                assertThat(asyncSample).isNotNull();
+                asyncPinnedService.executeRunAsync(form, "user@example.com");
+                assertThat(bgDone.await(3, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                assertThat(dnsLookups.get()).isEqualTo(1);
+                assertThat(pinnedInDiscover.get()).isNotNull();
+                assertThat(pinnedInExecute.get()).isSameAs(pinnedInDiscover.get());
+            } finally {
+                asyncPinnedService.shutdownExecutor();
+            }
+        } finally {
+            pinnedService.shutdownExecutor();
         }
     }
 
@@ -639,6 +805,7 @@ class ValidationRunServiceTest {
         autowiredCtor.setSpecCatalogService(null);
         autowiredCtor.setTargetUrlPolicy(null);
         autowiredCtor.setMaxActiveRunsPerUser(3);
+        autowiredCtor.setMaxConcurrentRuns(2);
         assertThat(autowiredCtor.getMaxActiveRunsPerUser()).isEqualTo(3);
         autowiredCtor.shutdownExecutor();
 
@@ -782,49 +949,89 @@ class ValidationRunServiceTest {
                 false, host -> new java.net.InetAddress[]{java.net.InetAddress.getByName("93.184.216.34")});
         ValidationRunForm form = new ValidationRunForm("SyncTx Run", "https://example.com/scim/v2", "secret-xyz");
 
-        // Case A: Transaction synchronization active + executor rejects on afterCommit + deleteById throws (cleanup catch)
+        // Case A: Transaction synchronization active + shut/full executor rejects BEFORE DB insert or prune
         java.util.concurrent.ThreadPoolExecutor shutExecutor = ValidationRunService.createBoundedRunExecutor(1, 1);
         shutExecutor.shutdownNow();
-        org.mockito.Mockito.doThrow(new RuntimeException("db unavailable")).when(runRepository).deleteById(runId);
 
         ValidationRunService txRejectedService = new ValidationRunService(
                 runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, progressTracker, shutExecutor) {
             @Override
             int discoverTestCount(String baseUrl, String authToken) {
-                return 3;
+                throw new AssertionError("discoverTestCount must not run when executor rejects");
             }
         };
         txRejectedService.setTargetUrlPolicy(publicPolicy);
-        txRejectedService.setMaxActiveRunsPerUser(2);
+        txRejectedService.setMaxActiveRunsPerUser(1);
 
         org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
         try {
-            txRejectedService.executeRunAsync(form, "   ");
-            for (org.springframework.transaction.support.TransactionSynchronization sync :
-                    org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations()) {
-                sync.afterCommit();
-                sync.afterCompletion(org.springframework.transaction.support.TransactionSynchronization.STATUS_COMMITTED);
-            }
+            assertThatThrownBy(() -> txRejectedService.executeRunAsync(form, "   "))
+                    .isInstanceOf(ResponseStatusException.class)
+                    .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
+                            .isEqualTo(org.springframework.http.HttpStatus.TOO_MANY_REQUESTS));
         } finally {
             org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
         }
-        verify(progressTracker).failRun(eq(runId), org.mockito.ArgumentMatchers.contains("capacity reached"));
+        verify(runRepository, org.mockito.Mockito.never()).saveAndFlush(any(ValidationRun.class));
 
-        // Case B: Transaction synchronization rolled back -> releases active slot without running task
-        org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+        // Case B: Transaction synchronization active + live executor -> commit hands off task; rollback cancels cleanly
+        java.util.concurrent.CountDownLatch committedBgDone = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicInteger launcherRuns = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.ThreadPoolExecutor liveExecutor = ValidationRunService.createBoundedRunExecutor(2, 4);
+        when(runRepository.findById(runId)).thenReturn(Optional.of(sampleRun));
+        when(runRepository.save(any(ValidationRun.class))).thenAnswer(inv -> inv.getArgument(0));
         try {
-            txRejectedService.executeRunAsync(form, "   ");
-            for (org.springframework.transaction.support.TransactionSynchronization sync :
-                    org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations()) {
-                sync.afterCompletion(org.springframework.transaction.support.TransactionSynchronization.STATUS_ROLLED_BACK);
+            ValidationRunService txLiveService = new ValidationRunService(
+                    runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, progressTracker, liveExecutor) {
+                @Override
+                int discoverTestCount(String baseUrl, String authToken) {
+                    return 3;
+                }
+
+                @Override
+                void executeLauncher(org.junit.platform.launcher.Launcher launcher,
+                                     LauncherDiscoveryRequest request,
+                                     org.junit.platform.launcher.TestExecutionListener listener) {
+                    launcherRuns.incrementAndGet();
+                    committedBgDone.countDown();
+                }
+            };
+            txLiveService.setTargetUrlPolicy(publicPolicy);
+            txLiveService.setMaxActiveRunsPerUser(1);
+
+            // Rollback first: must release user's single active slot and NOT invoke executeLauncher
+            org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+            try {
+                txLiveService.executeRunAsync(form, "   ");
+                for (org.springframework.transaction.support.TransactionSynchronization sync :
+                        org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations()) {
+                    sync.afterCompletion(org.springframework.transaction.support.TransactionSynchronization.STATUS_ROLLED_BACK);
+                }
+            } finally {
+                org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
             }
+            assertThat(launcherRuns.get()).isZero();
+            verify(progressTracker).removeRun(runId);
+
+            // Commit second (same user, maxActiveRunsPerUser=1 proves rollback released slot): invokes executeLauncher
+            org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+            try {
+                txLiveService.executeRunAsync(form, "   ");
+                for (org.springframework.transaction.support.TransactionSynchronization sync :
+                        org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations()) {
+                    sync.afterCommit();
+                    sync.afterCompletion(org.springframework.transaction.support.TransactionSynchronization.STATUS_COMMITTED);
+                }
+            } finally {
+                org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
+            }
+            assertThat(committedBgDone.await(3, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(launcherRuns.get()).isEqualTo(1);
         } finally {
-            org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
+            liveExecutor.shutdownNow();
         }
 
         // Case C: runTestsInBackground exception branch scrubs token and marks run ERROR
-        when(runRepository.findById(runId)).thenReturn(Optional.of(sampleRun));
-        when(runRepository.save(any(ValidationRun.class))).thenAnswer(inv -> inv.getArgument(0));
         ValidationRunService bgErrorService = new ValidationRunService(
                 runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, progressTracker, shutExecutor) {
             @Override
@@ -838,6 +1045,23 @@ class ValidationRunServiceTest {
         bgErrorService.runTestsInBackground(runId, form, 4);
         assertThat(sampleRun.getStatus()).isEqualTo("ERROR");
         verify(progressTracker).failRun(eq(runId), eq("Background failure with [REDACTED]"));
+
+        // Case D: Background worker interrupted while waiting for global concurrent permit marks run ERROR cleanly
+        bgErrorService.setMaxConcurrentRuns(1);
+        java.lang.reflect.Method execPermitted = ValidationRunService.class.getDeclaredMethod(
+                "executePermittedBackgroundRun",
+                UUID.class, ValidationRunForm.class, int.class, TargetUrlPolicy.ResolvedTarget.class, String.class);
+        execPermitted.setAccessible(true);
+        sampleRun.setStatus("RUNNING");
+        Thread.currentThread().interrupt();
+        try {
+            execPermitted.invoke(bgErrorService, runId, form, 4, publicPolicy.resolve(form.baseUrl()), "user@example.com");
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+        } finally {
+            Thread.interrupted();
+        }
+        assertThat(sampleRun.getStatus()).isEqualTo("ERROR");
+        verify(progressTracker).failRun(eq(runId), eq("Validation run interrupted"));
     }
 
     // ─── 2 MiB UTF-8 & VARCHAR defensive truncation (Issue #4) ──────────
@@ -1444,6 +1668,116 @@ class ValidationRunServiceTest {
         assertThat(published.getProductSlug()).isEqualTo("a".repeat(119));
         assertThat(published.getReportUrl()).isEqualTo("https://scimsandbox.org/compliance/?run=" + runId);
         assertThat(published.getBadgeUrl()).isEqualTo("https://scimsandbox.org/compliance/badges/" + runId + ".svg");
+    }
+
+    @Test
+    void shutdownExecutorCancelsQueuedCommittedRunsAndDiscoverTestCountScrubsSecrets() throws Exception {
+        Class.forName(de.palsoftware.scim.validator.ui.ScimValidatorManagementApplication.class.getName());
+        assertThat(java.security.Security.getProperty("networkaddress.cache.ttl")).isEqualTo("0");
+
+        TargetUrlPolicy publicPolicy = new TargetUrlPolicy(
+                false, host -> new java.net.InetAddress[]{java.net.InetAddress.getByName("93.184.216.34")});
+
+        // 1. discoverTestCount scrubs secrets from thrown exceptions (both message and null-message branches)
+        ValidationRunService throwingDiscoverSvc = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, progressTracker, null) {
+            private int calls;
+
+            @Override
+            org.junit.platform.launcher.TestPlan discoverTestPlan(LauncherDiscoveryRequest request) {
+                if (calls++ == 0) {
+                    throw new IllegalStateException("Discovery exploded with secret-token-999");
+                }
+                throw new IllegalStateException((String) null);
+            }
+        };
+        try {
+            assertThat(throwingDiscoverSvc.discoverTestCount("https://example.com/scim/v2", "secret-token-999"))
+                    .isEqualTo(ValidationRunService.DEFAULT_DISCOVERED_TEST_COUNT);
+            assertThat(throwingDiscoverSvc.discoverTestCount("https://example.com/scim/v2", "secret-token-999"))
+                    .isEqualTo(ValidationRunService.DEFAULT_DISCOVERED_TEST_COUNT);
+        } finally {
+            throwingDiscoverSvc.shutdownExecutor();
+        }
+
+        // 2. Queued committed async run on owned executor is cancelled cleanly on shutdownExecutor()
+        UUID firstRunId = UUID.randomUUID();
+        UUID queuedRunId = UUID.randomUUID();
+        ValidationRun firstRun = new ValidationRun();
+        ValidationRun queuedRun = new ValidationRun();
+        var idField = ValidationRun.class.getDeclaredField("id");
+        idField.setAccessible(true);
+        idField.set(firstRun, firstRunId);
+        idField.set(queuedRun, queuedRunId);
+        firstRun.setStatus("RUNNING");
+        queuedRun.setStatus("RUNNING");
+
+        ValidationMgmtUser owner = new ValidationMgmtUser("user@example.com", OffsetDateTime.now());
+        when(mgmtUserRepository.findById("user@example.com")).thenReturn(Optional.of(owner));
+        java.util.concurrent.atomic.AtomicInteger saveSeq = new java.util.concurrent.atomic.AtomicInteger();
+        when(runRepository.saveAndFlush(any(ValidationRun.class))).thenAnswer(inv ->
+                saveSeq.incrementAndGet() == 1 ? firstRun : queuedRun);
+        when(runRepository.findById(firstRunId)).thenReturn(Optional.of(firstRun));
+        when(runRepository.findById(queuedRunId)).thenReturn(Optional.of(queuedRun));
+        when(runRepository.save(any(ValidationRun.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        java.util.concurrent.CountDownLatch workerStarted = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch blockWorker = new java.util.concurrent.CountDownLatch(1);
+
+        ValidationRunService ownedPoolSvc = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository,
+                null, progressTracker, publicPolicy, null, null, 1, 2) {
+            @Override
+            int discoverTestCount(String baseUrl, String authToken) {
+                return 5;
+            }
+
+            @Override
+            void executeLauncher(org.junit.platform.launcher.Launcher launcher,
+                                 LauncherDiscoveryRequest request,
+                                 org.junit.platform.launcher.TestExecutionListener listener) {
+                workerStarted.countDown();
+                try {
+                    blockWorker.await(5, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        };
+        ownedPoolSvc.setMaxActiveRunsPerUser(2);
+
+        ValidationRunForm form = new ValidationRunForm("Queued Run", "https://example.com/scim/v2", "secret-token-999");
+        ownedPoolSvc.executeRunAsync(form, "user@example.com");
+        assertThat(workerStarted.await(3, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+
+        // Second run sits in the LinkedBlockingQueue behind the 1 busy worker thread
+        ownedPoolSvc.executeRunAsync(form, "user@example.com");
+
+        // Shut down executor while run #2 is queued -> drains queue, marks queuedRun ERROR, fails progressTracker
+        ownedPoolSvc.shutdownExecutor();
+        blockWorker.countDown();
+
+        assertThat(queuedRun.getStatus()).isEqualTo("ERROR");
+        verify(progressTracker).failRun(eq(queuedRunId), eq("Validation run cancelled during shutdown"));
+
+        // Edge branches on CancelableAsyncRunTask & cancelDroppedAsyncTasks
+        ValidationRunService.cancelDroppedAsyncTasks(null);
+        ValidationRunService.CancelableAsyncRunTask edgeTask =
+                new ValidationRunService.CancelableAsyncRunTask(ownedPoolSvc, null);
+        edgeTask.cancelQueuedOnShutdown();
+        edgeTask.cancelQueuedOnShutdown();
+        edgeTask.run();
+
+        ValidationRunService.CancelableAsyncRunTask interruptedTask =
+                new ValidationRunService.CancelableAsyncRunTask(ownedPoolSvc, null);
+        Thread.currentThread().interrupt();
+        try {
+            interruptedTask.run();
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+        } finally {
+            Thread.interrupted();
+        }
+        interruptedTask.abortBeforeHandoff();
     }
 
     // ─── helpers ────────────────────────────────────────────────────────

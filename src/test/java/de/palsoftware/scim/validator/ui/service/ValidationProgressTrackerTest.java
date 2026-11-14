@@ -188,5 +188,12 @@ class ValidationProgressTrackerTest {
         assertThat(singleSlot.trackedCount()).isEqualTo(1);
         assertThat(singleSlot.getProgress(second)).isNotNull();
         assertThat(singleSlot.getProgress(first)).isNull();
+
+        singleSlot.subscribe(second);
+        singleSlot.removeRun(null);
+        assertThat(singleSlot.getProgress(second)).isNotNull();
+        singleSlot.removeRun(second);
+        assertThat(singleSlot.getProgress(second)).isNull();
+        assertThat(singleSlot.trackedCount()).isZero();
     }
 }

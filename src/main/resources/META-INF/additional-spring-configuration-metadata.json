@@ -30,7 +30,7 @@
       "name": "app.security.allow-localhost-targets",
       "type": "java.lang.Boolean",
       "defaultValue": false,
-      "description": "Whether loopback SCIM target URLs (localhost, 127.0.0.1, [::1]) are permitted for local testing. Management port 9090 is always blocked."
+      "description": "Whether loopback SCIM target URLs (localhost, 127.0.0.1, [::1]) are permitted for local testing. The configured management port (default 9090) is always blocked on loopback targets."
     },
     {
       "name": "app.security.actuator.api-key",

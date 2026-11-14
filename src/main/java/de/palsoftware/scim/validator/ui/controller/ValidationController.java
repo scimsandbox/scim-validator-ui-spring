@@ -53,6 +53,7 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 
 import java.util.Collections;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.Map;
@@ -129,16 +130,11 @@ public class ValidationController {
         this.specCatalogService = specCatalogService;
         this.gitHubCompliancePublisherService = gitHubCompliancePublisherService;
         this.publicationRepository = publicationRepository;
-        this.targetUrlPolicy = targetUrlPolicy != null ? targetUrlPolicy : new TargetUrlPolicy(false);
+        this.targetUrlPolicy = Objects.requireNonNullElse(targetUrlPolicy, TargetUrlPolicy.DEFAULT_STRICT);
     }
 
     public void setTargetUrlPolicy(TargetUrlPolicy targetUrlPolicy) {
-        this.targetUrlPolicy = targetUrlPolicy != null ? targetUrlPolicy : new TargetUrlPolicy(false);
-    }
-
-    private void validateTargetUrl(String baseUrl) {
-        TargetUrlPolicy policy = this.targetUrlPolicy != null ? this.targetUrlPolicy : new TargetUrlPolicy(false);
-        policy.validateUri(baseUrl);
+        this.targetUrlPolicy = Objects.requireNonNullElse(targetUrlPolicy, TargetUrlPolicy.DEFAULT_STRICT);
     }
 
     @GetMapping("/")
@@ -197,21 +193,22 @@ public class ValidationController {
             Authentication authentication) {
         if (!bindingResult.hasFieldErrors("baseUrl")) {
             try {
-                validateTargetUrl(runForm.baseUrl());
+                targetUrlPolicy.validateSyntax(runForm.baseUrl());
             } catch (IllegalArgumentException ex) {
                 bindingResult.rejectValue("baseUrl", "baseUrl.invalid", ex.getMessage());
             }
         }
         if (bindingResult.hasErrors()) {
-            Map<String, String> errors = new HashMap<>();
-            bindingResult.getFieldErrors().forEach(error -> errors.put(error.getField(), error.getDefaultMessage()));
-            return ResponseEntity.badRequest().body(Map.of("errors", errors));
+            return badRequestValidationErrors(bindingResult);
         }
 
         String userEmail = actorEmail(authentication);
         ValidationRunService.ExecutionResult result;
         try {
             result = validationRunService.executeRunAsync(runForm, userEmail);
+        } catch (IllegalArgumentException ex) {
+            bindingResult.rejectValue("baseUrl", "baseUrl.invalid", ex.getMessage());
+            return badRequestValidationErrors(bindingResult);
         } catch (ResponseStatusException ex) {
             String message = ex.getReason() != null ? ex.getReason() : "Request could not be processed.";
             return ResponseEntity.status(ex.getStatusCode()).body(Map.of("message", message));
@@ -235,32 +232,22 @@ public class ValidationController {
             RedirectAttributes redirectAttributes) {
         if (!bindingResult.hasFieldErrors("baseUrl")) {
             try {
-                validateTargetUrl(runForm.baseUrl());
+                targetUrlPolicy.validateSyntax(runForm.baseUrl());
             } catch (IllegalArgumentException ex) {
                 bindingResult.rejectValue("baseUrl", "baseUrl.invalid", ex.getMessage());
             }
         }
         if (bindingResult.hasErrors()) {
-            String userEmail = actorEmail(authentication);
-            boolean admin = isAdmin(authentication);
-            model.addAttribute("runs",
-                validationRunService.listRuns(userEmail, admin));
-            model.addAttribute("myRunsCount", validationRunService.countOwnedRuns(userEmail));
-            model.addAttribute("currentUserEmail", userEmail);
-            model.addAttribute("isAdmin", admin);
-            model.addAttribute("showOthers", true);
-            model.addAttribute(ATTR_CURRENT_USER, resolveDisplayName(authentication));
-            model.addAttribute(ATTR_CURRENT_USER_ROLE, currentUserRole(authentication));
-            model.addAttribute("maxRuns", validationRunService.getMaxRunsPerUser());
-            model.addAttribute("serverManagerUrl", serverManagerUrl);
-            populatePublishedRunsModel(model, userEmail, admin, true);
-            return "index";
+            return renderIndexWithValidationErrors(model, authentication);
         }
 
         String userEmail = actorEmail(authentication);
         ValidationRunService.ExecutionResult result;
         try {
             result = validationRunService.executeRun(runForm, userEmail);
+        } catch (IllegalArgumentException ex) {
+            bindingResult.rejectValue("baseUrl", "baseUrl.invalid", ex.getMessage());
+            return renderIndexWithValidationErrors(model, authentication);
         } catch (ResponseStatusException ex) {
             redirectAttributes.addFlashAttribute("errorMessage",
                     ex.getReason() != null ? ex.getReason() : "Too many concurrent validation runs.");
@@ -272,6 +259,28 @@ public class ValidationController {
                 "An older test suite was deleted to make room for this new one. Maximum allowed test suites per user is " + result.getMaxRuns() + ".");
         }
         return "redirect:/runs/" + run.id();
+    }
+
+    private static ResponseEntity<Map<String, Object>> badRequestValidationErrors(BindingResult bindingResult) {
+        Map<String, String> errors = new HashMap<>();
+        bindingResult.getFieldErrors().forEach(error -> errors.put(error.getField(), error.getDefaultMessage()));
+        return ResponseEntity.badRequest().body(Map.of("errors", errors));
+    }
+
+    private String renderIndexWithValidationErrors(Model model, Authentication authentication) {
+        String userEmail = actorEmail(authentication);
+        boolean admin = isAdmin(authentication);
+        model.addAttribute("runs", validationRunService.listRuns(userEmail, admin));
+        model.addAttribute("myRunsCount", validationRunService.countOwnedRuns(userEmail));
+        model.addAttribute("currentUserEmail", userEmail);
+        model.addAttribute("isAdmin", admin);
+        model.addAttribute("showOthers", true);
+        model.addAttribute(ATTR_CURRENT_USER, resolveDisplayName(authentication));
+        model.addAttribute(ATTR_CURRENT_USER_ROLE, currentUserRole(authentication));
+        model.addAttribute("maxRuns", validationRunService.getMaxRunsPerUser());
+        model.addAttribute("serverManagerUrl", serverManagerUrl);
+        populatePublishedRunsModel(model, userEmail, admin, true);
+        return "index";
     }
 
     @GetMapping(value = "/runs/{runId}/progress", produces = MediaType.TEXT_EVENT_STREAM_VALUE)

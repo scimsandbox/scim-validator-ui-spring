@@ -26,6 +26,7 @@ class PlaygroundExecutionServiceTest {
     private static HttpServer testServer;
     private static int serverPort;
     private static final AtomicReference<String> lastReceivedAuthHeader = new AtomicReference<>();
+    private static final AtomicReference<String> lastReceivedHostHeader = new AtomicReference<>();
     private static final AtomicReference<String> lastReceivedBody = new AtomicReference<>();
     private static final AtomicReference<String> lastReceivedMethod = new AtomicReference<>();
 
@@ -45,6 +46,7 @@ class PlaygroundExecutionServiceTest {
         testServer.createContext("/scim/v2/ServiceProviderConfig", exchange -> {
             lastReceivedMethod.set(exchange.getRequestMethod());
             lastReceivedAuthHeader.set(exchange.getRequestHeaders().getFirst("Authorization"));
+            lastReceivedHostHeader.set(exchange.getRequestHeaders().getFirst("Host"));
             String response = "{\"schemas\":[\"urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig\"],\"patch\":{\"supported\":true}}";
             byte[] bytes = response.getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "application/scim+json");
@@ -92,6 +94,20 @@ class PlaygroundExecutionServiceTest {
             exchange.sendResponseHeaders(200, bytes.length);
             try (OutputStream os = exchange.getResponseBody()) {
                 os.write(bytes);
+            }
+        });
+
+        testServer.createContext("/scim/v2/huge-chunked", exchange -> {
+            byte[] chunk = new byte[64 * 1024];
+            java.util.Arrays.fill(chunk, (byte) 'y');
+            exchange.getResponseHeaders().set("Content-Type", "application/scim+json");
+            exchange.sendResponseHeaders(200, 0);
+            try (OutputStream os = exchange.getResponseBody()) {
+                for (int i = 0; i < 40; i++) {
+                    os.write(chunk);
+                }
+            } catch (IOException ignored) {
+                // Client aborts stream once MAX_RESPONSE_BYTES is exceeded
             }
         });
 
@@ -373,17 +389,43 @@ class PlaygroundExecutionServiceTest {
 
     @Test
     void execute_crossOriginEndpointOverride_isRejectedBeforeSendingBearerToken() {
-        PlaygroundExecuteResponse res = service.execute(new PlaygroundExecuteRequest(
-                "http://127.0.0.1:" + serverPort + "/scim/v2",
-                "secret-token-xyz",
-                "GET",
+        for (String crossOriginEndpoint : java.util.List.of(
                 "https://evil.example.org/exfil",
+                "   HTTPS://evil.example.org/exfil   ",
+                "   HTTP://127.0.0.1:9999/exfil   ")) {
+            PlaygroundExecuteResponse res = service.execute(new PlaygroundExecuteRequest(
+                    "http://127.0.0.1:" + serverPort + "/scim/v2",
+                    "secret-token-xyz",
+                    "GET",
+                    crossOriginEndpoint,
+                    null,
+                    null
+            ));
+
+            assertThat(res.statusCode()).isEqualTo(0);
+            assertThat(res.error()).contains("configured target origin");
+        }
+
+        // Blank endpoint and relative endpoint without leading slash are normalized cleanly
+        PlaygroundExecuteResponse blankEndpointRes = service.execute(new PlaygroundExecuteRequest(
+                "http://127.0.0.1:" + serverPort + "/scim/v2/ServiceProviderConfig/",
+                null,
+                "GET",
+                "   ",
                 null,
                 null
         ));
+        assertThat(blankEndpointRes.statusCode()).isEqualTo(200);
 
-        assertThat(res.statusCode()).isEqualTo(0);
-        assertThat(res.error()).contains("configured target origin");
+        PlaygroundExecuteResponse relativeNoSlashRes = service.execute(new PlaygroundExecuteRequest(
+                "http://127.0.0.1:" + serverPort + "/scim/v2",
+                null,
+                "GET",
+                "ServiceProviderConfig",
+                null,
+                null
+        ));
+        assertThat(relativeNoSlashRes.statusCode()).isEqualTo(200);
     }
 
     @Test
@@ -467,5 +509,112 @@ class PlaygroundExecutionServiceTest {
         ));
         assertThat(explicitPortMismatch.statusCode()).isEqualTo(0);
         assertThat(explicitPortMismatch.error()).contains("configured target origin");
+    }
+
+    @Test
+    void execute_dnsRebindingProtection_resolvesOnceAndConnectsStrictlyToPinnedAddress() throws Exception {
+        // 1. Stateful HostAddressResolver: returns 127.0.0.1 on lookup #1, and would return 169.254.169.254 on lookup #2
+        java.util.concurrent.atomic.AtomicInteger lookupCount = new java.util.concurrent.atomic.AtomicInteger();
+        TargetUrlPolicy singleLookupPolicy = new TargetUrlPolicy(true, host -> {
+            int call = lookupCount.incrementAndGet();
+            if (call == 1) {
+                return new InetAddress[]{InetAddress.getByName("127.0.0.1")};
+            }
+            return new InetAddress[]{InetAddress.getByName("169.254.169.254")};
+        });
+        PlaygroundExecutionService rebindProtectedService = new PlaygroundExecutionService(singleLookupPolicy);
+
+        PlaygroundExecuteResponse res = rebindProtectedService.execute(new PlaygroundExecuteRequest(
+                "http://localhost:" + serverPort + "/scim/v2",
+                "secret-token-123",
+                "GET",
+                "/ServiceProviderConfig",
+                null,
+                null
+        ));
+        assertThat(res.statusCode()).isEqualTo(200);
+        assertThat(lookupCount.get()).isEqualTo(1);
+
+        // 2. Unresolvable hostname in system DNS ("rebind.example.test") succeeds ONLY because HttpClient uses PinnedDnsResolver
+        TargetUrlPolicy pinnedCustomHostPolicy = new TargetUrlPolicy(false) {
+            @Override
+            public ResolvedTarget resolve(String url) {
+                try {
+                    return new ResolvedTarget(
+                            java.net.URI.create(url),
+                            "rebind.example.test",
+                            java.util.List.of(InetAddress.getByName("127.0.0.1")));
+                } catch (java.net.UnknownHostException e) {
+                    throw new IllegalStateException(e);
+                }
+            }
+        };
+        PlaygroundExecutionService pinnedCustomHostService = new PlaygroundExecutionService(pinnedCustomHostPolicy);
+
+        PlaygroundExecuteResponse pinnedRes = pinnedCustomHostService.execute(new PlaygroundExecuteRequest(
+                "http://rebind.example.test:" + serverPort + "/scim/v2",
+                "secret-token-123",
+                "GET",
+                "/ServiceProviderConfig",
+                null,
+                null
+        ));
+        assertThat(pinnedRes.statusCode()).isEqualTo(200);
+        assertThat(lastReceivedHostHeader.get()).isEqualTo("rebind.example.test:" + serverPort);
+    }
+
+    @Test
+    void execute_chunkedOversizedResponseAndInvalidHeaderCharacters_areRejectedCleanly() {
+        PlaygroundExecuteResponse chunkedHuge = service.execute(new PlaygroundExecuteRequest(
+                "http://127.0.0.1:" + serverPort + "/scim/v2",
+                null,
+                "GET",
+                "/huge-chunked",
+                null,
+                null
+        ));
+        assertThat(chunkedHuge.statusCode()).isEqualTo(0);
+        assertThat(chunkedHuge.error()).contains("exceeded maximum allowed size");
+
+        PlaygroundExecuteResponse invalidHeaderName = service.execute(new PlaygroundExecuteRequest(
+                "http://127.0.0.1:" + serverPort + "/scim/v2",
+                null,
+                "GET",
+                "/ServiceProviderConfig",
+                Map.of("Bad Header Name", "val"),
+                null
+        ));
+        assertThat(invalidHeaderName.statusCode()).isEqualTo(0);
+        assertThat(invalidHeaderName.error()).contains("Invalid header name");
+
+        PlaygroundExecuteResponse crlfHeaderValue = service.execute(new PlaygroundExecuteRequest(
+                "http://127.0.0.1:" + serverPort + "/scim/v2",
+                null,
+                "GET",
+                "/ServiceProviderConfig",
+                Map.of("X-Test", "line1\r\nInjected: true"),
+                null
+        ));
+        assertThat(crlfHeaderValue.statusCode()).isEqualTo(0);
+        assertThat(crlfHeaderValue.error()).contains("Invalid header 'X-Test': ***");
+
+        // GET with non-blank body + valid RFC 9110 token punctuation & horizontal tab in header value
+        PlaygroundExecuteResponse getWithBodyAndTabHeader = service.execute(new PlaygroundExecuteRequest(
+                "http://127.0.0.1:" + serverPort + "/scim/v2",
+                null,
+                "GET",
+                "/ServiceProviderConfig",
+                Map.of("X-Token!#$%&'*+.^_`|~9", "tab\tallowed"),
+                "{\"ignoredOnGet\":true}"
+        ));
+        assertThat(getWithBodyAndTabHeader.statusCode()).isEqualTo(200);
+
+        org.apache.http.client.methods.HttpGet dummyGet = new org.apache.http.client.methods.HttpGet("http://127.0.0.1/");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> PlaygroundExecutionService.addValidatedHeader(dummyGet, "", "v"))
+                .isInstanceOf(IllegalArgumentException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> PlaygroundExecutionService.addValidatedHeader(dummyGet, "X-Test", null))
+                .isInstanceOf(IllegalArgumentException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> PlaygroundExecutionService.addValidatedHeader(dummyGet, "X-Test", "bad\u0007ctl"))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 }

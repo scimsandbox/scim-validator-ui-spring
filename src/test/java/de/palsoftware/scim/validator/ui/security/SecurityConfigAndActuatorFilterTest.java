@@ -34,7 +34,7 @@ class SecurityConfigAndActuatorFilterTest {
     }
 
     @Test
-    void processOidcUser_verifiedEmail_provisionsUserAndGrantsAdminWhenConfigured() {
+    void processOidcUser_verifiedAndEnterpriseOmittedEmailVerified_provisionNormalizedEmail() {
         MgmtUserService mgmtUserService = mock(MgmtUserService.class);
         SecurityConfig config = new SecurityConfig("scim-admin", "scim-user", "roles", mgmtUserService);
 
@@ -42,6 +42,7 @@ class SecurityConfigAndActuatorFilterTest {
                 "sub", "sub-admin",
                 "email", "Admin@Example.com",
                 "email_verified", true,
+                "preferred_username", "different@example.com",
                 "roles", List.of("scim-admin")
         ));
 
@@ -51,36 +52,58 @@ class SecurityConfigAndActuatorFilterTest {
         assertThat(processed.getAuthorities())
                 .extracting(GrantedAuthority::getAuthority)
                 .contains("ROLE_ADMIN", "ROLE_USER");
+
+        // Enterprise/Entra ID user with omitted email_verified and UPN fallback
+        OidcUser entraUser = buildOidcUser(Map.of(
+                "sub", "sub-entra",
+                "upn", "Entra.User@Contoso.com"
+        ));
+        config.processOidcUser(entraUser);
+        verify(mgmtUserService).provisionUser("entra.user@contoso.com");
     }
 
     @Test
-    void processOidcUser_unverifiedOrMissingEmail_throwsOAuth2AuthenticationException() {
+    void processOidcUser_explicitlyUnverifiedOrMissingValidEmail_throwsExpectedOAuth2Errors() {
         MgmtUserService mgmtUserService = mock(MgmtUserService.class);
         SecurityConfig config = new SecurityConfig("scim-admin", "scim-user", "roles", mgmtUserService);
 
-        OidcUser unverified = buildOidcUser(Map.of(
-                "sub", "sub-unverified",
+        OidcUser unverifiedBool = buildOidcUser(Map.of(
+                "sub", "sub-unverified-bool",
                 "email", "victim@example.com",
+                "upn", "victim@contoso.com",
                 "email_verified", false
         ));
-        OidcUser preferredUsernameOnly = buildOidcUser(Map.of(
-                "sub", "sub-spoof",
+        OidcUser unverifiedStr = buildOidcUser(Map.of(
+                "sub", "sub-unverified-str",
                 "preferred_username", "victim@example.com",
+                "email_verified", "false"
+        ));
+        OidcUser noValidEmailClaim = buildOidcUser(Map.of(
+                "sub", "sub-no-email",
+                "preferred_username", "plain-username-without-at",
                 "email_verified", true
         ));
 
-        assertThatThrownBy(() -> config.processOidcUser(unverified))
-                .isInstanceOf(OAuth2AuthenticationException.class);
-        assertThatThrownBy(() -> config.processOidcUser(preferredUsernameOnly))
-                .isInstanceOf(OAuth2AuthenticationException.class);
+        assertThatThrownBy(() -> config.processOidcUser(unverifiedBool))
+                .isInstanceOf(OAuth2AuthenticationException.class)
+                .satisfies(ex -> assertThat(((OAuth2AuthenticationException) ex).getError().getErrorCode())
+                        .isEqualTo("unverified_email"));
+        assertThatThrownBy(() -> config.processOidcUser(unverifiedStr))
+                .isInstanceOf(OAuth2AuthenticationException.class)
+                .satisfies(ex -> assertThat(((OAuth2AuthenticationException) ex).getError().getErrorCode())
+                        .isEqualTo("unverified_email"));
+        assertThatThrownBy(() -> config.processOidcUser(noValidEmailClaim))
+                .isInstanceOf(OAuth2AuthenticationException.class)
+                .satisfies(ex -> assertThat(((OAuth2AuthenticationException) ex).getError().getErrorCode())
+                        .isEqualTo("invalid_token"));
         verifyNoInteractions(mgmtUserService);
     }
 
     @Test
-    void actuatorFilter_healthEndpointsAreAlwaysAllowedAndGrantRoleWhenValidKeyProvided() throws Exception {
-        ActuatorApiKeyAuthFilter filter = new ActuatorApiKeyAuthFilter("top-secret-actuator-key", 9090);
+    void actuatorFilter_healthEndpointsAreAlwaysAllowedAndGrantRoleForValidKeyOrDedicatedManagementPort() throws Exception {
+        ActuatorApiKeyAuthFilter filter = new ActuatorApiKeyAuthFilter("top-secret-actuator-key", 9090, 8080);
 
-        // Public health check without API key succeeds
+        // Public health check without API key succeeds without ROLE_ACTUATOR
         MockHttpServletRequest reqNoKey = new MockHttpServletRequest("GET", "/actuator/health/readiness");
         reqNoKey.setLocalPort(8080);
         MockHttpServletResponse resNoKey = new MockHttpServletResponse();
@@ -93,10 +116,10 @@ class SecurityConfigAndActuatorFilterTest {
         assertThat(resNoKey.getStatus()).isEqualTo(200);
         assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
 
-        // Health check with valid API key attaches ROLE_ACTUATOR for show-components: when_authorized
+        // Health check with valid X-Actuator-Api-Key attaches ROLE_ACTUATOR
         MockHttpServletRequest reqWithKey = new MockHttpServletRequest("GET", "/actuator/health");
         reqWithKey.setLocalPort(8080);
-        reqWithKey.addHeader("X-API-Key", "top-secret-actuator-key");
+        reqWithKey.addHeader("X-Actuator-Api-Key", "top-secret-actuator-key");
         MockHttpServletResponse resWithKey = new MockHttpServletResponse();
         AtomicBoolean authObserved = new AtomicBoolean(false);
 
@@ -107,11 +130,24 @@ class SecurityConfigAndActuatorFilterTest {
         });
 
         assertThat(authObserved).isTrue();
+
+        // When no API key is configured, /actuator/health on dedicated management port grants ROLE_ACTUATOR
+        SecurityContextHolder.clearContext();
+        ActuatorApiKeyAuthFilter keylessFilter = new ActuatorApiKeyAuthFilter("", 9090, 8080);
+        MockHttpServletRequest mgmtHealthReq = new MockHttpServletRequest("GET", "/actuator/health");
+        mgmtHealthReq.setLocalPort(9090);
+        AtomicBoolean mgmtHealthAuthObserved = new AtomicBoolean(false);
+        keylessFilter.doFilter(mgmtHealthReq, new MockHttpServletResponse(), (req, res) -> {
+            Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+            mgmtHealthAuthObserved.set(auth != null && auth.getAuthorities().stream()
+                    .anyMatch(a -> "ROLE_ACTUATOR".equals(a.getAuthority())));
+        });
+        assertThat(mgmtHealthAuthObserved).isTrue();
     }
 
     @Test
-    void actuatorFilter_whenApiKeyConfigured_requiresMatchingConstantTimeHeaderOrBearer() throws Exception {
-        ActuatorApiKeyAuthFilter filter = new ActuatorApiKeyAuthFilter("expected-secret-key", 9090);
+    void actuatorFilter_whenApiKeyConfigured_acceptsXActuatorApiKeyXApiKeyAndBearer() throws Exception {
+        ActuatorApiKeyAuthFilter filter = new ActuatorApiKeyAuthFilter("expected-secret-key", 9090, 8080);
 
         // Missing key -> 401 even on management port
         MockHttpServletRequest missingReq = new MockHttpServletRequest("GET", "/actuator/prometheus");
@@ -130,7 +166,29 @@ class SecurityConfigAndActuatorFilterTest {
         assertThat(called).isFalse();
         assertThat(wrongRes.getStatus()).isEqualTo(401);
 
+        // Matching X-Actuator-Api-Key -> permitted with ROLE_ACTUATOR
+        SecurityContextHolder.clearContext();
+        MockHttpServletRequest xActuatorKeyReq = new MockHttpServletRequest("GET", "/actuator/prometheus");
+        xActuatorKeyReq.addHeader("X-Actuator-Api-Key", "expected-secret-key");
+        MockHttpServletResponse xActuatorKeyRes = new MockHttpServletResponse();
+        filter.doFilter(xActuatorKeyReq, xActuatorKeyRes, (req, res) -> called.set(true));
+        assertThat(called).isTrue();
+        assertThat(xActuatorKeyRes.getStatus()).isEqualTo(200);
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNotNull();
+
+        // Matching X-API-Key -> permitted
+        called.set(false);
+        SecurityContextHolder.clearContext();
+        MockHttpServletRequest xApiKeyReq = new MockHttpServletRequest("GET", "/actuator/prometheus");
+        xApiKeyReq.addHeader("X-Actuator-Api-Key", "   ");
+        xApiKeyReq.addHeader("X-API-Key", "expected-secret-key");
+        MockHttpServletResponse xApiKeyRes = new MockHttpServletResponse();
+        filter.doFilter(xApiKeyReq, xApiKeyRes, (req, res) -> called.set(true));
+        assertThat(called).isTrue();
+        assertThat(xApiKeyRes.getStatus()).isEqualTo(200);
+
         // Matching Authorization: Bearer -> permitted with ROLE_ACTUATOR
+        called.set(false);
         SecurityContextHolder.clearContext();
         MockHttpServletRequest bearerReq = new MockHttpServletRequest("GET", "/actuator/prometheus");
         bearerReq.addHeader("Authorization", "Bearer expected-secret-key");
@@ -142,8 +200,8 @@ class SecurityConfigAndActuatorFilterTest {
     }
 
     @Test
-    void actuatorFilter_whenApiKeyBlank_allowsOnlyManagementPortAndBlocksPublicPort() throws Exception {
-        ActuatorApiKeyAuthFilter filter = new ActuatorApiKeyAuthFilter("", 9090);
+    void actuatorFilter_whenApiKeyBlank_allowsOnlyDedicatedManagementPortAndRejectsSameServerPort() throws Exception {
+        ActuatorApiKeyAuthFilter filter = new ActuatorApiKeyAuthFilter("", 9090, 8080);
 
         // Public application port 8080 -> 403 Forbidden
         MockHttpServletRequest publicPortReq = new MockHttpServletRequest("GET", "/actuator/prometheus");
@@ -163,6 +221,22 @@ class SecurityConfigAndActuatorFilterTest {
         assertThat(mgmtCalled).isTrue();
         assertThat(mgmtPortRes.getStatus()).isEqualTo(200);
         assertThat(SecurityContextHolder.getContext().getAuthentication()).isNotNull();
+
+        // Misconfigured managementPort == serverPort (8080 == 8080) -> NOT trusted as dedicated management port!
+        SecurityContextHolder.clearContext();
+        ActuatorApiKeyAuthFilter sharedPortFilter = new ActuatorApiKeyAuthFilter("", 8080, 8080);
+        MockHttpServletRequest sharedPromReq = new MockHttpServletRequest("GET", "/actuator/prometheus");
+        sharedPromReq.setLocalPort(8080);
+        MockHttpServletResponse sharedPromRes = new MockHttpServletResponse();
+        AtomicBoolean sharedPromCalled = new AtomicBoolean(false);
+        sharedPortFilter.doFilter(sharedPromReq, sharedPromRes, (req, res) -> sharedPromCalled.set(true));
+        assertThat(sharedPromCalled).isFalse();
+        assertThat(sharedPromRes.getStatus()).isEqualTo(403);
+
+        MockHttpServletRequest sharedHealthReq = new MockHttpServletRequest("GET", "/actuator/health");
+        sharedHealthReq.setLocalPort(8080);
+        sharedPortFilter.doFilter(sharedHealthReq, new MockHttpServletResponse(), (req, res) -> {});
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
     }
 
     @Test
@@ -267,11 +341,13 @@ class SecurityConfigAndActuatorFilterTest {
     @Test
     void securityConfig_beanFactoryAndNullOidcUserBranches() {
         MgmtUserService mgmtUserService = mock(MgmtUserService.class);
-        SecurityConfig config = new SecurityConfig("scim-admin", "scim-user", "roles", "k", 9090, mgmtUserService);
+        SecurityConfig config6Arg = new SecurityConfig("scim-admin", "scim-user", "roles", "k", 9090, mgmtUserService);
+        SecurityConfig config7Arg = new SecurityConfig("scim-admin", "scim-user", "roles", "k", 9090, 8080, mgmtUserService);
 
-        assertThat(config.actuatorApiKeyAuthFilter()).isNotNull();
-        assertThat(config.oidcUserService()).isNotNull();
-        assertThatThrownBy(() -> config.processOidcUser(null))
+        assertThat(config6Arg.actuatorApiKeyAuthFilter()).isNotNull();
+        assertThat(config7Arg.actuatorApiKeyAuthFilter()).isNotNull();
+        assertThat(config7Arg.oidcUserService()).isNotNull();
+        assertThatThrownBy(() -> config7Arg.processOidcUser(null))
                 .isInstanceOf(OAuth2AuthenticationException.class);
     }
 

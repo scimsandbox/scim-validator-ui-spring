@@ -18,4 +18,4 @@ WORKDIR /app
 COPY --from=build /workspace/target/*.jar app.jar
 USER nonroot
 EXPOSE 8082
-ENTRYPOINT ["java", "-jar", "app.jar"]
+ENTRYPOINT ["java", "-Dsun.net.inetaddr.ttl=0", "-Dsun.net.inetaddr.negative.ttl=0", "-jar", "app.jar"]

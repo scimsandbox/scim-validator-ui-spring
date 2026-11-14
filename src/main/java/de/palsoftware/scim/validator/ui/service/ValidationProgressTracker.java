@@ -119,6 +119,14 @@ public class ValidationProgressTracker {
         evictExpiredAndOverflow();
     }
 
+    public void removeRun(UUID runId) {
+        if (runId == null) {
+            return;
+        }
+        progressMap.remove(runId);
+        closeEmitters(runId);
+    }
+
     public ValidationProgress getProgress(UUID runId) {
         if (runId == null) {
             return null;

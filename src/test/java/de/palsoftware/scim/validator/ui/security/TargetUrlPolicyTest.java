@@ -5,7 +5,10 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.net.InetAddress;
+import java.net.URI;
 import java.net.UnknownHostException;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -32,9 +35,10 @@ class TargetUrlPolicyTest {
     @ValueSource(strings = {
             "https://scim.example.com/scim/v2",
             "https://scim.example.com:8443/scim/v2/Users",
+            "https://scim.example.com:9090/scim/v2",
             "HTTPS://SCIM.EXAMPLE.COM/scim/v2"
     })
-    void httpsPublicTargetsAreAllowedWhenResolvingToPublicIps(String url) {
+    void httpsPublicTargetsAreAllowedWhenResolvingToPublicIpsIncludingPort9090(String url) {
         TargetUrlPolicy policy = new TargetUrlPolicy(
                 false,
                 fixedResolver("93.184.216.34", "2606:2800:220:1:248:1893:25c8:1946"));
@@ -77,9 +81,9 @@ class TargetUrlPolicyTest {
             "http://localhost:9090/actuator/prometheus",
             "http://127.0.0.1:9090/scim/v2",
             "http://[::1]:9090/scim/v2",
-            "https://scim.example.com:9090/scim/v2"
+            "https://[::ffff:127.0.0.1]:9090/scim/v2"
     })
-    void managementPort9090IsAlwaysBlockedEvenWhenLocalhostAllowed(String url) {
+    void managementPortIsBlockedOnLoopbackTargetsEvenWhenLocalhostAllowed(String url) {
         TargetUrlPolicy strictPolicy = new TargetUrlPolicy(false, fixedResolver("93.184.216.34"));
         TargetUrlPolicy localPolicy = new TargetUrlPolicy(true, fixedResolver("93.184.216.34"));
 
@@ -89,6 +93,29 @@ class TargetUrlPolicyTest {
         assertThatThrownBy(() -> localPolicy.validateUri(url))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("9090");
+    }
+
+    @Test
+    void customManagementPortAndHostnameResolvingToLoopbackOnManagementPortAreHandledProperly() {
+        TargetUrlPolicy customPortPolicy = new TargetUrlPolicy(true, 19090, fixedResolver("93.184.216.34"));
+        assertThat(customPortPolicy.getManagementPort()).isEqualTo(19090);
+        assertThat(customPortPolicy.validateUri("http://localhost:9090/scim/v2")).isNotNull();
+        assertThatThrownBy(() -> customPortPolicy.validateUri("http://localhost:19090/scim/v2"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("19090");
+
+        TargetUrlPolicy rebindToLoopbackMgmtPort = new TargetUrlPolicy(
+                false, 9090, host -> new InetAddress[]{InetAddress.getByName("127.0.0.1")});
+        assertThatThrownBy(() -> rebindToLoopbackMgmtPort.validateUri("https://scim.example.com:9090/scim/v2"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("9090");
+
+        TargetUrlPolicy disabledMgmtPortPolicy = new TargetUrlPolicy(true, 0, fixedResolver("93.184.216.34"));
+        assertThat(disabledMgmtPortPolicy.validateUri("http://localhost:9090/scim/v2")).isNotNull();
+
+        TargetUrlPolicy twoArgAutowiredCtor = new TargetUrlPolicy(false, 9090);
+        assertThat(twoArgAutowiredCtor.isAllowLocalhostTargets()).isFalse();
+        assertThat(twoArgAutowiredCtor.getManagementPort()).isEqualTo(9090);
     }
 
     @ParameterizedTest
@@ -116,7 +143,8 @@ class TargetUrlPolicyTest {
             "https://vault.internal/scim/v2",
             "https://scim.default.svc/scim/v2",
             "https://scim.default.svc.cluster.local/scim/v2",
-            "https://intranet/scim/v2"
+            "https://intranet/scim/v2",
+            "https://local/scim/v2"
     })
     void internalClusterMetadataAndSingleLabelHostnamesAreRejected(String url) {
         TargetUrlPolicy strictPolicy = new TargetUrlPolicy(false, fixedResolver("93.184.216.34"));
@@ -198,18 +226,31 @@ class TargetUrlPolicyTest {
     @ValueSource(strings = {
             "https://[::ffff:127.0.0.1]/scim/v2",
             "https://[::ffff:169.254.169.254]/scim/v2",
-            "https://[::ffff:93.184.216.34]/scim/v2",
             "https://2130706433/scim/v2",
             "https://0x7f000001/scim/v2",
             "https://0177.0.0.1/scim/v2",
+            "https://scim.0x10/scim/v2",
             "https://user:secret@scim.example.com/scim/v2",
-            "https://[fe80::1%25eth0]/scim/v2"
+            "https://[fe80::1%25eth0]/scim/v2",
+            "https://[2001:::1]/scim/v2",
+            "https://[not-an-ipv6]/scim/v2"
     })
-    void ipv4MappedIpv6AlternateNumericEncodingsUserInfoAndZoneIdsAreRejected(String url) {
+    void privateIpv4MappedIpv6AlternateNumericEncodingsUserInfoZoneIdsAndMalformedIpv6AreRejected(String url) {
         TargetUrlPolicy policy = new TargetUrlPolicy(true, fixedResolver("93.184.216.34"));
 
         assertThatThrownBy(() -> policy.validateUri(url))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void publicIpv4MappedIpv6LiteralIsAllowedWhenHttps() throws Exception {
+        TargetUrlPolicy policy = new TargetUrlPolicy(
+                false,
+                host -> new InetAddress[]{InetAddress.getByName(host)});
+
+        TargetUrlPolicy.ResolvedTarget resolved = policy.resolve("https://[::ffff:93.184.216.34]/scim/v2");
+        assertThat(resolved.uri()).isNotNull();
+        assertThat(resolved.addresses()).containsExactly(InetAddress.getByName("93.184.216.34"));
     }
 
     @Test
@@ -226,21 +267,21 @@ class TargetUrlPolicyTest {
     @ParameterizedTest
     @ValueSource(strings = {"ftp://example.com/x", "file:///etc/passwd", "gopher://example.com"})
     void nonHttpSchemesAreRejected(String url) {
-        assertThatThrownBy(() -> TargetUrlPolicy.validate(url))
+        assertThatThrownBy(() -> TargetUrlPolicy.DEFAULT_STRICT.validateUri(url))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("only http and https");
     }
 
     @Test
     void blankTargetIsRejected() {
-        assertThatThrownBy(() -> TargetUrlPolicy.validate("  "))
+        assertThatThrownBy(() -> TargetUrlPolicy.DEFAULT_STRICT.validateUri("  "))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("must not be empty");
     }
 
     @Test
     void targetWithoutHostIsRejected() {
-        assertThatThrownBy(() -> TargetUrlPolicy.validate("https:///scim/v2"))
+        assertThatThrownBy(() -> TargetUrlPolicy.DEFAULT_STRICT.validateUri("https:///scim/v2"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("must include a host");
     }
@@ -252,9 +293,9 @@ class TargetUrlPolicyTest {
     }
 
     @Test
-    void staticValidateAllowsPublicIpLiteralWithoutExternalDns() {
-        assertThat(TargetUrlPolicy.validate("https://93.184.216.34/scim/v2")).isNotNull();
-        assertThatThrownBy(() -> TargetUrlPolicy.validate(null))
+    void defaultStrictAllowsPublicIpLiteralWithoutExternalDns() {
+        assertThat(TargetUrlPolicy.DEFAULT_STRICT.validateUri("https://93.184.216.34/scim/v2")).isNotNull();
+        assertThatThrownBy(() -> TargetUrlPolicy.DEFAULT_STRICT.validateUri(null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("must not be empty");
     }
@@ -278,7 +319,8 @@ class TargetUrlPolicyTest {
     void trailingDotsOnPublicHostnameAreNormalizedAndAllowed() {
         TargetUrlPolicy policy = new TargetUrlPolicy(false, fixedResolver("93.184.216.34"));
 
-        assertThat(policy.validateUri("https://scim.example.com./scim/v2")).isNotNull();
+        TargetUrlPolicy.ResolvedTarget resolved = policy.resolve("https://SCIM.EXAMPLE.COM./scim/v2");
+        assertThat(resolved.host()).isEqualTo("scim.example.com");
     }
 
     @Test
@@ -378,13 +420,103 @@ class TargetUrlPolicyTest {
     }
 
     @Test
-    void ipv6LoopbackTargetResolvingToNonLoopbackIpv6IsRejectedWhenLocalhostAllowed() {
+    void localhostResolvingToNonLoopbackIpv6IsRejectedWhenLocalhostAllowed() {
         TargetUrlPolicy policy = new TargetUrlPolicy(
                 true,
                 host -> new InetAddress[]{InetAddress.getByName("2606:2800:220:1:248:1893:25c8:1946")});
 
-        assertThatThrownBy(() -> policy.validateUri("http://[::1]:8080/scim/v2"))
+        assertThatThrownBy(() -> policy.validateUri("http://localhost:8080/scim/v2"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("non-loopback");
+    }
+
+    @Test
+    void ipLiteralsBypassDnsResolverAndIpv6FormsAreCanonicalizedAcrossResolveAndSameOrigin() {
+        TargetUrlPolicy.HostAddressResolver failIfCalled = host -> {
+            throw new AssertionError("DNS resolver must not be invoked for IP literal: " + host);
+        };
+        TargetUrlPolicy strictNoDnsPolicy = new TargetUrlPolicy(false, failIfCalled);
+        TargetUrlPolicy localNoDnsPolicy = new TargetUrlPolicy(true, failIfCalled);
+
+        TargetUrlPolicy.ResolvedTarget publicV4 = strictNoDnsPolicy.resolve("https://93.184.216.34/scim/v2");
+        assertThat(publicV4.host()).isEqualTo("93.184.216.34");
+        assertThat(strictNoDnsPolicy.validateSameOriginUri(publicV4, "https://93.184.216.34:443/scim/v2/Users"))
+                .isNotNull();
+
+        TargetUrlPolicy.ResolvedTarget publicV6 = strictNoDnsPolicy.resolve("https://[2606:2800:0220:0001::1]/scim/v2");
+        assertThat(strictNoDnsPolicy.validateSameOriginUri(publicV6, "https://[2606:2800:220:1::1]/scim/v2/Users"))
+                .isNotNull();
+        assertThatThrownBy(() -> strictNoDnsPolicy.validateSameOriginUri(publicV6, "https://[not-ipv6]/scim/v2/Users"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Invalid URL");
+        assertThatThrownBy(() -> TargetUrlPolicy.parseIpv6Literal("not-ipv6"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("malformed IPv6");
+
+        assertThat(strictNoDnsPolicy.resolve("https://[::ffff:93.184.216.34]/scim/v2").host())
+                .isEqualTo("93.184.216.34");
+
+        // Expanded IPv6 loopback [0:0:0:0:0:0:0:1] behaves identically to [::1]
+        assertThatThrownBy(() -> strictNoDnsPolicy.resolve("http://[0:0:0:0:0:0:0:1]:8080/scim/v2"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("localhost targets are not allowed");
+        assertThatThrownBy(() -> localNoDnsPolicy.resolve("http://[0:0:0:0:0:0:0:1]:9090/actuator"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("9090");
+
+        TargetUrlPolicy.ResolvedTarget loopV6 = localNoDnsPolicy.resolve("http://[::1]:8080/scim/v2");
+        assertThat(localNoDnsPolicy.validateSameOriginUri(loopV6, "http://[0:0:0:0:0:0:0:1]:8080/scim/v2/Users"))
+                .isNotNull();
+        assertThat(localNoDnsPolicy.resolve("http://127.0.0.1:8080/scim/v2").host()).isEqualTo("127.0.0.1");
+    }
+
+    @Test
+    void validateSyntaxAndValidateSameOriginUriPerformZeroDnsLookupsAndResolvedTargetIsImmutable() throws Exception {
+        AtomicInteger dnsCalls = new AtomicInteger(0);
+        TargetUrlPolicy policy = new TargetUrlPolicy(false, host -> {
+            dnsCalls.incrementAndGet();
+            return new InetAddress[]{InetAddress.getByName("93.184.216.34")};
+        });
+
+        assertThat(policy.validateSyntax("https://scim.example.com/scim/v2")).isNotNull();
+        assertThat(dnsCalls.get()).isZero();
+
+        TargetUrlPolicy.ResolvedTarget resolved = policy.resolve("https://scim.example.com/scim/v2");
+        assertThat(dnsCalls.get()).isEqualTo(1);
+        assertThat(resolved.host()).isEqualTo("scim.example.com");
+        assertThatThrownBy(() -> resolved.addresses().clear())
+                .isInstanceOf(UnsupportedOperationException.class);
+
+        URI sameOriginExplicitPort = policy.validateSameOriginUri(
+                resolved, "https://SCIM.EXAMPLE.COM.:443/scim/v2/Users?count=10");
+        assertThat(sameOriginExplicitPort.getPath()).isEqualTo("/scim/v2/Users");
+        assertThat(dnsCalls.get()).isEqualTo(1);
+
+        assertThatThrownBy(() -> policy.validateSameOriginUri(resolved, "  "))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("must not be empty");
+        assertThatThrownBy(() -> policy.validateSameOriginUri(resolved, "https://user:pw@scim.example.com/Users"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("userinfo");
+        assertThatThrownBy(() -> policy.validateSameOriginUri(resolved, "https://[fe80::1%25eth0]/Users"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("zone identifiers");
+        assertThatThrownBy(() -> policy.validateSameOriginUri(resolved, "http://scim.example.com/Users"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("configured target origin");
+        assertThatThrownBy(() -> policy.validateSameOriginUri(resolved, "https://other.example.com/Users"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("configured target origin");
+        assertThatThrownBy(() -> policy.validateSameOriginUri(resolved, "https://scim.example.com:8443/Users"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("configured target origin");
+        assertThat(dnsCalls.get()).isEqualTo(1);
+
+        assertThatThrownBy(() -> new TargetUrlPolicy.ResolvedTarget(
+                URI.create("https://scim.example.com"), "  ", List.of(InetAddress.getByName("93.184.216.34"))))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new TargetUrlPolicy.ResolvedTarget(
+                URI.create("https://scim.example.com"), "scim.example.com", List.of()))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 }

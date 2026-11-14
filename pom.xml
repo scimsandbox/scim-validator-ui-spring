@@ -298,7 +298,7 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.6.1</version>
                 <configuration>
-                    <argLine>@{argLine} -XX:+EnableDynamicAgentLoading</argLine>
+                    <argLine>@{argLine} -XX:+EnableDynamicAgentLoading -Dsun.net.inetaddr.ttl=0 -Dsun.net.inetaddr.negative.ttl=0</argLine>
                 </configuration>
             </plugin>
             <plugin>

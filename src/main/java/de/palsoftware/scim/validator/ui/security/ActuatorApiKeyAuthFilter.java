@@ -22,15 +22,18 @@ import java.util.Locale;
  * Protects {@code /actuator/**} endpoints across local and Kubernetes deployments:
  * <ul>
  *     <li>{@code /actuator/health} and {@code /actuator/health/**} are always reachable; if a valid
- *         API key is supplied when configured, {@code ROLE_ACTUATOR} is populated so authorized
- *         health components can be inspected when {@code show-components: when_authorized} is active.</li>
+ *         API key is supplied when configured (or the request arrives on the dedicated management
+ *         port {@code managementPort != serverPort} when no key is configured), {@code ROLE_ACTUATOR}
+ *         is populated so authorized health components can be inspected when
+ *         {@code show-components: when_authorized} is active.</li>
  *     <li>For all other {@code /actuator/**} endpoints (such as {@code /actuator/prometheus}):
  *         <ul>
  *             <li>When {@code app.security.actuator.api-key} is non-blank, a constant-time SHA-256
- *                 comparison of {@code X-API-Key} or {@code Authorization: Bearer <key>} is required
- *                 (HTTP 401 otherwise).</li>
+ *                 comparison of {@code X-Actuator-Api-Key}, {@code X-API-Key}, or
+ *                 {@code Authorization: Bearer <key>} is required (HTTP 401 otherwise).</li>
  *             <li>When {@code app.security.actuator.api-key} is blank, access is permitted ONLY on
- *                 the dedicated internal management port ({@code request.getLocalPort() == managementPort})
+ *                 the dedicated internal management port ({@code managementPort > 0},
+ *                 {@code managementPort != serverPort}, and {@code request.getLocalPort() == managementPort})
  *                 and denied on the public application port.</li>
  *         </ul>
  *     </li>
@@ -38,20 +41,27 @@ import java.util.Locale;
  */
 public class ActuatorApiKeyAuthFilter extends OncePerRequestFilter {
 
-    private static final String HEADER_API_KEY = "X-API-Key";
+    public static final String HEADER_ACTUATOR_API_KEY = "X-Actuator-Api-Key";
+    public static final String HEADER_API_KEY = "X-API-Key";
     private static final String HEADER_AUTHORIZATION = "Authorization";
     private static final String BEARER_PREFIX = "bearer ";
     private static final byte[] DUMMY_DIGEST = sha256(new byte[0]);
 
     private final byte[] expectedKeyDigest;
     private final int managementPort;
+    private final int serverPort;
 
     public ActuatorApiKeyAuthFilter(String configuredApiKey, int managementPort) {
+        this(configuredApiKey, managementPort, -1);
+    }
+
+    public ActuatorApiKeyAuthFilter(String configuredApiKey, int managementPort, int serverPort) {
         String trimmed = configuredApiKey != null ? configuredApiKey.trim() : "";
         this.expectedKeyDigest = trimmed.isEmpty()
                 ? null
                 : sha256(trimmed.getBytes(StandardCharsets.UTF_8));
         this.managementPort = managementPort;
+        this.serverPort = serverPort;
     }
 
     @Override
@@ -76,7 +86,11 @@ public class ActuatorApiKeyAuthFilter extends OncePerRequestFilter {
         }
 
         if (isHealthPath(normalizedPath)) {
-            if (expectedKeyDigest != null && hasValidApiKey(request)) {
+            if (expectedKeyDigest != null) {
+                if (hasValidApiKey(request)) {
+                    authenticateActuatorCaller();
+                }
+            } else if (isDedicatedManagementPortRequest(request)) {
                 authenticateActuatorCaller();
             }
             filterChain.doFilter(request, response);
@@ -94,13 +108,19 @@ public class ActuatorApiKeyAuthFilter extends OncePerRequestFilter {
             return;
         }
 
-        if (managementPort > 0 && request.getLocalPort() == managementPort) {
+        if (isDedicatedManagementPortRequest(request)) {
             authenticateActuatorCaller();
             filterChain.doFilter(request, response);
             return;
         }
 
         writeJsonError(response, HttpServletResponse.SC_FORBIDDEN, "Actuator endpoint is restricted to the management port");
+    }
+
+    private boolean isDedicatedManagementPortRequest(HttpServletRequest request) {
+        return managementPort > 0
+                && managementPort != serverPort
+                && request.getLocalPort() == managementPort;
     }
 
     private boolean hasValidApiKey(HttpServletRequest request) {
@@ -114,6 +134,10 @@ public class ActuatorApiKeyAuthFilter extends OncePerRequestFilter {
     }
 
     private static String extractCandidateKey(HttpServletRequest request) {
+        String actuatorKeyHeader = request.getHeader(HEADER_ACTUATOR_API_KEY);
+        if (actuatorKeyHeader != null && !actuatorKeyHeader.isBlank()) {
+            return actuatorKeyHeader.trim();
+        }
         String apiKeyHeader = request.getHeader(HEADER_API_KEY);
         if (apiKeyHeader != null && !apiKeyHeader.isBlank()) {
             return apiKeyHeader.trim();

@@ -21,6 +21,7 @@ import de.palsoftware.scim.validator.ui.repo.ValidationHttpExchangeRepository;
 import de.palsoftware.scim.validator.ui.repo.ValidationRunPublicationRepository;
 import de.palsoftware.scim.validator.ui.repo.ValidationRunRepository;
 import de.palsoftware.scim.validator.ui.repo.ValidationTestResultRepository;
+import de.palsoftware.scim.validator.ui.security.PinnedTargetHttpSupport;
 import de.palsoftware.scim.validator.ui.security.TargetUrlPolicy;
 import de.palsoftware.scim.validator.ui.util.BaseUrl;
 import de.palsoftware.scim.validator.ui.util.Slugifier;
@@ -64,13 +65,16 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -99,6 +103,7 @@ public class ValidationRunService {
     public static final int DEFAULT_MAX_QUEUE_SIZE = 8;
     public static final int DEFAULT_MAX_ACTIVE_RUNS_PER_USER = 2;
     public static final int MAX_DB_TEXT_BYTES = 2 * 1024 * 1024;
+    static final int MIN_RAW_SECRET_SCRUB_LENGTH = 8;
 
     static final String TRUNCATED_SUFFIX = "...[truncated]";
     static final String DEFAULT_PUBLIC_COMPLIANCE_BASE_URL = "https://scimsandbox.org";
@@ -119,7 +124,7 @@ public class ValidationRunService {
 
     private static final AtomicInteger RUNNER_THREAD_COUNTER = new AtomicInteger(0);
     private static final Pattern AUTH_HEADER_SCRUB_PATTERN = Pattern.compile(
-            "(?im)(Authorization\\s*+:\\s*+(?:Bearer|Basic)\\s++)[^\\s,;\"'\\r\\n]++");
+            "(?im)(Authorization[\"']?+\\s*+[:=]\\s*+[\"']?+(?:Bearer|Basic)\\s++)[^\\s,;\"'\\r\\n}]++");
     private static final Pattern BEARER_TOKEN_SCRUB_PATTERN = Pattern.compile(
             "(?i)(\\bBearer\\s++)[A-Za-z0-9._~+/=-]{8,}+");
     private static final Pattern SAFE_PRODUCT_SLUG_PATTERN = Pattern.compile(
@@ -139,6 +144,7 @@ public class ValidationRunService {
     private final ExecutorService executorService;
     private final boolean ownsExecutor;
 
+    private Semaphore concurrentRunPermits;
     private TargetUrlPolicy targetUrlPolicy;
     private PlatformTransactionManager transactionManager;
     private SpecCatalogService specCatalogService;
@@ -227,16 +233,22 @@ public class ValidationRunService {
         this.exchangeRepository = exchangeRepository;
         this.publicationRepository = publicationRepository;
         this.progressTracker = progressTracker != null ? progressTracker : new ValidationProgressTracker();
+        int effectiveMaxConcurrent = maxConcurrentRuns != null
+                ? Math.max(1, maxConcurrentRuns)
+                : DEFAULT_MAX_CONCURRENT_RUNS;
         if (executorService != null) {
             this.executorService = executorService;
             this.ownsExecutor = false;
+            if (maxConcurrentRuns == null && executorService instanceof ThreadPoolExecutor tpe) {
+                effectiveMaxConcurrent = Math.max(1, tpe.getMaximumPoolSize());
+            }
         } else {
-            int poolSize = maxConcurrentRuns != null ? maxConcurrentRuns : DEFAULT_MAX_CONCURRENT_RUNS;
             int queueSize = maxQueueSize != null ? maxQueueSize : DEFAULT_MAX_QUEUE_SIZE;
-            this.executorService = createBoundedRunExecutor(poolSize, queueSize);
+            this.executorService = createBoundedRunExecutor(effectiveMaxConcurrent, queueSize);
             this.ownsExecutor = true;
         }
-        this.targetUrlPolicy = targetUrlPolicy != null ? targetUrlPolicy : new TargetUrlPolicy(false);
+        this.concurrentRunPermits = new Semaphore(effectiveMaxConcurrent);
+        this.targetUrlPolicy = Objects.requireNonNullElse(targetUrlPolicy, TargetUrlPolicy.DEFAULT_STRICT);
         this.transactionManager = transactionManager;
         this.specCatalogService = specCatalogService;
     }
@@ -265,7 +277,19 @@ public class ValidationRunService {
     @PreDestroy
     public void shutdownExecutor() {
         if (ownsExecutor) {
-            executorService.shutdownNow();
+            List<Runnable> dropped = executorService.shutdownNow();
+            cancelDroppedAsyncTasks(dropped);
+        }
+    }
+
+    static void cancelDroppedAsyncTasks(List<Runnable> droppedTasks) {
+        if (droppedTasks == null) {
+            return;
+        }
+        for (Runnable task : droppedTasks) {
+            if (task instanceof CancelableAsyncRunTask cancelable) {
+                cancelable.cancelQueuedOnShutdown();
+            }
         }
     }
 
@@ -305,7 +329,11 @@ public class ValidationRunService {
     }
 
     public void setTargetUrlPolicy(TargetUrlPolicy targetUrlPolicy) {
-        this.targetUrlPolicy = targetUrlPolicy != null ? targetUrlPolicy : new TargetUrlPolicy(false);
+        this.targetUrlPolicy = Objects.requireNonNullElse(targetUrlPolicy, TargetUrlPolicy.DEFAULT_STRICT);
+    }
+
+    public void setMaxConcurrentRuns(int maxConcurrentRuns) {
+        this.concurrentRunPermits = new Semaphore(Math.max(1, maxConcurrentRuns));
     }
 
     public void setMaxActiveRunsPerUser(int maxActiveRunsPerUser) {
@@ -466,13 +494,6 @@ public class ValidationRunService {
         public int getMaxRuns() { return maxRuns; }
     }
 
-    private String validateTargetUrl(String url) {
-        String normalized = validateAndNormalizeTargetUrl(url);
-        TargetUrlPolicy policy = this.targetUrlPolicy != null ? this.targetUrlPolicy : new TargetUrlPolicy(false);
-        policy.validateUri(normalized);
-        return normalized;
-    }
-
     private String acquireActiveRunSlot(String actorEmail) {
         String key = (actorEmail != null && !actorEmail.isBlank())
                 ? actorEmail.trim().toLowerCase(Locale.ROOT)
@@ -511,10 +532,12 @@ public class ValidationRunService {
         }
         String scrubbed = text;
         if (authToken != null && !authToken.isBlank()) {
-            scrubbed = scrubbed.replace(authToken, "[REDACTED]");
             String trimmed = authToken.trim();
-            if (!trimmed.isEmpty() && !trimmed.equals(authToken)) {
-                scrubbed = scrubbed.replace(trimmed, "[REDACTED]");
+            if (trimmed.length() >= MIN_RAW_SECRET_SCRUB_LENGTH) {
+                scrubbed = scrubbed.replace(authToken, "[REDACTED]");
+                if (!trimmed.equals(authToken)) {
+                    scrubbed = scrubbed.replace(trimmed, "[REDACTED]");
+                }
             }
         }
         scrubbed = AUTH_HEADER_SCRUB_PATTERN.matcher(scrubbed).replaceAll("$1[REDACTED]");
@@ -641,105 +664,130 @@ public class ValidationRunService {
     private record InitializedRun(ValidationRun run, boolean oldRunDeleted) {}
 
     public ExecutionResult executeRun(ValidationRunForm form, String actorEmail) {
-        String normalizedTargetUrl = validateTargetUrl(form.baseUrl());
+        String normalizedTargetUrl = validateAndNormalizeTargetUrl(form.baseUrl());
+        TargetUrlPolicy.ResolvedTarget resolvedTarget = targetUrlPolicy.resolve(normalizedTargetUrl);
         String activeSlotKey = acquireActiveRunSlot(actorEmail);
         try {
-            int plannedTotal = discoverTestCount(normalizedTargetUrl, form.authToken());
-
-            InitializedRun initialized = executeInReadWriteTransaction(() -> {
-                boolean deleted = pruneOldUnpublishedRuns(actorEmail);
-                ValidationRun created = new ValidationRun();
-                created.setName(normalizeRunName(form.name()));
-                created.setTargetUrl(normalizedTargetUrl);
-                created.setExecutedAt(OffsetDateTime.now());
-                created.setStatus("RUNNING");
-                ValidationMgmtUser owner = mgmtUserRepository.findById(actorEmail)
-                        .orElseThrow(() -> new IllegalStateException("Authenticated management user must exist"));
-                created.setCreatedByUser(owner);
-                created.setTotalTests(plannedTotal);
-                created.setPassedTests(0);
-                created.setFailedTests(0);
-                return new InitializedRun(runRepository.save(created), deleted);
-            });
-
-            ValidationRun run = initialized.run();
-            boolean oldRunDeleted = initialized.oldRunDeleted();
-
-            UUID runId = run.getId();
-            if (runId != null) {
-                progressTracker.registerRun(runId, plannedTotal, "/runs/" + runId);
+            if (!concurrentRunPermits.tryAcquire()) {
+                throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
+                        "Server validation capacity reached. Please wait a moment and try again.");
             }
-
-            ValidationExecutionListener listener = null;
             try {
-                String innerTargetUrl = validateTargetUrl(form.baseUrl());
-                ValidatorConfiguration.useRunOverrides(innerTargetUrl, form.authToken());
-                ScimBaseSpec.resetRunState();
-                if (runId != null) {
-                    ScimRunContext.beginRun(runId.toString());
+                int plannedTotal;
+                try (var ignored = PinnedTargetHttpSupport.pin(resolvedTarget)) {
+                    plannedTotal = discoverTestCount(normalizedTargetUrl, form.authToken());
                 }
 
-                listener = new ValidationExecutionListener(run, plannedTotal, progressTracker, testResultRepository,
-                        exchangeRepository, form.authToken());
-                Launcher launcher = LauncherFactory.create();
-                executeLauncher(launcher, buildRequest(), listener);
+                InitializedRun initialized = executeInReadWriteTransaction(() -> {
+                    boolean deleted = pruneOldUnpublishedRuns(actorEmail);
+                    ValidationRun created = new ValidationRun();
+                    created.setName(normalizeRunName(form.name()));
+                    created.setTargetUrl(normalizedTargetUrl);
+                    created.setExecutedAt(OffsetDateTime.now());
+                    created.setStatus("RUNNING");
+                    ValidationMgmtUser owner = mgmtUserRepository.findById(actorEmail)
+                            .orElseThrow(() -> new IllegalStateException("Authenticated management user must exist"));
+                    created.setCreatedByUser(owner);
+                    created.setTotalTests(plannedTotal);
+                    created.setPassedTests(0);
+                    created.setFailedTests(0);
+                    return new InitializedRun(runRepository.save(created), deleted);
+                });
 
-                run.setTotalTests(listener.total);
-                run.setPassedTests(listener.passed);
-                run.setFailedTests(listener.failed);
-                run.setSkippedTests(listener.skipped);
-                run.setAbortedTests(listener.aborted);
-                String finalStatus;
-                if (listener.failed > 0) {
-                    finalStatus = "FAILED";
-                } else if (listener.skipped > 0 || listener.aborted > 0) {
-                    finalStatus = "PARTIAL";
-                } else {
-                    finalStatus = "PASSED";
-                }
-                run.setStatus(finalStatus);
+                ValidationRun run = initialized.run();
+                boolean oldRunDeleted = initialized.oldRunDeleted();
+
+                UUID runId = run.getId();
                 if (runId != null) {
-                    progressTracker.completeRun(runId, finalStatus, listener.total, listener.passed, listener.failed);
+                    progressTracker.registerRun(runId, plannedTotal, "/runs/" + runId);
                 }
-            } catch (Exception ex) {
-                if (ex instanceof InterruptedException) {
-                    Thread.currentThread().interrupt();
-                }
-                String safeMsg = scrubSecrets(ex.getMessage() != null ? ex.getMessage() : "Execution error", form.authToken());
-                log.error("Error executing validation run {}: {}", runId, safeMsg);
-                run.setStatus("ERROR");
-                if (listener != null) {
+
+                ValidationExecutionListener listener = null;
+                try (var ignored = PinnedTargetHttpSupport.pin(resolvedTarget)) {
+                    ValidatorConfiguration.useRunOverrides(normalizedTargetUrl, form.authToken());
+                    ScimBaseSpec.resetRunState();
+                    if (runId != null) {
+                        ScimRunContext.beginRun(runId.toString());
+                    }
+
+                    listener = new ValidationExecutionListener(run, plannedTotal, progressTracker, testResultRepository,
+                            exchangeRepository, form.authToken());
+                    Launcher launcher = LauncherFactory.create();
+                    executeLauncher(launcher, buildRequest(), listener);
+
                     run.setTotalTests(listener.total);
                     run.setPassedTests(listener.passed);
                     run.setFailedTests(listener.failed);
                     run.setSkippedTests(listener.skipped);
                     run.setAbortedTests(listener.aborted);
-                } else {
-                    run.setTotalTests(0);
+                    String finalStatus;
+                    if (listener.failed > 0) {
+                        finalStatus = "FAILED";
+                    } else if (listener.skipped > 0 || listener.aborted > 0) {
+                        finalStatus = "PARTIAL";
+                    } else {
+                        finalStatus = "PASSED";
+                    }
+                    run.setStatus(finalStatus);
+                    if (runId != null) {
+                        progressTracker.completeRun(runId, finalStatus, listener.total, listener.passed, listener.failed);
+                    }
+                } catch (Exception ex) {
+                    if (ex instanceof InterruptedException) {
+                        Thread.currentThread().interrupt();
+                    }
+                    String safeMsg = scrubSecrets(
+                            ex.getMessage() != null ? ex.getMessage() : "Execution error", form.authToken());
+                    log.error("Error executing validation run {}: {}", runId, safeMsg);
+                    run.setStatus("ERROR");
+                    if (listener != null) {
+                        run.setTotalTests(listener.total);
+                        run.setPassedTests(listener.passed);
+                        run.setFailedTests(listener.failed);
+                        run.setSkippedTests(listener.skipped);
+                        run.setAbortedTests(listener.aborted);
+                    } else {
+                        run.setTotalTests(0);
+                    }
+                    if (runId != null) {
+                        progressTracker.failRun(runId, safeMsg);
+                    }
+                } finally {
+                    ScimRunContext.endRun();
+                    ScimBaseSpec.resetRunState();
+                    ValidatorConfiguration.clearRunOverrides();
                 }
-                if (runId != null) {
-                    progressTracker.failRun(runId, safeMsg);
-                }
-            } finally {
-                ScimRunContext.endRun();
-                ScimBaseSpec.resetRunState();
-                ValidatorConfiguration.clearRunOverrides();
-            }
 
-            ValidationRun finalRun = run;
-            ValidationRun savedRun = executeInReadWriteTransaction(() -> runRepository.save(finalRun));
-            return new ExecutionResult(savedRun, oldRunDeleted, maxRunsPerUser);
+                ValidationRun finalRun = run;
+                ValidationRun savedRun = executeInReadWriteTransaction(() -> runRepository.save(finalRun));
+                return new ExecutionResult(savedRun, oldRunDeleted, maxRunsPerUser);
+            } finally {
+                concurrentRunPermits.release();
+            }
         } finally {
             releaseActiveRunSlot(activeSlotKey);
         }
     }
 
     public ExecutionResult executeRunAsync(ValidationRunForm form, String actorEmail) {
-        String normalizedTargetUrl = validateTargetUrl(form.baseUrl());
+        String normalizedTargetUrl = validateAndNormalizeTargetUrl(form.baseUrl());
+        TargetUrlPolicy.ResolvedTarget resolvedTarget = targetUrlPolicy.resolve(normalizedTargetUrl);
         String activeSlotKey = acquireActiveRunSlot(actorEmail);
-        boolean backgroundTaskSubmitted = false;
+        CancelableAsyncRunTask asyncTask = new CancelableAsyncRunTask(this, activeSlotKey);
+        boolean workerOwnsSlot = false;
         try {
-            int plannedTotal = discoverTestCount(normalizedTargetUrl, form.authToken());
+            try {
+                executorService.execute(asyncTask);
+            } catch (RejectedExecutionException rex) {
+                asyncTask.abortBeforeHandoff();
+                throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
+                        "Server validation capacity reached. Please wait a moment and try again.", rex);
+            }
+
+            int plannedTotal;
+            try (var ignored = PinnedTargetHttpSupport.pin(resolvedTarget)) {
+                plannedTotal = discoverTestCount(normalizedTargetUrl, form.authToken());
+            }
 
             InitializedRun initialized = executeInReadWriteTransaction(() -> {
                 boolean deleted = pruneOldUnpublishedRuns(actorEmail);
@@ -762,72 +810,201 @@ public class ValidationRunService {
 
             UUID runId = run.getId();
             if (runId != null) {
+                ScheduledRunPayload payload = new ScheduledRunPayload(runId, form, plannedTotal, resolvedTarget);
                 progressTracker.registerRun(runId, plannedTotal, "/runs/" + runId);
-                Runnable backgroundTask = () -> {
-                    try {
-                        runTestsInBackground(runId, form, plannedTotal);
-                    } finally {
-                        releaseActiveRunSlot(activeSlotKey);
-                    }
-                };
+                asyncTask.transferSlotOwnership();
+                workerOwnsSlot = true;
                 if (TransactionSynchronizationManager.isSynchronizationActive()) {
                     TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                         @Override
                         public void afterCommit() {
-                            try {
-                                executorService.submit(backgroundTask);
-                            } catch (RejectedExecutionException rex) {
-                                releaseActiveRunSlot(activeSlotKey);
-                                handleRejectedBackgroundRun(runId);
-                            }
+                            asyncTask.handoffCommitted(payload);
                         }
 
                         @Override
                         public void afterCompletion(int status) {
                             if (status != STATUS_COMMITTED) {
-                                releaseActiveRunSlot(activeSlotKey);
+                                asyncTask.cancelOnRollback(runId);
                             }
                         }
                     });
-                    backgroundTaskSubmitted = true;
                 } else {
-                    try {
-                        executorService.submit(backgroundTask);
-                        backgroundTaskSubmitted = true;
-                    } catch (RejectedExecutionException rex) {
-                        progressTracker.failRun(runId, "Server validation capacity reached; please retry shortly.");
-                        cleanupUnstartedRun(runId);
-                        throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
-                                "Server validation capacity reached. Please wait a moment and try again.", rex);
-                    }
+                    asyncTask.handoffCommitted(payload);
                 }
+            } else {
+                asyncTask.abortBeforeHandoff();
             }
 
             return new ExecutionResult(run, oldRunDeleted, maxRunsPerUser);
         } finally {
-            if (!backgroundTaskSubmitted) {
+            if (!workerOwnsSlot) {
+                asyncTask.abortBeforeHandoff();
                 releaseActiveRunSlot(activeSlotKey);
             }
         }
     }
 
-    private void handleRejectedBackgroundRun(UUID runId) {
-        progressTracker.failRun(runId, "Server validation capacity reached; please retry shortly.");
-        cleanupUnstartedRun(runId);
-    }
+    private record ScheduledRunPayload(
+            UUID runId,
+            ValidationRunForm form,
+            int plannedTotal,
+            TargetUrlPolicy.ResolvedTarget resolvedTarget
+    ) {}
 
-    private void cleanupUnstartedRun(UUID runId) {
-        try {
-            executeInReadWriteTransaction(() -> {
-                runRepository.deleteById(runId);
-                return null;
+    static final class CancelableAsyncRunTask implements Runnable {
+        private final ValidationRunService service;
+        private final String activeSlotKey;
+        private final CompletableFuture<Optional<ScheduledRunPayload>> handoff = new CompletableFuture<>();
+        private final AtomicBoolean startedOrCancelled = new AtomicBoolean(false);
+        private final AtomicBoolean slotOwned = new AtomicBoolean(false);
+        private final AtomicBoolean slotReleased = new AtomicBoolean(false);
+
+        CancelableAsyncRunTask(ValidationRunService service, String activeSlotKey) {
+            this.service = service;
+            this.activeSlotKey = activeSlotKey;
+        }
+
+        void transferSlotOwnership() {
+            slotOwned.set(true);
+        }
+
+        void releaseOwnedSlotOnce() {
+            if (slotOwned.get() && slotReleased.compareAndSet(false, true)) {
+                service.releaseActiveRunSlot(activeSlotKey);
+            }
+        }
+
+        void abortBeforeHandoff() {
+            startedOrCancelled.set(true);
+            handoff.complete(Optional.empty());
+        }
+
+        void handoffCommitted(ScheduledRunPayload payload) {
+            handoff.complete(Optional.of(payload));
+        }
+
+        void cancelOnRollback(UUID uncommittedRunId) {
+            service.progressTracker.removeRun(uncommittedRunId);
+            handoff.complete(Optional.empty());
+            releaseOwnedSlotOnce();
+        }
+
+        void cancelQueuedOnShutdown() {
+            if (!startedOrCancelled.compareAndSet(false, true)) {
+                return;
+            }
+            handoff.whenComplete((payloadOpt, err) -> {
+                try {
+                    if (payloadOpt != null && payloadOpt.isPresent()) {
+                        service.markBackgroundRunInterrupted(
+                                payloadOpt.get().runId(),
+                                "Validation run cancelled during shutdown");
+                    }
+                } finally {
+                    releaseOwnedSlotOnce();
+                }
             });
-        } catch (Exception cleanupEx) {
-            log.warn("Could not clean up rejected validation run {}: {}", runId, cleanupEx.getMessage());
+        }
+
+        @Override
+        public void run() {
+            if (!startedOrCancelled.compareAndSet(false, true)) {
+                return;
+            }
+            Optional<ScheduledRunPayload> payloadOpt;
+            try {
+                payloadOpt = handoff.get();
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                handoff.whenComplete((opt, err) -> {
+                    try {
+                        if (opt != null && opt.isPresent()) {
+                            service.markBackgroundRunInterrupted(opt.get().runId(), "Validation run interrupted");
+                        }
+                    } finally {
+                        releaseOwnedSlotOnce();
+                    }
+                });
+                return;
+            } catch (java.util.concurrent.ExecutionException ee) {
+                releaseOwnedSlotOnce();
+                return;
+            }
+            if (payloadOpt.isEmpty()) {
+                releaseOwnedSlotOnce();
+                return;
+            }
+            ScheduledRunPayload payload = payloadOpt.get();
+            service.executePermittedBackgroundRun(
+                    payload.runId(),
+                    payload.form(),
+                    payload.plannedTotal(),
+                    payload.resolvedTarget(),
+                    this::releaseOwnedSlotOnce);
         }
     }
 
+    private void executePermittedBackgroundRun(
+            UUID runId,
+            ValidationRunForm form,
+            int plannedTotal,
+            TargetUrlPolicy.ResolvedTarget resolvedTarget,
+            String activeSlotKey) {
+        executePermittedBackgroundRun(
+                runId, form, plannedTotal, resolvedTarget, () -> releaseActiveRunSlot(activeSlotKey));
+    }
+
+    private void executePermittedBackgroundRun(
+            UUID runId,
+            ValidationRunForm form,
+            int plannedTotal,
+            TargetUrlPolicy.ResolvedTarget resolvedTarget,
+            Runnable slotReleaser) {
+        try {
+            boolean permitAcquired = false;
+            try {
+                concurrentRunPermits.acquire();
+                permitAcquired = true;
+                runTestsInBackground(runId, form, plannedTotal, resolvedTarget);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                markBackgroundRunInterrupted(runId, "Validation run interrupted");
+            } finally {
+                if (permitAcquired) {
+                    concurrentRunPermits.release();
+                }
+            }
+        } finally {
+            slotReleaser.run();
+        }
+    }
+
+    private void markBackgroundRunInterrupted(UUID runId, String failureMessage) {
+        try {
+            executeInReadWriteTransaction(() -> {
+                runRepository.findById(runId).ifPresent(run -> {
+                    run.setStatus("ERROR");
+                    runRepository.save(run);
+                });
+                return null;
+            });
+        } catch (Exception ex) {
+            log.warn("Could not mark interrupted validation run {} as ERROR: {}", runId, ex.getMessage());
+        }
+        progressTracker.failRun(runId, failureMessage);
+    }
+
     void runTestsInBackground(UUID runId, ValidationRunForm form, int plannedTotal) {
+        String normalizedTargetUrl = validateAndNormalizeTargetUrl(form.baseUrl());
+        runTestsInBackground(runId, form, plannedTotal, targetUrlPolicy.resolve(normalizedTargetUrl));
+    }
+
+    void runTestsInBackground(
+            UUID runId,
+            ValidationRunForm form,
+            int plannedTotal,
+            TargetUrlPolicy.ResolvedTarget resolvedTarget) {
+        Objects.requireNonNull(resolvedTarget, "ResolvedTarget must not be null");
         ValidationRun run = null;
         for (int attempt = 0; attempt < 5; attempt++) {
             run = runRepository.findById(runId).orElse(null);
@@ -849,9 +1026,8 @@ public class ValidationRunService {
         }
 
         ValidationExecutionListener listener = null;
-        try {
-            String normalizedTargetUrl = validateTargetUrl(form.baseUrl());
-            ValidatorConfiguration.useRunOverrides(normalizedTargetUrl, form.authToken());
+        try (var ignored = PinnedTargetHttpSupport.pin(resolvedTarget)) {
+            ValidatorConfiguration.useRunOverrides(trimUnicodeSpaces(form.baseUrl()), form.authToken());
             ScimBaseSpec.resetRunState();
             ScimRunContext.beginRun(runId.toString());
 
@@ -1652,17 +1828,23 @@ public class ValidationRunService {
             if (baseUrl != null && !baseUrl.isBlank()) {
                 ValidatorConfiguration.useRunOverrides(baseUrl, authToken);
             }
-            Launcher launcher = LauncherFactory.create();
             LauncherDiscoveryRequest request = buildRequest();
-            TestPlan plan = launcher.discover(request);
+            TestPlan plan = discoverTestPlan(request);
             long count = plan.countTestIdentifiers(TestIdentifier::isTest);
             return count > 0 ? (int) count : fallbackCount;
-        } catch (Throwable ex) {
-            log.warn("Could not discover test plan count", ex);
+        } catch (Exception ex) {
+            String safeMsg = scrubSecrets(
+                    ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName(),
+                    authToken);
+            log.warn("Could not discover test plan count: {}", safeMsg);
             return fallbackCount;
         } finally {
             ValidatorConfiguration.clearRunOverrides();
         }
+    }
+
+    TestPlan discoverTestPlan(LauncherDiscoveryRequest request) {
+        return LauncherFactory.create().discover(request);
     }
 
     private static LauncherDiscoveryRequest buildRequest() throws ClassNotFoundException {

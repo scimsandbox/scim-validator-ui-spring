@@ -155,6 +155,27 @@ class ValidationControllerDirectTest {
                 validForm, new BeanPropertyBindingResult(validForm, "runForm"), new ExtendedModelMap(), authentication, syncRedirect2);
         assertThat(syncRateLimited2).isEqualTo("redirect:/");
         assertThat(syncRedirect2.getFlashAttributes().get("errorMessage")).isEqualTo("Too many concurrent validation runs.");
+
+        // Controller syntax validation performs 0 DNS lookups; DNS/address errors from ValidationRunService map to baseUrl field errors
+        controller.setTargetUrlPolicy(new TargetUrlPolicy(false, host -> {
+            throw new AssertionError("ValidationController must use validateSyntax without DNS lookup");
+        }));
+        runService.throwOnExecute = null;
+        runService.throwIllegalArgOnExecute = new IllegalArgumentException(
+                "Invalid URL: private RFC 1918 target addresses are not allowed");
+
+        BindingResult syncDnsBinding = new BeanPropertyBindingResult(validForm, "runForm");
+        String syncDnsErrorView = controller.execute(
+                validForm, syncDnsBinding, new ExtendedModelMap(), authentication, new RedirectAttributesModelMap());
+        assertThat(syncDnsErrorView).isEqualTo("index");
+        assertThat(syncDnsBinding.hasFieldErrors("baseUrl")).isTrue();
+
+        BindingResult asyncDnsBinding = new BeanPropertyBindingResult(validForm, "runForm");
+        ResponseEntity<?> asyncDnsError = controller.executeAsync(validForm, asyncDnsBinding, authentication);
+        assertThat(asyncDnsError.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> asyncErrorBody = (Map<String, Object>) asyncDnsError.getBody();
+        assertThat(asyncErrorBody).containsKey("errors");
     }
 
     @Test
@@ -188,6 +209,7 @@ class ValidationControllerDirectTest {
     private static class TestValidationRunService extends ValidationRunService {
         private final ValidationRun createdRun;
         private org.springframework.web.server.ResponseStatusException throwOnExecute;
+        private IllegalArgumentException throwIllegalArgOnExecute;
         private boolean reconciliationRequired;
         private de.palsoftware.scim.validator.ui.model.ValidationRunPublication existingPublication;
 
@@ -211,6 +233,9 @@ class ValidationControllerDirectTest {
 
         @Override
         public ExecutionResult executeRunAsync(ValidationRunForm form, String actorEmail) {
+            if (throwIllegalArgOnExecute != null) {
+                throw throwIllegalArgOnExecute;
+            }
             if (throwOnExecute != null) {
                 throw throwOnExecute;
             }
@@ -219,6 +244,9 @@ class ValidationControllerDirectTest {
 
         @Override
         public ExecutionResult executeRun(ValidationRunForm form, String actorEmail) {
+            if (throwIllegalArgOnExecute != null) {
+                throw throwIllegalArgOnExecute;
+            }
             if (throwOnExecute != null) {
                 throw throwOnExecute;
             }

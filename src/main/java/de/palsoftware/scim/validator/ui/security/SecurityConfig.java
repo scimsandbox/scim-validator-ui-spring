@@ -43,13 +43,23 @@ public class SecurityConfig {
     private final String roleClaim;
     private final String actuatorApiKey;
     private final int managementPort;
+    private final int serverPort;
     private final MgmtUserService mgmtUserService;
 
     public SecurityConfig(String adminRole,
                           String userRole,
                           String roleClaim,
                           MgmtUserService mgmtUserService) {
-        this(adminRole, userRole, roleClaim, "", 9090, mgmtUserService);
+        this(adminRole, userRole, roleClaim, "", 9090, 8080, mgmtUserService);
+    }
+
+    public SecurityConfig(String adminRole,
+                          String userRole,
+                          String roleClaim,
+                          String actuatorApiKey,
+                          int managementPort,
+                          MgmtUserService mgmtUserService) {
+        this(adminRole, userRole, roleClaim, actuatorApiKey, managementPort, 8080, mgmtUserService);
     }
 
     @Autowired
@@ -58,18 +68,20 @@ public class SecurityConfig {
                           @Value("${app.security.oidc.role-claim}") String roleClaim,
                           @Value("${app.security.actuator.api-key:}") String actuatorApiKey,
                           @Value("${management.server.port:9090}") int managementPort,
+                          @Value("${server.port:8080}") int serverPort,
                           @Lazy MgmtUserService mgmtUserService) {
         this.adminRole = adminRole;
         this.userRole = userRole;
         this.roleClaim = roleClaim;
         this.actuatorApiKey = actuatorApiKey;
         this.managementPort = managementPort;
+        this.serverPort = serverPort;
         this.mgmtUserService = mgmtUserService;
     }
 
     @Bean
     public ActuatorApiKeyAuthFilter actuatorApiKeyAuthFilter() {
-        return new ActuatorApiKeyAuthFilter(actuatorApiKey, managementPort);
+        return new ActuatorApiKeyAuthFilter(actuatorApiKey, managementPort, serverPort);
     }
 
     @Bean
@@ -115,14 +127,14 @@ public class SecurityConfig {
     }
 
     OidcUser processOidcUser(OidcUser oidcUser) {
-        if (oidcUser == null || !Boolean.TRUE.equals(oidcUser.getEmailVerified())) {
+        if (oidcUser == null || AuthenticatedUser.isEmailExplicitlyUnverified(oidcUser)) {
             throw new OAuth2AuthenticationException(
                     new OAuth2Error("unverified_email", "A verified email address is required for management access", null));
         }
         String email = AuthenticatedUser.resolveEmail(oidcUser);
         if (email == null) {
             throw new OAuth2AuthenticationException(
-                    new OAuth2Error("invalid_token", "A valid verified email claim is required for management access", null));
+                    new OAuth2Error("invalid_token", "A valid email claim is required for management access", null));
         }
 
         Set<GrantedAuthority> mappedAuthorities = new HashSet<>(oidcUser.getAuthorities());
