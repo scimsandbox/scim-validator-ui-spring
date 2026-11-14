@@ -53,10 +53,13 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 
 import java.util.Collections;
 import java.util.Locale;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.Map;
 import java.util.HashMap;
 import java.util.List;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Controller
@@ -68,6 +71,7 @@ public class ValidationController {
     private static final String ATTR_CURRENT_USER_ROLE = "currentUserRole";
     private static final String ROLE_ADMIN = "Admin";
     private static final String ROLE_USER = "User";
+    private static final Pattern IPV4_SUBSTRING_PATTERN = Pattern.compile("\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b");
 
     private final ValidationRunService validationRunService;
     private final MgmtUserService mgmtUserService;
@@ -77,6 +81,7 @@ public class ValidationController {
     private final SpecCatalogService specCatalogService;
     private final GitHubCompliancePublisherService gitHubCompliancePublisherService;
     private final ValidationRunPublicationRepository publicationRepository;
+    private TargetUrlPolicy targetUrlPolicy;
 
     @Value("${app.compliance.allowed-publishers:}")
     private String allowedPublishers = "";
@@ -89,7 +94,21 @@ public class ValidationController {
             ValidationProgressTracker validationProgressTracker,
             @Value("${app.server-manager.url}") String serverManagerUrl) {
         this(validationRunService, mgmtUserService, validationProgressTracker, serverManagerUrl,
-                null, null, null, null);
+                null, null, null, null, null);
+    }
+
+    public ValidationController(
+            ValidationRunService validationRunService,
+            MgmtUserService mgmtUserService,
+            ValidationProgressTracker validationProgressTracker,
+            String serverManagerUrl,
+            ComplianceScoreService complianceScoreService,
+            SpecCatalogService specCatalogService,
+            GitHubCompliancePublisherService gitHubCompliancePublisherService,
+            ValidationRunPublicationRepository publicationRepository) {
+        this(validationRunService, mgmtUserService, validationProgressTracker, serverManagerUrl,
+                complianceScoreService, specCatalogService, gitHubCompliancePublisherService,
+                publicationRepository, null);
     }
 
     @Autowired
@@ -101,7 +120,8 @@ public class ValidationController {
             @Autowired(required = false) ComplianceScoreService complianceScoreService,
             @Autowired(required = false) SpecCatalogService specCatalogService,
             @Autowired(required = false) GitHubCompliancePublisherService gitHubCompliancePublisherService,
-            @Autowired(required = false) ValidationRunPublicationRepository publicationRepository) {
+            @Autowired(required = false) ValidationRunPublicationRepository publicationRepository,
+            @Autowired(required = false) TargetUrlPolicy targetUrlPolicy) {
         this.validationRunService = validationRunService;
         this.mgmtUserService = mgmtUserService;
         this.validationProgressTracker = validationProgressTracker;
@@ -110,6 +130,11 @@ public class ValidationController {
         this.specCatalogService = specCatalogService;
         this.gitHubCompliancePublisherService = gitHubCompliancePublisherService;
         this.publicationRepository = publicationRepository;
+        this.targetUrlPolicy = Objects.requireNonNullElse(targetUrlPolicy, TargetUrlPolicy.DEFAULT_STRICT);
+    }
+
+    public void setTargetUrlPolicy(TargetUrlPolicy targetUrlPolicy) {
+        this.targetUrlPolicy = Objects.requireNonNullElse(targetUrlPolicy, TargetUrlPolicy.DEFAULT_STRICT);
     }
 
     @GetMapping("/")
@@ -168,19 +193,26 @@ public class ValidationController {
             Authentication authentication) {
         if (!bindingResult.hasFieldErrors("baseUrl")) {
             try {
-                TargetUrlPolicy.validate(runForm.baseUrl());
+                targetUrlPolicy.validateSyntax(runForm.baseUrl());
             } catch (IllegalArgumentException ex) {
                 bindingResult.rejectValue("baseUrl", "baseUrl.invalid", ex.getMessage());
             }
         }
         if (bindingResult.hasErrors()) {
-            Map<String, String> errors = new HashMap<>();
-            bindingResult.getFieldErrors().forEach(error -> errors.put(error.getField(), error.getDefaultMessage()));
-            return ResponseEntity.badRequest().body(Map.of("errors", errors));
+            return badRequestValidationErrors(bindingResult);
         }
 
         String userEmail = actorEmail(authentication);
-        ValidationRunService.ExecutionResult result = validationRunService.executeRunAsync(runForm, userEmail);
+        ValidationRunService.ExecutionResult result;
+        try {
+            result = validationRunService.executeRunAsync(runForm, userEmail);
+        } catch (IllegalArgumentException ex) {
+            bindingResult.rejectValue("baseUrl", "baseUrl.invalid", ex.getMessage());
+            return badRequestValidationErrors(bindingResult);
+        } catch (ResponseStatusException ex) {
+            String message = ex.getReason() != null ? ex.getReason() : "Request could not be processed.";
+            return ResponseEntity.status(ex.getStatusCode()).body(Map.of("message", message));
+        }
         ValidationRun run = result.getRun();
         Map<String, Object> response = new HashMap<>();
         response.put("runId", run.getId().toString());
@@ -200,35 +232,55 @@ public class ValidationController {
             RedirectAttributes redirectAttributes) {
         if (!bindingResult.hasFieldErrors("baseUrl")) {
             try {
-                TargetUrlPolicy.validate(runForm.baseUrl());
+                targetUrlPolicy.validateSyntax(runForm.baseUrl());
             } catch (IllegalArgumentException ex) {
                 bindingResult.rejectValue("baseUrl", "baseUrl.invalid", ex.getMessage());
             }
         }
         if (bindingResult.hasErrors()) {
-            String userEmail = actorEmail(authentication);
-            boolean admin = isAdmin(authentication);
-            model.addAttribute("runs",
-                validationRunService.listRuns(userEmail, admin));
-            model.addAttribute("myRunsCount", validationRunService.countOwnedRuns(userEmail));
-            model.addAttribute("currentUserEmail", userEmail);
-            model.addAttribute("isAdmin", admin);
-            model.addAttribute("showOthers", true);
-            model.addAttribute(ATTR_CURRENT_USER, resolveDisplayName(authentication));
-            model.addAttribute(ATTR_CURRENT_USER_ROLE, currentUserRole(authentication));
-            model.addAttribute("maxRuns", validationRunService.getMaxRunsPerUser());
-            model.addAttribute("serverManagerUrl", serverManagerUrl);
-            populatePublishedRunsModel(model, userEmail, admin, true);
-            return "index";
+            return renderIndexWithValidationErrors(model, authentication);
         }
 
-        ValidationRunService.ExecutionResult result = validationRunService.executeRun(runForm, actorEmail(authentication));
+        String userEmail = actorEmail(authentication);
+        ValidationRunService.ExecutionResult result;
+        try {
+            result = validationRunService.executeRun(runForm, userEmail);
+        } catch (IllegalArgumentException ex) {
+            bindingResult.rejectValue("baseUrl", "baseUrl.invalid", ex.getMessage());
+            return renderIndexWithValidationErrors(model, authentication);
+        } catch (ResponseStatusException ex) {
+            redirectAttributes.addFlashAttribute("errorMessage",
+                    ex.getReason() != null ? ex.getReason() : "Too many concurrent validation runs.");
+            return "redirect:/";
+        }
         ValidationRunView run = ValidationRunView.from(result.getRun(), validationRunService.getReservationTimeout());
         if (result.isOldRunDeleted()) {
             redirectAttributes.addFlashAttribute("infoMessage", 
                 "An older test suite was deleted to make room for this new one. Maximum allowed test suites per user is " + result.getMaxRuns() + ".");
         }
         return "redirect:/runs/" + run.id();
+    }
+
+    private static ResponseEntity<Map<String, Object>> badRequestValidationErrors(BindingResult bindingResult) {
+        Map<String, String> errors = new HashMap<>();
+        bindingResult.getFieldErrors().forEach(error -> errors.put(error.getField(), error.getDefaultMessage()));
+        return ResponseEntity.badRequest().body(Map.of("errors", errors));
+    }
+
+    private String renderIndexWithValidationErrors(Model model, Authentication authentication) {
+        String userEmail = actorEmail(authentication);
+        boolean admin = isAdmin(authentication);
+        model.addAttribute("runs", validationRunService.listRuns(userEmail, admin));
+        model.addAttribute("myRunsCount", validationRunService.countOwnedRuns(userEmail));
+        model.addAttribute("currentUserEmail", userEmail);
+        model.addAttribute("isAdmin", admin);
+        model.addAttribute("showOthers", true);
+        model.addAttribute(ATTR_CURRENT_USER, resolveDisplayName(authentication));
+        model.addAttribute(ATTR_CURRENT_USER_ROLE, currentUserRole(authentication));
+        model.addAttribute("maxRuns", validationRunService.getMaxRunsPerUser());
+        model.addAttribute("serverManagerUrl", serverManagerUrl);
+        populatePublishedRunsModel(model, userEmail, admin, true);
+        return "index";
     }
 
     @GetMapping(value = "/runs/{runId}/progress", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -367,7 +419,7 @@ public class ValidationController {
         if (lower.contains("://") || lower.contains("localhost") || lower.contains("/scim")) {
             return false;
         }
-        return !runName.matches(".*\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b.*");
+        return !IPV4_SUBSTRING_PATTERN.matcher(runName).find();
     }
 
     private Map<String, TestSpecMapping> buildComprehensiveTestMappings() {
@@ -392,10 +444,6 @@ public class ValidationController {
             RedirectAttributes redirectAttributes) {
 
         String userEmail = actorEmail(authentication);
-        if (userEmail == null || userEmail.isBlank()) {
-            redirectAttributes.addFlashAttribute("errorMessage", "Authentication required to publish compliance report.");
-            return "redirect:/runs/" + runId;
-        }
         boolean admin = isAdmin(authentication);
 
         ValidationRun runEntity;
@@ -419,18 +467,22 @@ public class ValidationController {
         }
         if (validationRunService != null && validationRunService.isReconciliationRequired(runId)) {
             try {
-                var reconciled = validationRunService.tryReconcilePendingPublication(runEntity);
-                if (reconciled != null && reconciled.isPresent()) {
+                Optional<CompliancePublicationResult> reconciled =
+                        Optional.ofNullable(validationRunService.tryReconcilePendingPublication(runEntity))
+                                .orElse(Optional.empty());
+                if (reconciled.isPresent()) {
                     redirectAttributes.addFlashAttribute("successMessage",
                             "Compliance report successfully published! View live report at " + reconciled.get().reportUrl());
                     redirectAttributes.addFlashAttribute("justPublished", true);
                     return "redirect:/runs/" + runId;
                 }
-                var existingPub = validationRunService.getPublication(runId);
-                if (runEntity.isPublished() || (existingPub != null && existingPub.isPresent())) {
-                    String reportUrl = (existingPub != null && existingPub.isPresent())
-                            ? existingPub.get().getReportUrl()
-                            : (runEntity.getPublication() != null ? runEntity.getPublication().getReportUrl() : "");
+                Optional<ValidationRunPublication> existingPub =
+                        Optional.ofNullable(validationRunService.getPublication(runId))
+                                .orElse(Optional.empty());
+                if (runEntity.isPublished() || existingPub.isPresent()) {
+                    String reportUrl = existingPub
+                            .map(ValidationRunPublication::getReportUrl)
+                            .orElseGet(() -> runEntity.getPublication() != null ? runEntity.getPublication().getReportUrl() : "");
                     redirectAttributes.addFlashAttribute("successMessage",
                             "Compliance report successfully published! View live report at " + reportUrl);
                     redirectAttributes.addFlashAttribute("justPublished", true);
@@ -723,15 +775,22 @@ public class ValidationController {
         if (authentication == null) {
             return null;
         }
+        String email = AuthenticatedUser.emailOrNull(authentication);
         String fallback = AuthenticatedUser.displayName(authentication);
-        return mgmtUserService.resolveDisplayName(AuthenticatedUser.email(authentication), fallback);
+        if (email == null) {
+            return fallback;
+        }
+        return mgmtUserService.resolveDisplayName(email, fallback);
     }
 
     public boolean isPublisherAllowed(Authentication authentication) {
+        if (authentication == null) {
+            return false;
+        }
         if (isAdmin(authentication)) {
             return true;
         }
-        String email = actorEmail(authentication);
+        String email = AuthenticatedUser.emailOrNull(authentication);
         if (email == null || email.isBlank() || allowedPublishers == null || allowedPublishers.isBlank()) {
             return false;
         }

@@ -4,6 +4,7 @@ import de.palsoftware.scim.validator.ui.dto.ValidationProgress;
 import de.palsoftware.scim.validator.ui.dto.ValidationRunForm;
 import de.palsoftware.scim.validator.ui.dto.ValidationRunView;
 import de.palsoftware.scim.validator.ui.model.ValidationRun;
+import de.palsoftware.scim.validator.ui.security.TargetUrlPolicy;
 import de.palsoftware.scim.validator.ui.service.MgmtUserService;
 import de.palsoftware.scim.validator.ui.service.ValidationProgressTracker;
 import de.palsoftware.scim.validator.ui.service.ValidationRunService;
@@ -40,6 +41,8 @@ class ValidationControllerDirectTest {
         runService = new TestValidationRunService();
         progressTracker = new ValidationProgressTracker();
         controller = new ValidationController(runService, new TestMgmtUserService(), progressTracker, "https://manager.example.com");
+        controller.setTargetUrlPolicy(new TargetUrlPolicy(
+                false, host -> new java.net.InetAddress[]{java.net.InetAddress.getByName("93.184.216.34")}));
         authentication = new TestingAuthenticationToken("testuser@example.com", "n/a");
     }
 
@@ -112,10 +115,103 @@ class ValidationControllerDirectTest {
         assertThat(view).isEqualTo("redirect:/runs/" + runService.createdRun.getId());
     }
 
+    @Test
+    void executeSyncAndAsync_whenRateLimitedOrInvalidUrl_returnExpectedErrorResponses() {
+        // setTargetUrlPolicy(null) falls back to strict default policy
+        controller.setTargetUrlPolicy(null);
+        ValidationRunForm localForm = new ValidationRunForm("Local Run", "http://localhost:8080/scim/v2", "tok");
+        BindingResult localBinding = new BeanPropertyBindingResult(localForm, "runForm");
+        Model model = new ExtendedModelMap();
+        RedirectAttributes redirectAttrs = new RedirectAttributesModelMap();
+
+        String invalidView = controller.execute(localForm, localBinding, model, authentication, redirectAttrs);
+        assertThat(invalidView).isEqualTo("index");
+        assertThat(localBinding.hasFieldErrors("baseUrl")).isTrue();
+
+        // Restore stubbed policy and simulate 429 ResponseStatusException with non-null and null reason
+        controller.setTargetUrlPolicy(new TargetUrlPolicy(
+                false, host -> new java.net.InetAddress[]{java.net.InetAddress.getByName("93.184.216.34")}));
+        ValidationRunForm validForm = new ValidationRunForm("Burst Run", "https://example.com/scim", "tok");
+
+        runService.throwOnExecute = new org.springframework.web.server.ResponseStatusException(
+                HttpStatus.TOO_MANY_REQUESTS, "Rate limit reached");
+        ResponseEntity<?> asyncRateLimited = controller.executeAsync(
+                validForm, new BeanPropertyBindingResult(validForm, "runForm"), authentication);
+        assertThat(asyncRateLimited.getStatusCode()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+
+        RedirectAttributes syncRedirect1 = new RedirectAttributesModelMap();
+        String syncRateLimited1 = controller.execute(
+                validForm, new BeanPropertyBindingResult(validForm, "runForm"), new ExtendedModelMap(), authentication, syncRedirect1);
+        assertThat(syncRateLimited1).isEqualTo("redirect:/");
+        assertThat(syncRedirect1.getFlashAttributes().get("errorMessage")).isEqualTo("Rate limit reached");
+
+        runService.throwOnExecute = new org.springframework.web.server.ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS);
+        ResponseEntity<?> asyncNullReason = controller.executeAsync(
+                validForm, new BeanPropertyBindingResult(validForm, "runForm"), authentication);
+        assertThat(asyncNullReason.getStatusCode()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+
+        RedirectAttributes syncRedirect2 = new RedirectAttributesModelMap();
+        String syncRateLimited2 = controller.execute(
+                validForm, new BeanPropertyBindingResult(validForm, "runForm"), new ExtendedModelMap(), authentication, syncRedirect2);
+        assertThat(syncRateLimited2).isEqualTo("redirect:/");
+        assertThat(syncRedirect2.getFlashAttributes().get("errorMessage")).isEqualTo("Too many concurrent validation runs.");
+
+        // Controller syntax validation performs 0 DNS lookups; DNS/address errors from ValidationRunService map to baseUrl field errors
+        controller.setTargetUrlPolicy(new TargetUrlPolicy(false, host -> {
+            throw new AssertionError("ValidationController must use validateSyntax without DNS lookup");
+        }));
+        runService.throwOnExecute = null;
+        runService.throwIllegalArgOnExecute = new IllegalArgumentException(
+                "Invalid URL: private RFC 1918 target addresses are not allowed");
+
+        BindingResult syncDnsBinding = new BeanPropertyBindingResult(validForm, "runForm");
+        String syncDnsErrorView = controller.execute(
+                validForm, syncDnsBinding, new ExtendedModelMap(), authentication, new RedirectAttributesModelMap());
+        assertThat(syncDnsErrorView).isEqualTo("index");
+        assertThat(syncDnsBinding.hasFieldErrors("baseUrl")).isTrue();
+
+        BindingResult asyncDnsBinding = new BeanPropertyBindingResult(validForm, "runForm");
+        ResponseEntity<?> asyncDnsError = controller.executeAsync(validForm, asyncDnsBinding, authentication);
+        assertThat(asyncDnsError.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> asyncErrorBody = (Map<String, Object>) asyncDnsError.getBody();
+        assertThat(asyncErrorBody).containsKey("errors");
+    }
+
+    @Test
+    void publishRun_whenReconciliationFindsExistingPublication_redirectsWithSuccessMessage() {
+        UUID runId = runService.createdRun.getId();
+        runService.reconciliationRequired = true;
+        de.palsoftware.scim.validator.ui.model.ValidationRunPublication pub =
+                new de.palsoftware.scim.validator.ui.model.ValidationRunPublication();
+        pub.setRunId(runId);
+        pub.setReportUrl("https://scimsandbox.net/compliance/?run=" + runId);
+        runService.existingPublication = pub;
+
+        Authentication adminAuth = new TestingAuthenticationToken(
+                "admin@example.com",
+                "n/a",
+                List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_ADMIN")));
+        de.palsoftware.scim.validator.ui.dto.CompliancePublishFormData publishForm =
+                new de.palsoftware.scim.validator.ui.dto.CompliancePublishFormData();
+        BindingResult bindingResult = new BeanPropertyBindingResult(publishForm, "publishForm");
+        RedirectAttributes redirectAttributes = new RedirectAttributesModelMap();
+
+        String view = controller.publishRun(runId, publishForm, bindingResult, adminAuth, redirectAttributes);
+
+        assertThat(view).isEqualTo("redirect:/runs/" + runId);
+        assertThat(String.valueOf(redirectAttributes.getFlashAttributes().get("successMessage")))
+                .contains("https://scimsandbox.net/compliance/?run=" + runId);
+    }
+
     // --- Test Doubles ---
 
     private static class TestValidationRunService extends ValidationRunService {
         private final ValidationRun createdRun;
+        private org.springframework.web.server.ResponseStatusException throwOnExecute;
+        private IllegalArgumentException throwIllegalArgOnExecute;
+        private boolean reconciliationRequired;
+        private de.palsoftware.scim.validator.ui.model.ValidationRunPublication existingPublication;
 
         public TestValidationRunService() {
             super(null, null, null, null, null);
@@ -137,12 +233,44 @@ class ValidationControllerDirectTest {
 
         @Override
         public ExecutionResult executeRunAsync(ValidationRunForm form, String actorEmail) {
+            if (throwIllegalArgOnExecute != null) {
+                throw throwIllegalArgOnExecute;
+            }
+            if (throwOnExecute != null) {
+                throw throwOnExecute;
+            }
             return new ExecutionResult(createdRun, false, 10);
         }
 
         @Override
         public ExecutionResult executeRun(ValidationRunForm form, String actorEmail) {
+            if (throwIllegalArgOnExecute != null) {
+                throw throwIllegalArgOnExecute;
+            }
+            if (throwOnExecute != null) {
+                throw throwOnExecute;
+            }
             return new ExecutionResult(createdRun, false, 10);
+        }
+
+        @Override
+        public ValidationRun getRunEntity(UUID runId, String actorEmail, boolean admin) {
+            return createdRun;
+        }
+
+        @Override
+        public boolean isReconciliationRequired(UUID runId) {
+            return reconciliationRequired;
+        }
+
+        @Override
+        public java.util.Optional<de.palsoftware.scim.validator.ui.model.spec.CompliancePublicationResult> tryReconcilePendingPublication(ValidationRun run) {
+            return java.util.Optional.empty();
+        }
+
+        @Override
+        public java.util.Optional<de.palsoftware.scim.validator.ui.model.ValidationRunPublication> getPublication(UUID runId) {
+            return java.util.Optional.ofNullable(existingPublication);
         }
 
         @Override

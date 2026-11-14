@@ -73,6 +73,29 @@ class PlaygroundControllerTest {
     }
 
     @Test
+    void playgroundTopic_nullOrUnverifiedAuthentication_handlesNullUserEmailGracefully() {
+        String viewNullAuth = controller.playgroundTopic("users", model, null);
+        assertThat(viewNullAuth).isEqualTo("playground");
+        assertThat(model.getAttribute("currentUser")).isNull();
+        assertThat(model.getAttribute("currentUserRole")).isEqualTo("User");
+
+        java.time.Instant now = java.time.Instant.now();
+        org.springframework.security.oauth2.core.oidc.OidcIdToken idToken =
+                new org.springframework.security.oauth2.core.oidc.OidcIdToken(
+                        "tok", now, now.plusSeconds(300),
+                        Map.of("sub", "sub-1", "email", "u@example.com", "email_verified", false));
+        Authentication unverifiedAuth = new TestingAuthenticationToken(
+                new org.springframework.security.oauth2.core.oidc.user.DefaultOidcUser(
+                        java.util.Collections.emptyList(), idToken),
+                "n/a");
+        Model model2 = new ExtendedModelMap();
+        String viewUnverified = controller.playgroundTopic("users", model2, unverifiedAuth);
+        assertThat(viewUnverified).isEqualTo("playground");
+        assertThat(model2.getAttribute("currentUser")).isNull();
+        assertThat(model2.getAttribute("currentUserRole")).isEqualTo("User");
+    }
+
+    @Test
     void executeRequest_delegatesToService() {
         PlaygroundExecuteRequest request = new PlaygroundExecuteRequest(
                 "http://localhost:8080/scim/v2",
