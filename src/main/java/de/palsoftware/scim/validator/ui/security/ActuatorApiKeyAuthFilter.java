@@ -28,13 +28,16 @@ import java.util.Locale;
  *         {@code show-components: when_authorized} is active.</li>
  *     <li>For all other {@code /actuator/**} endpoints (such as {@code /actuator/prometheus}):
  *         <ul>
- *             <li>When {@code app.security.actuator.api-key} is non-blank, a constant-time SHA-256
+ *             <li>When {@code app.security.actuator.api-key} is non-blank (for example, local Docker
+ *                 Compose where the management port is host-published), a constant-time SHA-256
  *                 comparison of {@code X-Actuator-Api-Key}, {@code X-API-Key}, or
- *                 {@code Authorization: Bearer <key>} is required (HTTP 401 otherwise).</li>
- *             <li>When {@code app.security.actuator.api-key} is blank, access is permitted ONLY on
- *                 the dedicated internal management port ({@code managementPort > 0},
- *                 {@code managementPort != serverPort}, and {@code request.getLocalPort() == managementPort})
- *                 and denied on the public application port.</li>
+ *                 {@code Authorization: Bearer <key>} is required on every port (HTTP 401 otherwise).</li>
+ *             <li>When {@code app.security.actuator.api-key} is blank (for example, Kubernetes where
+ *                 {@code :9090} is pod-internal and unexposed on {@code Service}/{@code Ingress}),
+ *                 access is permitted ONLY on the dedicated internal management port
+ *                 ({@code managementPort > 0}, {@code managementPort != serverPort}, and
+ *                 {@code request.getLocalPort() == managementPort}) so pod-level Prometheus scrapers
+ *                 receive HTTP 200 while the public application port returns HTTP 403.</li>
  *         </ul>
  *     </li>
  * </ul>

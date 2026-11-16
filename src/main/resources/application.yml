@@ -77,6 +77,10 @@ app:
   security:
     allow-localhost-targets: ${ALLOW_LOCALHOST_TARGETS:false}
     actuator:
+      # In Kubernetes, management port :9090 is pod-internal (not exposed on Service/Ingress), so
+      # ACTUATOR_API_KEY is intentionally left unset to allow pod-level Prometheus scraping on :9090
+      # while :8082 returns 403. When ACTUATOR_API_KEY is set (e.g. local Docker Compose where
+      # 19090:9090 is host-published), the key is required on :9090 as well.
       api-key: ${ACTUATOR_API_KEY:}
     oidc:
       role-claim: https://scimplayground.dev/roles

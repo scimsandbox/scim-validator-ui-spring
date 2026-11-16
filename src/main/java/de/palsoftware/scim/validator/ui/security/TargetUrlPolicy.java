@@ -52,9 +52,9 @@ public class TargetUrlPolicy {
     }
 
     /**
-     * Validated outbound target with its normalized bare hostname and pinned IP addresses.
+     * Validated outbound target with its normalized bare hostname, pinned IP addresses, and management port.
      */
-    public record ResolvedTarget(URI uri, String host, List<InetAddress> addresses) {
+    public record ResolvedTarget(URI uri, String host, List<InetAddress> addresses, int managementPort) {
         public ResolvedTarget {
             Objects.requireNonNull(uri, "URI must not be null");
             if (host == null || host.isBlank()) {
@@ -65,6 +65,22 @@ public class TargetUrlPolicy {
             if (addresses.isEmpty()) {
                 throw new IllegalArgumentException("Resolved addresses must not be empty");
             }
+        }
+
+        public ResolvedTarget(URI uri, String host, List<InetAddress> addresses) {
+            this(uri, host, addresses, DEFAULT_MANAGEMENT_PORT);
+        }
+
+        public boolean isBlockedLoopbackManagementPort(int port) {
+            if (managementPort <= 0 || port != managementPort) {
+                return false;
+            }
+            for (InetAddress address : addresses) {
+                if (address.isLoopbackAddress()) {
+                    return true;
+                }
+            }
+            return false;
         }
     }
 
@@ -130,7 +146,7 @@ public class TargetUrlPolicy {
                         parsed.bareHost(),
                         parsed.effectivePort(),
                         allowLocalhostTargets && parsed.explicitLoopbackTarget());
-        return new ResolvedTarget(parsed.uri(), parsed.bareHost(), addresses);
+        return new ResolvedTarget(parsed.uri(), parsed.bareHost(), addresses, managementPort);
     }
 
     public URI validateUri(String url) {
@@ -207,27 +223,15 @@ public class TargetUrlPolicy {
         String normalizedHost = normalizeHost(uri.getHost());
         boolean isIpv6Literal = normalizedHost.startsWith("[") && normalizedHost.endsWith("]");
         String bareHost = stripIpv6Brackets(normalizedHost);
-
         if (bareHost.contains("%")) {
             throw new IllegalArgumentException("Invalid URL: IPv6 zone identifiers are not allowed");
         }
 
-        InetAddress literalAddress = null;
-        if (isIpv6Literal) {
-            literalAddress = parseIpv6Literal(bareHost);
-        } else if (isCanonicalIpv4Literal(bareHost)) {
-            literalAddress = InetAddress.ofLiteral(bareHost);
-        }
-
-        boolean explicitLoopbackTarget = "localhost".equals(normalizedHost)
-                || "127.0.0.1".equals(normalizedHost)
-                || (isIpv6Literal
-                        && literalAddress instanceof Inet6Address
-                        && literalAddress.isLoopbackAddress());
+        InetAddress literalAddress = parseOptionalLiteralAddress(bareHost, isIpv6Literal);
+        boolean explicitLoopbackTarget = isExplicitLoopbackHost(normalizedHost, isIpv6Literal, literalAddress);
         int effectivePort = effectivePort(scheme, uri.getPort());
 
-        if ((explicitLoopbackTarget || (literalAddress != null && literalAddress.isLoopbackAddress()))
-                && isForbiddenManagementPort(effectivePort)) {
+        if (isLoopbackTarget(explicitLoopbackTarget, literalAddress) && isForbiddenManagementPort(effectivePort)) {
             throw new IllegalArgumentException(
                     "Invalid URL: management port " + managementPort + " is not allowed");
         }
@@ -240,6 +244,30 @@ public class TargetUrlPolicy {
                 ? literalAddress.getHostAddress().toLowerCase(Locale.ROOT)
                 : bareHost;
         return new ParsedTarget(uri, scheme, canonicalBareHost, effectivePort, explicitLoopbackTarget, literalAddress);
+    }
+
+    private static InetAddress parseOptionalLiteralAddress(String bareHost, boolean isIpv6Literal) {
+        if (isIpv6Literal) {
+            return parseIpv6Literal(bareHost);
+        }
+        if (isCanonicalIpv4Literal(bareHost)) {
+            return InetAddress.ofLiteral(bareHost);
+        }
+        return null;
+    }
+
+    private static boolean isExplicitLoopbackHost(
+            String normalizedHost,
+            boolean isIpv6Literal,
+            InetAddress literalAddress) {
+        if ("localhost".equals(normalizedHost) || "127.0.0.1".equals(normalizedHost)) {
+            return true;
+        }
+        return isIpv6Literal && literalAddress instanceof Inet6Address && literalAddress.isLoopbackAddress();
+    }
+
+    private static boolean isLoopbackTarget(boolean explicitLoopbackTarget, InetAddress literalAddress) {
+        return explicitLoopbackTarget || (literalAddress != null && literalAddress.isLoopbackAddress());
     }
 
     private static String stripIpv6Brackets(String normalizedHost) {
@@ -453,9 +481,7 @@ public class TargetUrlPolicy {
         if (b0 == 0) {
             throw new IllegalArgumentException("Invalid URL: unspecified target addresses are not allowed");
         }
-        if (b0 == 10
-                || (b0 == 172 && (b1 & 0xF0) == 16)
-                || (b0 == 192 && b1 == 168)) {
+        if (isPrivateIpv4(b0, b1)) {
             throw new IllegalArgumentException("Invalid URL: private RFC 1918 target addresses are not allowed");
         }
         if (b0 == 169 && b1 == 254) {
@@ -464,12 +490,22 @@ public class TargetUrlPolicy {
         if (b0 == 100 && (b1 & 0xC0) == 64) {
             throw new IllegalArgumentException("Invalid URL: CGNAT target addresses are not allowed");
         }
-        if ((b0 == 192 && b1 == 0 && b2 == 0)
-                || (b0 == 198 && (b1 == 18 || b1 == 19))
-                || (b0 & 0xF0) == 224
-                || (b0 & 0xF0) == 240) {
+        if (isReservedOrMulticastIpv4(b0, b1, b2)) {
             throw new IllegalArgumentException("Invalid URL: multicast or reserved target addresses are not allowed");
         }
+    }
+
+    private static boolean isPrivateIpv4(int b0, int b1) {
+        return b0 == 10
+                || (b0 == 172 && (b1 & 0xF0) == 16)
+                || (b0 == 192 && b1 == 168);
+    }
+
+    private static boolean isReservedOrMulticastIpv4(int b0, int b1, int b2) {
+        return (b0 == 192 && b1 == 0 && b2 == 0)
+                || (b0 == 198 && (b1 == 18 || b1 == 19))
+                || (b0 & 0xF0) == 224
+                || (b0 & 0xF0) == 240;
     }
 
     private static void validateIpv6Bytes(byte[] bytes, boolean allowLoopback) {

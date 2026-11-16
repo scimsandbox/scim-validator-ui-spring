@@ -1050,12 +1050,12 @@ class ValidationRunServiceTest {
         bgErrorService.setMaxConcurrentRuns(1);
         java.lang.reflect.Method execPermitted = ValidationRunService.class.getDeclaredMethod(
                 "executePermittedBackgroundRun",
-                UUID.class, ValidationRunForm.class, int.class, TargetUrlPolicy.ResolvedTarget.class, String.class);
+                UUID.class, ValidationRunForm.class, int.class, TargetUrlPolicy.ResolvedTarget.class, Runnable.class);
         execPermitted.setAccessible(true);
         sampleRun.setStatus("RUNNING");
         Thread.currentThread().interrupt();
         try {
-            execPermitted.invoke(bgErrorService, runId, form, 4, publicPolicy.resolve(form.baseUrl()), "user@example.com");
+            execPermitted.invoke(bgErrorService, runId, form, 4, publicPolicy.resolve(form.baseUrl()), (Runnable) () -> {});
             assertThat(Thread.currentThread().isInterrupted()).isTrue();
         } finally {
             Thread.interrupted();
@@ -1673,7 +1673,6 @@ class ValidationRunServiceTest {
     @Test
     void shutdownExecutorCancelsQueuedCommittedRunsAndDiscoverTestCountScrubsSecrets() throws Exception {
         Class.forName(de.palsoftware.scim.validator.ui.ScimValidatorManagementApplication.class.getName());
-        assertThat(java.security.Security.getProperty("networkaddress.cache.ttl")).isEqualTo("0");
 
         TargetUrlPolicy publicPolicy = new TargetUrlPolicy(
                 false, host -> new java.net.InetAddress[]{java.net.InetAddress.getByName("93.184.216.34")});
@@ -1778,6 +1777,39 @@ class ValidationRunServiceTest {
             Thread.interrupted();
         }
         interruptedTask.abortBeforeHandoff();
+
+        // Aborted follow-up request (e.g. https -> http downgrade on /Me) records ABORTED + PARTIAL run status
+        when(testResultRepository.save(any(ValidationTestResult.class))).thenAnswer(inv -> inv.getArgument(0));
+        ValidationRunService abortedSvc = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, progressTracker, null) {
+            @Override
+            int discoverTestCount(String baseUrl, String authToken) {
+                return 1;
+            }
+
+            @Override
+            void executeLauncher(org.junit.platform.launcher.Launcher launcher,
+                                 LauncherDiscoveryRequest request,
+                                 org.junit.platform.launcher.TestExecutionListener listener) {
+                TestDescriptor d = org.mockito.Mockito.mock(TestDescriptor.class);
+                when(d.getUniqueId()).thenReturn(UniqueId.forEngine("test-engine").append("test", "me-downgrade"));
+                when(d.getType()).thenReturn(TestDescriptor.Type.TEST);
+                when(d.getDisplayName()).thenReturn("ME_01");
+                TestIdentifier id = TestIdentifier.from(d);
+                listener.executionStarted(id);
+                listener.executionFinished(id, TestExecutionResult.aborted(
+                        new org.opentest4j.TestAbortedException("Skipped follow-up request due to scheme downgrade")));
+            }
+        };
+        abortedSvc.setTargetUrlPolicy(publicPolicy);
+        try {
+            ValidationRun executed = abortedSvc.executeRun(form, "user@example.com").getRun();
+            assertThat(executed.getStatus()).isEqualTo("PARTIAL");
+            assertThat(executed.getAbortedTests()).isEqualTo(1);
+            assertThat(executed.getFailedTests()).isZero();
+        } finally {
+            abortedSvc.shutdownExecutor();
+        }
     }
 
     // ─── helpers ────────────────────────────────────────────────────────

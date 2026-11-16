@@ -715,40 +715,13 @@ public class ValidationRunService {
                     Launcher launcher = LauncherFactory.create();
                     executeLauncher(launcher, buildRequest(), listener);
 
-                    run.setTotalTests(listener.total);
-                    run.setPassedTests(listener.passed);
-                    run.setFailedTests(listener.failed);
-                    run.setSkippedTests(listener.skipped);
-                    run.setAbortedTests(listener.aborted);
-                    String finalStatus;
-                    if (listener.failed > 0) {
-                        finalStatus = "FAILED";
-                    } else if (listener.skipped > 0 || listener.aborted > 0) {
-                        finalStatus = "PARTIAL";
-                    } else {
-                        finalStatus = "PASSED";
-                    }
-                    run.setStatus(finalStatus);
+                    String finalStatus = applyCompletedRunOutcome(run, listener);
                     if (runId != null) {
                         progressTracker.completeRun(runId, finalStatus, listener.total, listener.passed, listener.failed);
                     }
-                } catch (Exception ex) {
-                    if (ex instanceof InterruptedException) {
-                        Thread.currentThread().interrupt();
-                    }
-                    String safeMsg = scrubSecrets(
-                            ex.getMessage() != null ? ex.getMessage() : "Execution error", form.authToken());
+                } catch (Exception | AssertionError ex) {
+                    String safeMsg = applyFailedRunOutcome(run, listener, ex, form.authToken());
                     log.error("Error executing validation run {}: {}", runId, safeMsg);
-                    run.setStatus("ERROR");
-                    if (listener != null) {
-                        run.setTotalTests(listener.total);
-                        run.setPassedTests(listener.passed);
-                        run.setFailedTests(listener.failed);
-                        run.setSkippedTests(listener.skipped);
-                        run.setAbortedTests(listener.aborted);
-                    } else {
-                        run.setTotalTests(0);
-                    }
                     if (runId != null) {
                         progressTracker.failRun(runId, safeMsg);
                     }
@@ -854,7 +827,7 @@ public class ValidationRunService {
     static final class CancelableAsyncRunTask implements Runnable {
         private final ValidationRunService service;
         private final String activeSlotKey;
-        private final CompletableFuture<Optional<ScheduledRunPayload>> handoff = new CompletableFuture<>();
+        private final CompletableFuture<ScheduledRunPayload> handoff = new CompletableFuture<>();
         private final AtomicBoolean startedOrCancelled = new AtomicBoolean(false);
         private final AtomicBoolean slotOwned = new AtomicBoolean(false);
         private final AtomicBoolean slotReleased = new AtomicBoolean(false);
@@ -876,16 +849,16 @@ public class ValidationRunService {
 
         void abortBeforeHandoff() {
             startedOrCancelled.set(true);
-            handoff.complete(Optional.empty());
+            handoff.complete(null);
         }
 
         void handoffCommitted(ScheduledRunPayload payload) {
-            handoff.complete(Optional.of(payload));
+            handoff.complete(Objects.requireNonNull(payload, "ScheduledRunPayload must not be null"));
         }
 
         void cancelOnRollback(UUID uncommittedRunId) {
             service.progressTracker.removeRun(uncommittedRunId);
-            handoff.complete(Optional.empty());
+            handoff.complete(null);
             releaseOwnedSlotOnce();
         }
 
@@ -893,12 +866,14 @@ public class ValidationRunService {
             if (!startedOrCancelled.compareAndSet(false, true)) {
                 return;
             }
-            handoff.whenComplete((payloadOpt, err) -> {
+            markInterruptedWhenCompleted("Validation run cancelled during shutdown");
+        }
+
+        private void markInterruptedWhenCompleted(String message) {
+            handoff.whenComplete((payload, err) -> {
                 try {
-                    if (payloadOpt != null && payloadOpt.isPresent()) {
-                        service.markBackgroundRunInterrupted(
-                                payloadOpt.get().runId(),
-                                "Validation run cancelled during shutdown");
+                    if (payload != null) {
+                        service.markBackgroundRunInterrupted(payload.runId(), message);
                     }
                 } finally {
                     releaseOwnedSlotOnce();
@@ -911,30 +886,21 @@ public class ValidationRunService {
             if (!startedOrCancelled.compareAndSet(false, true)) {
                 return;
             }
-            Optional<ScheduledRunPayload> payloadOpt;
+            ScheduledRunPayload payload;
             try {
-                payloadOpt = handoff.get();
+                payload = handoff.get();
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
-                handoff.whenComplete((opt, err) -> {
-                    try {
-                        if (opt != null && opt.isPresent()) {
-                            service.markBackgroundRunInterrupted(opt.get().runId(), "Validation run interrupted");
-                        }
-                    } finally {
-                        releaseOwnedSlotOnce();
-                    }
-                });
+                markInterruptedWhenCompleted("Validation run interrupted");
                 return;
             } catch (java.util.concurrent.ExecutionException ee) {
                 releaseOwnedSlotOnce();
                 return;
             }
-            if (payloadOpt.isEmpty()) {
+            if (payload == null) {
                 releaseOwnedSlotOnce();
                 return;
             }
-            ScheduledRunPayload payload = payloadOpt.get();
             service.executePermittedBackgroundRun(
                     payload.runId(),
                     payload.form(),
@@ -942,16 +908,6 @@ public class ValidationRunService {
                     payload.resolvedTarget(),
                     this::releaseOwnedSlotOnce);
         }
-    }
-
-    private void executePermittedBackgroundRun(
-            UUID runId,
-            ValidationRunForm form,
-            int plannedTotal,
-            TargetUrlPolicy.ResolvedTarget resolvedTarget,
-            String activeSlotKey) {
-        executePermittedBackgroundRun(
-                runId, form, plannedTotal, resolvedTarget, () -> releaseActiveRunSlot(activeSlotKey));
     }
 
     private void executePermittedBackgroundRun(
@@ -1005,20 +961,7 @@ public class ValidationRunService {
             int plannedTotal,
             TargetUrlPolicy.ResolvedTarget resolvedTarget) {
         Objects.requireNonNull(resolvedTarget, "ResolvedTarget must not be null");
-        ValidationRun run = null;
-        for (int attempt = 0; attempt < 5; attempt++) {
-            run = runRepository.findById(runId).orElse(null);
-            if (run != null) {
-                break;
-            }
-            try {
-                Thread.sleep(100);
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-                break;
-            }
-        }
-
+        ValidationRun run = awaitPersistedRun(runId);
         if (run == null) {
             log.error("Run not found for id {}", runId);
             progressTracker.failRun(runId, "Validation run could not be initialized");
@@ -1043,40 +986,14 @@ public class ValidationRunService {
             Launcher launcher = LauncherFactory.create();
             executeLauncher(launcher, buildRequest(), listener);
 
-            run.setTotalTests(listener.total);
-            run.setPassedTests(listener.passed);
-            run.setFailedTests(listener.failed);
-            run.setSkippedTests(listener.skipped);
-            run.setAbortedTests(listener.aborted);
-            String finalStatus;
-            if (listener.failed > 0) {
-                finalStatus = "FAILED";
-            } else if (listener.skipped > 0 || listener.aborted > 0) {
-                finalStatus = "PARTIAL";
-            } else {
-                finalStatus = "PASSED";
-            }
-            run.setStatus(finalStatus);
+            String finalStatus = applyCompletedRunOutcome(run, listener);
             ValidationRun completedRun = run;
             executeInReadWriteTransaction(() -> runRepository.save(completedRun));
 
             progressTracker.completeRun(runId, finalStatus, listener.total, listener.passed, listener.failed);
-        } catch (Throwable ex) {
-            if (ex instanceof InterruptedException) {
-                Thread.currentThread().interrupt();
-            }
-            String safeMsg = scrubSecrets(ex.getMessage() != null ? ex.getMessage() : "Execution error", form.authToken());
+        } catch (Exception | AssertionError ex) {
+            String safeMsg = applyFailedRunOutcome(run, listener, ex, form.authToken());
             log.error("Error executing background validation run {}: {}", runId, safeMsg);
-            run.setStatus("ERROR");
-            if (listener != null) {
-                run.setTotalTests(listener.total);
-                run.setPassedTests(listener.passed);
-                run.setFailedTests(listener.failed);
-                run.setSkippedTests(listener.skipped);
-                run.setAbortedTests(listener.aborted);
-            } else {
-                run.setTotalTests(0);
-            }
             ValidationRun failedRun = run;
             executeInReadWriteTransaction(() -> runRepository.save(failedRun));
             progressTracker.failRun(runId, safeMsg);
@@ -1085,6 +1002,62 @@ public class ValidationRunService {
             ScimBaseSpec.resetRunState();
             ValidatorConfiguration.clearRunOverrides();
         }
+    }
+
+    private ValidationRun awaitPersistedRun(UUID runId) {
+        for (int attempt = 0; attempt < 5; attempt++) {
+            ValidationRun found = runRepository.findById(runId).orElse(null);
+            if (found != null) {
+                return found;
+            }
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private static String applyCompletedRunOutcome(ValidationRun run, ValidationExecutionListener listener) {
+        run.setTotalTests(listener.total);
+        run.setPassedTests(listener.passed);
+        run.setFailedTests(listener.failed);
+        run.setSkippedTests(listener.skipped);
+        run.setAbortedTests(listener.aborted);
+        String finalStatus;
+        if (listener.failed > 0) {
+            finalStatus = "FAILED";
+        } else if (listener.skipped > 0 || listener.aborted > 0) {
+            finalStatus = "PARTIAL";
+        } else {
+            finalStatus = "PASSED";
+        }
+        run.setStatus(finalStatus);
+        return finalStatus;
+    }
+
+    private static String applyFailedRunOutcome(
+            ValidationRun run,
+            ValidationExecutionListener listener,
+            Throwable ex,
+            String authToken) {
+        if (ex instanceof InterruptedException) {
+            Thread.currentThread().interrupt();
+        }
+        String safeMsg = scrubSecrets(ex.getMessage() != null ? ex.getMessage() : "Execution error", authToken);
+        run.setStatus("ERROR");
+        if (listener != null) {
+            run.setTotalTests(listener.total);
+            run.setPassedTests(listener.passed);
+            run.setFailedTests(listener.failed);
+            run.setSkippedTests(listener.skipped);
+            run.setAbortedTests(listener.aborted);
+        } else {
+            run.setTotalTests(0);
+        }
+        return safeMsg;
     }
 
     @Transactional(readOnly = true)

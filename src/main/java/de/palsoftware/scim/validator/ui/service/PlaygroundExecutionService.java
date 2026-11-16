@@ -52,6 +52,9 @@ public class PlaygroundExecutionService {
     static final int MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
     /** Pretty-printing parses and re-serialises, so it costs several extra copies of the body. */
     private static final int MAX_PRETTY_PRINT_BYTES = 256 * 1024;
+    private static final String HEADER_ACCEPT = "Accept";
+    private static final String HEADER_AUTHORIZATION = "Authorization";
+    private static final String HEADER_CONTENT_TYPE = "Content-Type";
     private static final Set<String> RESTRICTED_CUSTOM_HEADERS = Set.of(
             "accept",
             "authorization",
@@ -90,37 +93,7 @@ public class PlaygroundExecutionService {
             boolean hasBody = request.body() != null && !request.body().isBlank();
             HttpRequestBase httpRequest = createHttpRequest(method, targetUri, request.body(), hasBody);
             httpRequest.setProtocolVersion(HttpVersion.HTTP_1_1);
-
-            // Add standard or provided Accept header
-            String acceptHeader = findHeaderValue(request.headers(), "Accept");
-            if (acceptHeader == null) {
-                acceptHeader = "application/scim+json, application/json";
-            }
-            addValidatedHeader(httpRequest, "Accept", acceptHeader);
-            requestHeadersMap.put("Accept", acceptHeader);
-
-            // Add Authorization header if token provided
-            String authHeader = findHeaderValue(request.headers(), "Authorization");
-            if (authHeader == null && request.authToken() != null && !request.authToken().isBlank()) {
-                authHeader = "Bearer " + request.authToken().trim();
-            }
-            if (authHeader != null && !authHeader.isBlank()) {
-                addValidatedHeader(httpRequest, "Authorization", authHeader);
-                requestHeadersMap.put("Authorization", maskToken(authHeader));
-            }
-
-            // Add Content-Type header if body present or explicitly provided
-            String contentType = findHeaderValue(request.headers(), "Content-Type");
-            if (contentType == null && hasBody) {
-                contentType = "application/scim+json; charset=utf-8";
-            }
-            if (contentType != null) {
-                addValidatedHeader(httpRequest, "Content-Type", contentType);
-                requestHeadersMap.put("Content-Type", contentType);
-            }
-
-            // Add any additional custom headers
-            addCustomHeaders(request.headers(), httpRequest, requestHeadersMap);
+            applyRequestHeaders(request, hasBody, httpRequest, requestHeadersMap);
 
             try (CloseableHttpClient httpClient = PinnedTargetHttpSupport.createPinnedHttpClient(
                     baseTarget, CONNECT_TIMEOUT_MS, SOCKET_TIMEOUT_MS);
@@ -171,6 +144,39 @@ public class PlaygroundExecutionService {
             log.error("Unexpected error executing playground request: {}", detail);
             return PlaygroundExecuteResponse.error("Execution error: " + detail, method, fullUrl, duration);
         }
+    }
+
+    private void applyRequestHeaders(
+            PlaygroundExecuteRequest request,
+            boolean hasBody,
+            HttpRequestBase httpRequest,
+            Map<String, String> requestHeadersMap) {
+        String acceptHeader = findHeaderValue(request.headers(), HEADER_ACCEPT);
+        if (acceptHeader == null) {
+            acceptHeader = "application/scim+json, application/json";
+        }
+        addValidatedHeader(httpRequest, HEADER_ACCEPT, acceptHeader);
+        requestHeadersMap.put(HEADER_ACCEPT, acceptHeader);
+
+        String authHeader = findHeaderValue(request.headers(), HEADER_AUTHORIZATION);
+        if (authHeader == null && request.authToken() != null && !request.authToken().isBlank()) {
+            authHeader = "Bearer " + request.authToken().trim();
+        }
+        if (authHeader != null && !authHeader.isBlank()) {
+            addValidatedHeader(httpRequest, HEADER_AUTHORIZATION, authHeader);
+            requestHeadersMap.put(HEADER_AUTHORIZATION, maskToken(authHeader));
+        }
+
+        String contentType = findHeaderValue(request.headers(), HEADER_CONTENT_TYPE);
+        if (contentType == null && hasBody) {
+            contentType = "application/scim+json; charset=utf-8";
+        }
+        if (contentType != null) {
+            addValidatedHeader(httpRequest, HEADER_CONTENT_TYPE, contentType);
+            requestHeadersMap.put(HEADER_CONTENT_TYPE, contentType);
+        }
+
+        addCustomHeaders(request.headers(), httpRequest, requestHeadersMap);
     }
 
     private static void addCustomHeaders(
@@ -321,7 +327,7 @@ public class PlaygroundExecutionService {
         if (token != null && !token.isBlank()) {
             secrets.add(token.trim());
         }
-        String headerAuth = findHeaderValue(request.headers(), "Authorization");
+        String headerAuth = findHeaderValue(request.headers(), HEADER_AUTHORIZATION);
         if (headerAuth != null && !headerAuth.isBlank()) {
             String trimmed = headerAuth.trim();
             secrets.add(trimmed);

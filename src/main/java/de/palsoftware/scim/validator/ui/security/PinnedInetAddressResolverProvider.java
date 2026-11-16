@@ -4,20 +4,16 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.net.spi.InetAddressResolver;
 import java.net.spi.InetAddressResolverProvider;
-import java.security.Security;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
 /**
- * Minimal bootstrap JDK {@link InetAddressResolverProvider} that disables JVM DNS result caching
- * before {@code InetAddressCachePolicy} initializes, avoids loading third-party HTTP libraries during
- * early JVM {@link InetAddress} bootstrap, and delegates to {@link PinnedTargetHttpSupport} once ready.
+ * Minimal bootstrap JDK {@link InetAddressResolverProvider} that avoids loading third-party HTTP
+ * libraries during early JVM {@link InetAddress} initialization (such as Java agent startup) and
+ * delegates to {@link PinnedTargetHttpSupport} once ready while preserving standard JVM DNS caching
+ * for non-pinned infrastructure hosts.
  */
 public final class PinnedInetAddressResolverProvider extends InetAddressResolverProvider {
-
-    static {
-        Security.setProperty("networkaddress.cache.ttl", "0");
-        Security.setProperty("networkaddress.cache.negative.ttl", "0");
-    }
 
     @FunctionalInterface
     interface ResolverHook {
@@ -27,18 +23,18 @@ public final class PinnedInetAddressResolverProvider extends InetAddressResolver
                 InetAddressResolver builtin) throws UnknownHostException;
     }
 
-    static volatile InetAddressResolver builtinResolver;
-    static volatile ResolverHook resolverHook;
+    static final AtomicReference<InetAddressResolver> BUILTIN_RESOLVER = new AtomicReference<>();
+    static final AtomicReference<ResolverHook> RESOLVER_HOOK = new AtomicReference<>();
 
     @Override
     public InetAddressResolver get(Configuration builtinConfiguration) {
         InetAddressResolver builtin = builtinConfiguration.builtinResolver();
-        builtinResolver = builtin;
+        BUILTIN_RESOLVER.set(builtin);
         return new InetAddressResolver() {
             @Override
             public Stream<InetAddress> lookupByName(String host, LookupPolicy lookupPolicy)
                     throws UnknownHostException {
-                ResolverHook hook = resolverHook;
+                ResolverHook hook = RESOLVER_HOOK.get();
                 return hook != null
                         ? hook.lookup(host, lookupPolicy, builtin)
                         : builtin.lookupByName(host, lookupPolicy);
