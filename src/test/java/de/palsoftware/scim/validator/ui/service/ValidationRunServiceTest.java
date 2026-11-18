@@ -44,6 +44,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -1809,6 +1810,629 @@ class ValidationRunServiceTest {
             assertThat(executed.getFailedTests()).isZero();
         } finally {
             abortedSvc.shutdownExecutor();
+        }
+    }
+
+    @Test
+    void uncaughtErrorInSyncAndAsyncExecutionMarksRunErrorFailsProgressAndReleasesPermitsWithoutSwallowingError()
+            throws Exception {
+        TargetUrlPolicy publicPolicy = new TargetUrlPolicy(
+                false, host -> new java.net.InetAddress[]{java.net.InetAddress.getByName("93.184.216.34")});
+        ValidationMgmtUser owner = new ValidationMgmtUser("user@example.com", OffsetDateTime.now());
+        when(mgmtUserRepository.findById("user@example.com")).thenReturn(Optional.of(owner));
+        when(testResultRepository.save(any(ValidationTestResult.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        var idField = ValidationRun.class.getDeclaredField("id");
+        idField.setAccessible(true);
+
+        // 1. Synchronous executeRun: OutOfMemoryError propagates unmodified, DB row & progressTracker become ERROR,
+        //    and permits + activeRunsByUser + activeRunIds are all released so a follow-up run succeeds.
+        ValidationProgressTracker realTracker = new ValidationProgressTracker();
+        AtomicReference<ValidationRun> lastSavedSyncRun = new AtomicReference<>();
+        AtomicReference<UUID> lastSyncRunId = new AtomicReference<>();
+        java.util.concurrent.atomic.AtomicBoolean throwOom = new java.util.concurrent.atomic.AtomicBoolean(true);
+
+        when(runRepository.save(any(ValidationRun.class))).thenAnswer(inv -> {
+            ValidationRun r = inv.getArgument(0);
+            if (r.getId() == null) {
+                UUID generated = UUID.randomUUID();
+                idField.set(r, generated);
+                lastSyncRunId.set(generated);
+            }
+            lastSavedSyncRun.set(r);
+            return r;
+        });
+
+        ValidationRunService syncOomSvc = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository,
+                null, realTracker, publicPolicy, null, null, 1, 2) {
+            @Override
+            int discoverTestCount(String baseUrl, String authToken) {
+                return 2;
+            }
+
+            @Override
+            void executeLauncher(org.junit.platform.launcher.Launcher launcher,
+                                 LauncherDiscoveryRequest request,
+                                 org.junit.platform.launcher.TestExecutionListener listener) {
+                TestDescriptor d = org.mockito.Mockito.mock(TestDescriptor.class);
+                when(d.getUniqueId()).thenReturn(UniqueId.forEngine("test-engine").append("test", "pre-oom"));
+                when(d.getType()).thenReturn(TestDescriptor.Type.TEST);
+                when(d.getDisplayName()).thenReturn("USR_PRE_OOM");
+                TestIdentifier id = TestIdentifier.from(d);
+                listener.executionStarted(id);
+                listener.executionFinished(id, TestExecutionResult.successful());
+                if (throwOom.get()) {
+                    throw new OutOfMemoryError("Simulated huge response OOM");
+                }
+            }
+        };
+        syncOomSvc.setMaxActiveRunsPerUser(1);
+
+        ValidationRunForm form = new ValidationRunForm("OOM Run", "https://example.com/scim/v2", "secret-oom-123");
+        try {
+            assertThatThrownBy(() -> syncOomSvc.executeRun(form, "user@example.com"))
+                    .isInstanceOf(OutOfMemoryError.class)
+                    .hasMessageContaining("Simulated huge response OOM");
+
+            UUID oomRunId = lastSyncRunId.get();
+            assertThat(oomRunId).isNotNull();
+            assertThat(lastSavedSyncRun.get().getStatus()).isEqualTo("ERROR");
+            assertThat(lastSavedSyncRun.get().getTotalTests()).isEqualTo(1);
+            assertThat(lastSavedSyncRun.get().getPassedTests()).isEqualTo(1);
+            assertThat(realTracker.getProgress(oomRunId).status()).isEqualTo("ERROR");
+            assertThat(realTracker.getProgress(oomRunId).errorMessage())
+                    .isEqualTo(ValidationRunService.MSG_ABRUPT_RUNTIME_ABORT);
+            assertThat(syncOomSvc.isRunActiveInMemory(oomRunId)).isFalse();
+
+            // Proves concurrentRunPermits (1) and maxActiveRunsPerUser (1) were cleanly released
+            throwOom.set(false);
+            assertThat(syncOomSvc.executeRun(form, "user@example.com").getRun().getStatus()).isEqualTo("PASSED");
+        } finally {
+            syncOomSvc.shutdownExecutor();
+        }
+
+        // 1b. Secondary DB save failure inside recordAbruptRunTermination never masks the unwinding Error
+        when(runRepository.save(any(ValidationRun.class))).thenAnswer(inv -> {
+            ValidationRun r = inv.getArgument(0);
+            if (r.getId() == null) {
+                UUID generated = UUID.randomUUID();
+                idField.set(r, generated);
+                lastSyncRunId.set(generated);
+                return r;
+            }
+            throw new IllegalStateException("DB unavailable during OOM cleanup");
+        });
+        throwOom.set(true);
+        ValidationRunService dbFailOnOomSvc = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository,
+                null, realTracker, publicPolicy, null, null, 1, 1) {
+            @Override
+            int discoverTestCount(String baseUrl, String authToken) {
+                return 1;
+            }
+
+            @Override
+            void executeLauncher(org.junit.platform.launcher.Launcher launcher,
+                                 LauncherDiscoveryRequest request,
+                                 org.junit.platform.launcher.TestExecutionListener listener) {
+                throw new OutOfMemoryError("Primary OOM must not be masked");
+            }
+        };
+        try {
+            assertThatThrownBy(() -> dbFailOnOomSvc.executeRun(form, "user@example.com"))
+                    .isInstanceOf(OutOfMemoryError.class)
+                    .hasMessageContaining("Primary OOM must not be masked");
+            assertThat(realTracker.getProgress(lastSyncRunId.get()).status()).isEqualTo("ERROR");
+        } finally {
+            dbFailOnOomSvc.shutdownExecutor();
+        }
+
+        // 2. Asynchronous executeRunAsync / runTestsInBackground: OutOfMemoryError marks DB + progressTracker ERROR
+        //    and releases permits + activeRunsByUser + activeRunIds
+        java.util.Map<UUID, ValidationRun> asyncRuns = new java.util.concurrent.ConcurrentHashMap<>();
+        when(runRepository.saveAndFlush(any(ValidationRun.class))).thenAnswer(inv -> {
+            ValidationRun r = inv.getArgument(0);
+            if (r.getId() == null) {
+                idField.set(r, UUID.randomUUID());
+            }
+            asyncRuns.put(r.getId(), r);
+            return r;
+        });
+        when(runRepository.findById(any(UUID.class))).thenAnswer(inv -> Optional.ofNullable(asyncRuns.get(inv.getArgument(0))));
+        when(runRepository.save(any(ValidationRun.class))).thenAnswer(inv -> {
+            ValidationRun r = inv.getArgument(0);
+            asyncRuns.put(r.getId(), r);
+            return r;
+        });
+
+        java.util.concurrent.CountDownLatch workerUnwoundLatch = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch secondRunDoneLatch = new java.util.concurrent.CountDownLatch(1);
+        AtomicReference<Throwable> uncaughtFromWorker = new AtomicReference<>();
+        java.util.concurrent.ThreadPoolExecutor customPool = new java.util.concurrent.ThreadPoolExecutor(
+                1, 1, 60L, java.util.concurrent.TimeUnit.SECONDS,
+                new java.util.concurrent.LinkedBlockingQueue<>(2),
+                runnable -> {
+                    Thread t = new Thread(runnable, "test-oom-worker");
+                    t.setDaemon(true);
+                    t.setUncaughtExceptionHandler((thr, err) -> {
+                        uncaughtFromWorker.set(err);
+                        workerUnwoundLatch.countDown();
+                    });
+                    return t;
+                });
+
+        java.util.concurrent.atomic.AtomicBoolean asyncThrowOom = new java.util.concurrent.atomic.AtomicBoolean(true);
+        ValidationRunService asyncOomSvc = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository,
+                realTracker, customPool) {
+            @Override
+            int discoverTestCount(String baseUrl, String authToken) {
+                return 1;
+            }
+
+            @Override
+            void executeLauncher(org.junit.platform.launcher.Launcher launcher,
+                                 LauncherDiscoveryRequest request,
+                                 org.junit.platform.launcher.TestExecutionListener listener) {
+                if (asyncThrowOom.get()) {
+                    throw new OutOfMemoryError("Simulated async worker OOM");
+                }
+                secondRunDoneLatch.countDown();
+            }
+        };
+        asyncOomSvc.setTargetUrlPolicy(publicPolicy);
+        asyncOomSvc.setMaxConcurrentRuns(1);
+        asyncOomSvc.setMaxActiveRunsPerUser(1);
+
+        try {
+            ValidationRun asyncOomRun = asyncOomSvc.executeRunAsync(form, "user@example.com").getRun();
+            UUID asyncOomId = asyncOomRun.getId();
+            assertThat(workerUnwoundLatch.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(uncaughtFromWorker.get())
+                    .isInstanceOf(OutOfMemoryError.class)
+                    .hasMessageContaining("Simulated async worker OOM");
+            assertThat(asyncRuns.get(asyncOomId).getStatus()).isEqualTo("ERROR");
+            assertThat(realTracker.getProgress(asyncOomId).status()).isEqualTo("ERROR");
+            assertThat(asyncOomSvc.isRunActiveInMemory(asyncOomId)).isFalse();
+
+            // Second async run on same user with maxActiveRunsPerUser=1 and maxConcurrentRuns=1 succeeds
+            asyncThrowOom.set(false);
+            ValidationRun secondRun = asyncOomSvc.executeRunAsync(form, "user@example.com").getRun();
+            assertThat(secondRunDoneLatch.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            for (int i = 0; i < 50
+                    && ("RUNNING".equals(asyncRuns.get(secondRun.getId()).getStatus())
+                            || asyncOomSvc.isRunActiveInMemory(secondRun.getId())); i++) {
+                Thread.sleep(20);
+            }
+            assertThat(asyncRuns.get(secondRun.getId()).getStatus()).isEqualTo("PASSED");
+            assertThat(asyncOomSvc.isRunActiveInMemory(secondRun.getId())).isFalse();
+        } finally {
+            customPool.shutdownNow();
+        }
+    }
+
+    @Test
+    void startupAndPeriodicRunningReconciliationMarksOrphanedAndStaleRunsErrorWhilePreservingActiveRuns()
+            throws Exception {
+        var idField = ValidationRun.class.getDeclaredField("id");
+        idField.setAccessible(true);
+
+        UUID orphanedId = UUID.randomUUID();
+        UUID activeId = UUID.randomUUID();
+        UUID alreadyFinishedId = UUID.randomUUID();
+
+        ValidationRun orphanedRun = new ValidationRun();
+        idField.set(orphanedRun, orphanedId);
+        orphanedRun.setStatus("RUNNING");
+        orphanedRun.setExecutedAt(OffsetDateTime.now().minusMinutes(120));
+
+        ValidationRun activeRun = new ValidationRun();
+        idField.set(activeRun, activeId);
+        activeRun.setStatus("RUNNING");
+        activeRun.setExecutedAt(OffsetDateTime.now().minusMinutes(120));
+
+        ValidationRun alreadyFinishedOnReload = new ValidationRun();
+        idField.set(alreadyFinishedOnReload, alreadyFinishedId);
+        alreadyFinishedOnReload.setStatus("RUNNING");
+
+        ValidationRun reloadedPassed = new ValidationRun();
+        idField.set(reloadedPassed, alreadyFinishedId);
+        reloadedPassed.setStatus("PASSED");
+
+        when(runRepository.findById(orphanedId)).thenReturn(Optional.of(orphanedRun));
+        when(runRepository.findById(alreadyFinishedId)).thenReturn(Optional.of(reloadedPassed));
+        when(runRepository.save(any(ValidationRun.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        ValidationProgressTracker realTracker = new ValidationProgressTracker();
+        realTracker.registerRun(orphanedId, 10, "/runs/" + orphanedId);
+        realTracker.registerRun(activeId, 10, "/runs/" + activeId);
+
+        ValidationRunService svc = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, realTracker, null);
+        svc.setStaleRunningTimeoutMinutes(30);
+        assertThat(svc.getStaleRunningTimeoutMinutes()).isEqualTo(30);
+        svc.registerActiveRunForTesting(activeId);
+
+        try {
+            // 1. Startup reconciliation marks orphaned RUNNING as ERROR, skips activeId and already-finished row
+            when(runRepository.findByStatus("RUNNING"))
+                    .thenReturn(java.util.Arrays.asList(orphanedRun, activeRun, alreadyFinishedOnReload, null));
+            int startupReconciled = svc.reconcileOrphanedRunningRunsOnStartup();
+            assertThat(startupReconciled).isEqualTo(1);
+            assertThat(orphanedRun.getStatus()).isEqualTo("ERROR");
+            assertThat(realTracker.getProgress(orphanedId).status()).isEqualTo("ERROR");
+            assertThat(realTracker.getProgress(orphanedId).errorMessage())
+                    .isEqualTo(ValidationRunService.MSG_STARTUP_ORPHAN_ABORT);
+            assertThat(activeRun.getStatus()).isEqualTo("RUNNING");
+            assertThat(realTracker.getProgress(activeId).status()).isEqualTo("RUNNING");
+
+            // 2. Periodic stale reconciliation marks stale non-active RUNNING row as ERROR, skips activeId,
+            //    and tolerates per-row persistence errors without aborting remaining rows
+            UUID staleId = UUID.randomUUID();
+            ValidationRun staleRun = new ValidationRun();
+            idField.set(staleRun, staleId);
+            staleRun.setStatus("RUNNING");
+            staleRun.setExecutedAt(OffsetDateTime.now().minusMinutes(45));
+            realTracker.registerRun(staleId, 10, "/runs/" + staleId);
+
+            UUID failingId = UUID.randomUUID();
+            ValidationRun failingRun = new ValidationRun();
+            idField.set(failingRun, failingId);
+            failingRun.setStatus("RUNNING");
+
+            when(runRepository.findById(staleId)).thenReturn(Optional.of(staleRun));
+            when(runRepository.findById(failingId)).thenThrow(new IllegalStateException("Transient DB error"));
+            when(runRepository.findStaleRunsByStatus(eq("RUNNING"), any(OffsetDateTime.class)))
+                    .thenReturn(List.of(failingRun, activeRun, staleRun));
+
+            int periodicReconciled = svc.reconcileStaleRunningRuns();
+            assertThat(periodicReconciled).isEqualTo(1);
+            assertThat(staleRun.getStatus()).isEqualTo("ERROR");
+            assertThat(realTracker.getProgress(staleId).status()).isEqualTo("ERROR");
+            assertThat(realTracker.getProgress(staleId).errorMessage())
+                    .isEqualTo(ValidationRunService.MSG_STALE_RUN_TIMEOUT);
+            assertThat(activeRun.getStatus()).isEqualTo("RUNNING");
+
+            // Empty candidate list, null-id candidate, & null repository branches
+            ValidationRun unpersistedRunning = new ValidationRun();
+            unpersistedRunning.setStatus("RUNNING");
+            when(runRepository.findByStatus("RUNNING")).thenReturn(List.of(unpersistedRunning));
+            assertThat(svc.reconcileOrphanedRunningRunsOnStartup()).isEqualTo(1);
+            assertThat(unpersistedRunning.getStatus()).isEqualTo("ERROR");
+
+            when(runRepository.findByStatus("RUNNING")).thenReturn(null);
+            assertThat(svc.reconcileOrphanedRunningRunsOnStartup()).isZero();
+
+            when(runRepository.findStaleRunsByStatus(eq("RUNNING"), any(OffsetDateTime.class))).thenReturn(List.of());
+            assertThat(svc.reconcileStaleRunningRuns()).isZero();
+
+            ValidationRun preListenerOomRun = new ValidationRun();
+            preListenerOomRun.setStatus("RUNNING");
+            svc.snapshotAndRecordAbruptTermination(preListenerOomRun, null, null);
+            assertThat(preListenerOomRun.getStatus()).isEqualTo("ERROR");
+            assertThat(preListenerOomRun.getTotalTests()).isZero();
+
+            assertThat(svc.isRunActiveInMemory(null)).isFalse();
+            svc.registerActiveRunForTesting(null);
+            svc.unregisterActiveRunForTesting(null);
+            svc.unregisterActiveRunForTesting(activeId);
+            assertThat(svc.isRunActiveInMemory(activeId)).isFalse();
+        } finally {
+            svc.shutdownExecutor();
+        }
+
+        ValidationRunService nullRepoSvc = new ValidationRunService(null, null, null, null, realTracker, null);
+        try {
+            assertThat(nullRepoSvc.reconcileOrphanedRunningRunsOnStartup()).isZero();
+            assertThat(nullRepoSvc.reconcileStaleRunningRuns()).isZero();
+        } finally {
+            nullRepoSvc.shutdownExecutor();
+        }
+    }
+
+    @Test
+    void postCommitPreSuiteAndHandoffErrorsAndStartupPreRegistrationRaceAreCleanedUpSafely()
+            throws Exception {
+        TargetUrlPolicy publicPolicy = new TargetUrlPolicy(
+                false, host -> new java.net.InetAddress[]{java.net.InetAddress.getByName("93.184.216.34")});
+        ValidationMgmtUser owner = new ValidationMgmtUser("user@example.com", OffsetDateTime.now());
+        when(mgmtUserRepository.findById("user@example.com")).thenReturn(Optional.of(owner));
+
+        var idField = ValidationRun.class.getDeclaredField("id");
+        idField.setAccessible(true);
+
+        java.util.Map<UUID, ValidationRun> dbRuns = new java.util.concurrent.ConcurrentHashMap<>();
+        when(runRepository.save(any(ValidationRun.class))).thenAnswer(inv -> {
+            ValidationRun r = inv.getArgument(0);
+            if (r.getId() == null) {
+                idField.set(r, UUID.randomUUID());
+            }
+            dbRuns.put(r.getId(), r);
+            return r;
+        });
+        when(runRepository.saveAndFlush(any(ValidationRun.class))).thenAnswer(inv -> {
+            ValidationRun r = inv.getArgument(0);
+            if (r.getId() == null) {
+                idField.set(r, UUID.randomUUID());
+            }
+            dbRuns.put(r.getId(), r);
+            return r;
+        });
+        when(runRepository.findById(any(UUID.class))).thenAnswer(inv -> Optional.ofNullable(dbRuns.get(inv.getArgument(0))));
+        when(runRepository.findByStatus("RUNNING")).thenAnswer(inv -> dbRuns.values().stream()
+                .filter(r -> "RUNNING".equals(r.getStatus()))
+                .toList());
+
+        ValidationRunForm form = new ValidationRunForm("Suite", "https://scim.example.com/v2", "secret-token-123");
+        ValidationProgressTracker realTracker = new ValidationProgressTracker();
+
+        // 1. CancelableAsyncRunTask.run() unwinding on OutOfMemoryError from handoff.get() marks DB + progress ERROR
+        //    and releases activeRunsByUser + activeRunIds so a subsequent run succeeds
+        java.util.concurrent.CountDownLatch handoffOomLatch = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch followUpDoneLatch = new java.util.concurrent.CountDownLatch(1);
+        AtomicReference<Throwable> workerError = new AtomicReference<>();
+        java.util.concurrent.ThreadPoolExecutor singleWorkerPool = new java.util.concurrent.ThreadPoolExecutor(
+                1, 1, 60L, java.util.concurrent.TimeUnit.SECONDS,
+                new java.util.concurrent.LinkedBlockingQueue<>(4),
+                runnable -> {
+                    Thread t = new Thread(runnable, "test-handoff-oom-worker");
+                    t.setDaemon(true);
+                    t.setUncaughtExceptionHandler((thr, err) -> {
+                        workerError.set(err);
+                        handoffOomLatch.countDown();
+                    });
+                    return t;
+                });
+
+        java.util.concurrent.atomic.AtomicBoolean injectHandoffOom = new java.util.concurrent.atomic.AtomicBoolean(true);
+        ValidationRunService handoffOomSvc = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository,
+                realTracker, singleWorkerPool) {
+            @Override
+            int discoverTestCount(String baseUrl, String authToken) {
+                return 1;
+            }
+
+            @Override
+            CancelableAsyncRunTask createAsyncRunTask(String activeSlotKey) {
+                if (!injectHandoffOom.get()) {
+                    return super.createAsyncRunTask(activeSlotKey);
+                }
+                java.util.concurrent.CompletableFuture<ScheduledRunPayload> oomFuture =
+                        new java.util.concurrent.CompletableFuture<>() {
+                            @Override
+                            public ScheduledRunPayload get() throws InterruptedException, java.util.concurrent.ExecutionException {
+                                super.get();
+                                throw new OutOfMemoryError("Simulated handoff.get() OOM");
+                            }
+                        };
+                return new CancelableAsyncRunTask(this, activeSlotKey, oomFuture);
+            }
+
+            @Override
+            void executeLauncher(org.junit.platform.launcher.Launcher launcher,
+                                 LauncherDiscoveryRequest request,
+                                 org.junit.platform.launcher.TestExecutionListener listener) {
+                followUpDoneLatch.countDown();
+            }
+        };
+        handoffOomSvc.setTargetUrlPolicy(publicPolicy);
+        handoffOomSvc.setMaxActiveRunsPerUser(1);
+        handoffOomSvc.setMaxConcurrentRuns(1);
+
+        try {
+            ValidationRun handoffOomRun = handoffOomSvc.executeRunAsync(form, "user@example.com").getRun();
+            UUID handoffOomId = handoffOomRun.getId();
+            assertThat(handoffOomLatch.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(workerError.get())
+                    .isInstanceOf(OutOfMemoryError.class)
+                    .hasMessageContaining("Simulated handoff.get() OOM");
+            assertThat(dbRuns.get(handoffOomId).getStatus()).isEqualTo("ERROR");
+            assertThat(realTracker.getProgress(handoffOomId).status()).isEqualTo("ERROR");
+            assertThat(handoffOomSvc.isRunActiveInMemory(handoffOomId)).isFalse();
+
+            // Direct CancellationException & ExecutionException coverage on CancelableAsyncRunTask
+            UUID cancelledId = UUID.randomUUID();
+            ValidationRun cancelledRun = new ValidationRun();
+            idField.set(cancelledRun, cancelledId);
+            cancelledRun.setStatus("RUNNING");
+            dbRuns.put(cancelledId, cancelledRun);
+            realTracker.registerRun(cancelledId, 1, "/runs/" + cancelledId);
+            java.util.concurrent.CompletableFuture<ValidationRunService.ScheduledRunPayload> cancelledFuture =
+                    new java.util.concurrent.CompletableFuture<>();
+            ValidationRunService.CancelableAsyncRunTask cancelledTask =
+                    new ValidationRunService.CancelableAsyncRunTask(handoffOomSvc, null, cancelledFuture);
+            cancelledTask.bindRunId(cancelledId);
+            cancelledFuture.cancel(true);
+            assertThatThrownBy(cancelledTask::run)
+                    .isInstanceOf(java.util.concurrent.CancellationException.class);
+            assertThat(dbRuns.get(cancelledId).getStatus()).isEqualTo("ERROR");
+            assertThat(handoffOomSvc.isRunActiveInMemory(cancelledId)).isFalse();
+
+            java.util.concurrent.CompletableFuture<ValidationRunService.ScheduledRunPayload> execExFuture =
+                    new java.util.concurrent.CompletableFuture<>();
+            execExFuture.completeExceptionally(new IllegalStateException("handoff failed"));
+            ValidationRunService.CancelableAsyncRunTask execExTask =
+                    new ValidationRunService.CancelableAsyncRunTask(handoffOomSvc, null, execExFuture);
+            UUID execExId = UUID.randomUUID();
+            execExTask.bindRunId(execExId);
+            execExTask.run();
+            assertThat(handoffOomSvc.isRunActiveInMemory(execExId)).isFalse();
+
+            // Follow-up run for same user succeeds (proves activeRunsByUser slot was released)
+            injectHandoffOom.set(false);
+            ValidationRun okRun = handoffOomSvc.executeRunAsync(form, "user@example.com").getRun();
+            assertThat(followUpDoneLatch.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            for (int i = 0; i < 50
+                    && ("RUNNING".equals(dbRuns.get(okRun.getId()).getStatus())
+                            || handoffOomSvc.isRunActiveInMemory(okRun.getId())); i++) {
+                Thread.sleep(20);
+            }
+            assertThat(dbRuns.get(okRun.getId()).getStatus()).isEqualTo("PASSED");
+        } finally {
+            singleWorkerPool.shutdownNow();
+        }
+
+        // 2. awaitPersistedRun unwinding on OutOfMemoryError (and RuntimeException) marks DB + progress ERROR
+        UUID awaitOomId = UUID.randomUUID();
+        ValidationRun awaitOomRun = new ValidationRun();
+        idField.set(awaitOomRun, awaitOomId);
+        awaitOomRun.setStatus("RUNNING");
+        dbRuns.put(awaitOomId, awaitOomRun);
+        realTracker.registerRun(awaitOomId, 2, "/runs/" + awaitOomId);
+
+        java.util.concurrent.atomic.AtomicBoolean throwAwaitOom = new java.util.concurrent.atomic.AtomicBoolean(true);
+        ValidationRunService awaitErrSvc = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, realTracker, null) {
+            @Override
+            ValidationRun awaitPersistedRun(UUID id) {
+                if (throwAwaitOom.get()) {
+                    throw new OutOfMemoryError("Simulated awaitPersistedRun OOM");
+                }
+                throw new IllegalStateException("Init error leaking secret-token-123");
+            }
+        };
+        awaitErrSvc.setTargetUrlPolicy(publicPolicy);
+        try {
+            assertThatThrownBy(() -> awaitErrSvc.runTestsInBackground(awaitOomId, form, 2))
+                    .isInstanceOf(OutOfMemoryError.class)
+                    .hasMessageContaining("Simulated awaitPersistedRun OOM");
+            assertThat(dbRuns.get(awaitOomId).getStatus()).isEqualTo("ERROR");
+            assertThat(realTracker.getProgress(awaitOomId).status()).isEqualTo("ERROR");
+
+            UUID awaitExId = UUID.randomUUID();
+            ValidationRun awaitExRun = new ValidationRun();
+            idField.set(awaitExRun, awaitExId);
+            awaitExRun.setStatus("RUNNING");
+            dbRuns.put(awaitExId, awaitExRun);
+            realTracker.registerRun(awaitExId, 2, "/runs/" + awaitExId);
+            throwAwaitOom.set(false);
+            awaitErrSvc.runTestsInBackground(awaitExId, form, 2);
+            assertThat(dbRuns.get(awaitExId).getStatus()).isEqualTo("ERROR");
+            assertThat(realTracker.getProgress(awaitExId).errorMessage())
+                    .contains("[REDACTED]")
+                    .doesNotContain("secret-token-123");
+        } finally {
+            awaitErrSvc.shutdownExecutor();
+        }
+
+        // 3. Post-commit pre-suite / pre-handoff Error (in progressTracker.registerRun) marks committed DB row ERROR
+        //    and releases slots + activeRunIds in both executeRun and executeRunAsync
+        ValidationProgressTracker failingRegisterTracker = new ValidationProgressTracker() {
+            @Override
+            public void registerRun(UUID id, int total, String redirectUrl) {
+                throw new OutOfMemoryError("Simulated registerRun OOM after commit");
+            }
+        };
+        ValidationRunService postCommitFailSvc = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, failingRegisterTracker, null) {
+            @Override
+            int discoverTestCount(String baseUrl, String authToken) {
+                return 1;
+            }
+        };
+        postCommitFailSvc.setTargetUrlPolicy(publicPolicy);
+        postCommitFailSvc.setMaxActiveRunsPerUser(1);
+        postCommitFailSvc.setMaxConcurrentRuns(1);
+        try {
+            int beforeCount = dbRuns.size();
+            assertThatThrownBy(() -> postCommitFailSvc.executeRun(form, "user@example.com"))
+                    .isInstanceOf(OutOfMemoryError.class)
+                    .hasMessageContaining("Simulated registerRun OOM after commit");
+            assertThat(dbRuns).hasSize(beforeCount + 1);
+            assertThat(dbRuns.values()).allMatch(r -> !"RUNNING".equals(r.getStatus()));
+
+            assertThatThrownBy(() -> postCommitFailSvc.executeRunAsync(form, "user@example.com"))
+                    .isInstanceOf(OutOfMemoryError.class)
+                    .hasMessageContaining("Simulated registerRun OOM after commit");
+            assertThat(dbRuns).hasSize(beforeCount + 2);
+            assertThat(dbRuns.values()).allMatch(r -> !"RUNNING".equals(r.getStatus()));
+        } finally {
+            postCommitFailSvc.shutdownExecutor();
+        }
+
+        // 4. Startup reconciliation race during commit + commit-failure cleanup of pre-registered activeRunIds
+        AtomicReference<ValidationRunService> txRaceSvcRef = new AtomicReference<>();
+        java.util.concurrent.atomic.AtomicInteger startupReconciledDuringCommit = new java.util.concurrent.atomic.AtomicInteger(-1);
+        java.util.concurrent.atomic.AtomicBoolean failCommit = new java.util.concurrent.atomic.AtomicBoolean(false);
+        AtomicReference<UUID> lastPreRegisteredId = new AtomicReference<>();
+
+        org.springframework.transaction.PlatformTransactionManager raceTxManager =
+                new org.springframework.transaction.support.AbstractPlatformTransactionManager() {
+                    @Override
+                    protected Object doGetTransaction() {
+                        return new Object();
+                    }
+
+                    @Override
+                    protected void doBegin(Object transaction, org.springframework.transaction.TransactionDefinition definition) {
+                        // no-op in-memory tx
+                    }
+
+                    @Override
+                    protected void doCommit(org.springframework.transaction.support.DefaultTransactionStatus status) {
+                        dbRuns.keySet().forEach(lastPreRegisteredId::set);
+                        if (failCommit.get()) {
+                            throw new IllegalStateException("Simulated DB commit failure");
+                        }
+                        // Simulate startup reconciliation firing at the exact moment the RUNNING row commits
+                        startupReconciledDuringCommit.set(txRaceSvcRef.get().reconcileOrphanedRunningRunsOnStartup());
+                    }
+
+                    @Override
+                    protected void doRollback(org.springframework.transaction.support.DefaultTransactionStatus status) {
+                        // no-op
+                    }
+                };
+
+        ValidationRunService txRaceSvc = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository,
+                realTracker, null) {
+            @Override
+            int discoverTestCount(String baseUrl, String authToken) {
+                return 1;
+            }
+
+            @Override
+            void executeLauncher(org.junit.platform.launcher.Launcher launcher,
+                                 LauncherDiscoveryRequest request,
+                                 org.junit.platform.launcher.TestExecutionListener listener) {
+                // Verify run was NOT clobbered to ERROR by startup reconciliation during commit
+                assertThat(startupReconciledDuringCommit.get()).isZero();
+            }
+        };
+        txRaceSvc.setTargetUrlPolicy(publicPolicy);
+        txRaceSvc.setTransactionManager(raceTxManager);
+        txRaceSvc.setMaxConcurrentRuns(1);
+        txRaceSvc.setMaxActiveRunsPerUser(1);
+        txRaceSvcRef.set(txRaceSvc);
+        dbRuns.clear();
+
+        try {
+            ValidationRun raceSafeRun = txRaceSvc.executeRun(form, "user@example.com").getRun();
+            assertThat(startupReconciledDuringCommit.get()).isZero();
+            assertThat(raceSafeRun.getStatus()).isEqualTo("PASSED");
+            assertThat(txRaceSvc.isRunActiveInMemory(raceSafeRun.getId())).isFalse();
+
+            // Commit failure on both sync and async still removes pre-registered ID from activeRunIds
+            dbRuns.clear();
+            failCommit.set(true);
+            assertThatThrownBy(() -> txRaceSvc.executeRun(form, "user@example.com"))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("Simulated DB commit failure");
+            assertThat(lastPreRegisteredId.get()).isNotNull();
+            assertThat(txRaceSvc.isRunActiveInMemory(lastPreRegisteredId.get())).isFalse();
+
+            dbRuns.clear();
+            lastPreRegisteredId.set(null);
+            assertThatThrownBy(() -> txRaceSvc.executeRunAsync(form, "user@example.com"))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("Simulated DB commit failure");
+            assertThat(lastPreRegisteredId.get()).isNotNull();
+            assertThat(txRaceSvc.isRunActiveInMemory(lastPreRegisteredId.get())).isFalse();
+        } finally {
+            txRaceSvc.shutdownExecutor();
         }
     }
 

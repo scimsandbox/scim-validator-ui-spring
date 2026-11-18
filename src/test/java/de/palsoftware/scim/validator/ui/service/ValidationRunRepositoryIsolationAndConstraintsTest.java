@@ -1082,6 +1082,21 @@ public class ValidationRunRepositoryIsolationAndConstraintsTest {
             return Optional.empty();
         }
 
+        @Override
+        public List<ValidationRun> findByStatus(String status) {
+            return db.values().stream()
+                    .filter(r -> java.util.Objects.equals(status, r.getStatus()))
+                    .toList();
+        }
+
+        @Override
+        public List<ValidationRun> findStaleRunsByStatus(String status, OffsetDateTime cutoff) {
+            return db.values().stream()
+                    .filter(r -> java.util.Objects.equals(status, r.getStatus()))
+                    .filter(r -> r.getExecutedAt() != null && r.getExecutedAt().isBefore(cutoff))
+                    .toList();
+        }
+
         @Override public Optional<ValidationRun> findById(UUID uuid) { return Optional.ofNullable(db.get(uuid)); }
         @Override public <S extends ValidationRun> S save(S entity) {
             if (entity.getId() == null) setField(entity, "id", UUID.randomUUID());

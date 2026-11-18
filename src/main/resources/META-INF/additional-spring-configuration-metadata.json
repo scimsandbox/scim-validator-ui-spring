@@ -56,6 +56,12 @@
       "description": "Maximum number of concurrently active validation runs permitted per user."
     },
     {
+      "name": "app.runs.stale-running-timeout-minutes",
+      "type": "java.lang.Long",
+      "defaultValue": 60,
+      "description": "Minutes before an uncompleted RUNNING validation run not tracked in memory is marked as ERROR."
+    },
+    {
       "name": "app.security.oidc.role-claim",
       "type": "java.lang.String",
       "description": "OIDC claim containing user roles."

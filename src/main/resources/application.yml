@@ -93,6 +93,7 @@ app:
     max-concurrent: ${APP_RUNS_MAX_CONCURRENT:4}
     max-queue-size: ${APP_RUNS_MAX_QUEUE_SIZE:8}
     max-active-per-user: ${APP_RUNS_MAX_ACTIVE_PER_USER:2}
+    stale-running-timeout-minutes: ${APP_RUNS_STALE_RUNNING_TIMEOUT_MINUTES:60}
 
   compliance:
     public-base-url: ${APP_COMPLIANCE_PUBLIC_BASE_URL}
