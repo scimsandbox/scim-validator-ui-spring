@@ -2436,6 +2436,399 @@ class ValidationRunServiceTest {
         }
     }
 
+    @Test
+    void targetUrlNormalizesHttpSchemeToLowercaseWhilePreservingHostAndPathCase() throws Exception {
+        assertThat(ValidationRunService.validateAndNormalizeTargetUrl("  HTTPS://Scim.Example.com:8443/v2/Users?filter=userName  "))
+                .isEqualTo("https://Scim.Example.com:8443/v2/Users?filter=userName");
+        assertThat(ValidationRunService.validateAndNormalizeTargetUrl("Http://LocalHost:8080/ws/Test/scim/v2"))
+                .isEqualTo("http://LocalHost:8080/ws/Test/scim/v2");
+        assertThat(ValidationRunService.validateAndNormalizeTargetUrl("FTP://files.example.com/scim"))
+                .isEqualTo("FTP://files.example.com/scim");
+        assertThat(ValidationRunService.normalizeHttpSchemePrefix(null)).isNull();
+        assertThat(ValidationRunService.normalizeHttpSchemePrefix("short")).isEqualTo("short");
+
+        // Unicode case-folding guard: '\u017F' (Latin Small Letter Long S) folds to 'S' under UNICODE_CASE / regionMatches(true),
+        // but must NOT match ASCII http(s):// in publication URL validators or target URL scheme normalization
+        String longSUrl = "http\u017F://example.com/scim/v2";
+        String longSUserinfoUrl = "http\u017F://user:pass@example.com/scim/v2";
+        assertThat(ValidationRunService.isValidPublicationHttpUrl(longSUrl)).isFalse();
+        assertThat(ValidationRunService.isValidPublicationHttpUrl(longSUserinfoUrl)).isFalse();
+        assertThat(ValidationRunService.sanitizeOptionalHttpUrl(longSUrl)).isNull();
+        assertThat(ValidationRunService.sanitizePrUrl(longSUrl)).isNull();
+        assertThat(ValidationRunService.normalizeHttpSchemePrefix(longSUrl)).isEqualTo(longSUrl);
+        assertThat(ValidationRunService.validateAndNormalizeTargetUrl(longSUrl)).isEqualTo(longSUrl);
+
+        TargetUrlPolicy publicPolicy = new TargetUrlPolicy(
+                false, host -> new java.net.InetAddress[]{java.net.InetAddress.getByName("93.184.216.34")});
+        ValidationMgmtUser owner = new ValidationMgmtUser("user@example.com", OffsetDateTime.now());
+        when(mgmtUserRepository.findById("user@example.com")).thenReturn(Optional.of(owner));
+        when(runRepository.save(any(ValidationRun.class))).thenAnswer(inv -> {
+            ValidationRun r = inv.getArgument(0);
+            if (r.getId() == null) {
+                var f = ValidationRun.class.getDeclaredField("id");
+                f.setAccessible(true);
+                f.set(r, runId);
+            }
+            return r;
+        });
+        when(runRepository.saveAndFlush(any(ValidationRun.class))).thenAnswer(inv -> {
+            ValidationRun r = inv.getArgument(0);
+            var f = ValidationRun.class.getDeclaredField("id");
+            f.setAccessible(true);
+            f.set(r, runId);
+            return r;
+        });
+        when(runRepository.findById(runId)).thenReturn(Optional.of(sampleRun));
+
+        java.util.concurrent.CountDownLatch launcherRuns = new java.util.concurrent.CountDownLatch(2);
+        ValidationRunService schemeSvc = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, progressTracker, null) {
+            @Override
+            int discoverTestCount(String baseUrl, String authToken) {
+                assertThat(baseUrl).startsWith("https://Scim.Example.com/");
+                return 1;
+            }
+
+            @Override
+            void executeLauncher(org.junit.platform.launcher.Launcher launcher,
+                                 LauncherDiscoveryRequest request,
+                                 org.junit.platform.launcher.TestExecutionListener listener) {
+                launcherRuns.countDown();
+            }
+        };
+        schemeSvc.setTargetUrlPolicy(publicPolicy);
+        try {
+            ValidationRunForm longSForm = new ValidationRunForm("Long S Run", longSUrl, "tok");
+            assertThatThrownBy(() -> schemeSvc.executeRun(longSForm, "user@example.com"))
+                    .isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> schemeSvc.executeRunAsync(longSForm, "user@example.com"))
+                    .isInstanceOf(IllegalArgumentException.class);
+
+            ValidationRunForm mixedSyncForm = new ValidationRunForm(
+                    "Mixed Scheme Sync", "  HTTPS://Scim.Example.com/v2/TenantA  ", "tok");
+            ValidationRun syncSaved = schemeSvc.executeRun(mixedSyncForm, "user@example.com").getRun();
+            assertThat(syncSaved.getTargetUrl()).isEqualTo("https://Scim.Example.com/v2/TenantA");
+
+            ValidationRunForm mixedAsyncForm = new ValidationRunForm(
+                    "Mixed Scheme Async", "hTtPs://Scim.Example.com/v2/TenantB", "tok");
+            ValidationRun asyncSaved = schemeSvc.executeRunAsync(mixedAsyncForm, "user@example.com").getRun();
+            assertThat(asyncSaved.getTargetUrl()).isEqualTo("https://Scim.Example.com/v2/TenantB");
+            assertThat(launcherRuns.await(3, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        } finally {
+            schemeSvc.shutdownExecutor();
+        }
+    }
+
+    @Test
+    void reconciledCatalogSlugNormalizesUnderscoresAndPreventsCrossPublisherHijacking() {
+        assertThat(ValidationRunService.sanitizeReconciledProductSlug("Keycloak_SCIM_2", "fallback-slug"))
+                .isEqualTo("keycloak-scim-2");
+        assertThat(ValidationRunService.sanitizeReconciledProductSlug("a".repeat(119) + "_b", "fallback-slug"))
+                .isEqualTo("a".repeat(119));
+        assertThat(ValidationRunService.sanitizeReconciledProductSlug(
+                "11111111-1111-1111-1111-111111111111", "fallback-slug"))
+                .isEqualTo("fallback-slug");
+        assertThat(ValidationRunService.sanitizeReconciledProductSlug(
+                "11111111_1111_1111_1111_111111111111", "fallback-slug"))
+                .isEqualTo("fallback-slug");
+        assertThat(ValidationRunService.sanitizeReconciledProductSlug("___", "fallback-slug"))
+                .isEqualTo("fallback-slug");
+
+        ValidationRunPublicationRepository pubRepo = org.mockito.Mockito.mock(ValidationRunPublicationRepository.class);
+        when(pubRepo.save(any(ValidationRunPublication.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(runRepository.findById(runId)).thenReturn(Optional.of(sampleRun));
+        when(runRepository.save(any(ValidationRun.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        ValidationRunPublication otherOwnerPub = new ValidationRunPublication();
+        otherOwnerPub.setRunId(UUID.randomUUID());
+        otherOwnerPub.setCreatedByEmail("rival@othervendor.com");
+        otherOwnerPub.setProductSlug("rival-scim-server");
+        otherOwnerPub.setPrUrl("https://github.com/scimsandbox/scim-website/pull/1");
+        otherOwnerPub.setPublishedAt(OffsetDateTime.now(ZoneOffset.UTC).minusHours(1));
+
+        String longOwnedSlug = "a".repeat(119);
+        ValidationRunPublication otherOwnerLongPub = new ValidationRunPublication();
+        otherOwnerLongPub.setRunId(UUID.randomUUID());
+        otherOwnerLongPub.setCreatedByEmail("rival@othervendor.com");
+        otherOwnerLongPub.setProductSlug(longOwnedSlug);
+        otherOwnerLongPub.setPrUrl("https://github.com/scimsandbox/scim-website/pull/2");
+        otherOwnerLongPub.setPublishedAt(OffsetDateTime.now(ZoneOffset.UTC).minusHours(1));
+
+        when(pubRepo.findByProductSlugIgnoreCaseOrderByPublishedAtDesc(any())).thenAnswer(inv -> {
+            String queried = inv.getArgument(0);
+            if ("rival-scim-server".equalsIgnoreCase(queried)) {
+                return List.of(otherOwnerPub);
+            }
+            if (longOwnedSlug.equalsIgnoreCase(queried)) {
+                return List.of(otherOwnerLongPub);
+            }
+            return List.of();
+        });
+
+        ValidationRunService pubService = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, pubRepo, progressTracker);
+        pubService.setPublicBaseUrl("https://scimsandbox.org");
+
+        CompliancePublishRequest validRequest = new CompliancePublishRequest(
+                runId,
+                "My Keycloak Plugin",
+                "my-keycloak-plugin",
+                "1.0.0",
+                "Acme",
+                "https://github.com/acme/keycloak-scim",
+                "Apache-2.0",
+                true,
+                96,
+                "EMERALD",
+                10,
+                10,
+                "user@example.com",
+                "https://scim.example.com/v2"
+        );
+
+        // 1. Underscore + uppercase reconciled slug owned by nobody -> normalized to 'keycloak-scim-2'
+        ComplianceCatalogEntry underscoreEntry = new ComplianceCatalogEntry(
+                runId,
+                "Keycloak SCIM 2",
+                "Keycloak_SCIM_2",
+                "1.0.0",
+                "Acme",
+                "https://github.com/acme/keycloak-scim",
+                "Apache-2.0",
+                96,
+                ColourGradientInfo.from("EMERALD", 96),
+                10,
+                10,
+                "compliance/reports/keycloak-scim-2/1.0.0.json",
+                "compliance/badges/keycloak-scim-2.svg",
+                "2026-11-18T12:00:00Z"
+        );
+        CompliancePublicationResult underscoreResult = CompliancePublicationResult.reconciled(
+                runId,
+                "https://github.com/scimsandbox/scim-website/pull/101",
+                "https://scimsandbox.org/compliance/?run=" + runId,
+                "https://scimsandbox.org/compliance/badges/" + runId + ".svg",
+                "sha101",
+                OffsetDateTime.now(ZoneOffset.UTC),
+                underscoreEntry
+        );
+        sampleRun.setPublication(null);
+        when(pubRepo.findById(runId)).thenReturn(Optional.empty());
+        ValidationRunPublication savedUnderscore = pubService.recordPublication(
+                sampleRun, "user@example.com", validRequest, underscoreResult);
+        assertThat(savedUnderscore.getProductSlug()).isEqualTo("keycloak-scim-2");
+
+        // 2. Active PENDING_RESERVATION + reconciled slug owned by another publisher ('Rival_SCIM_Server' -> 'rival-scim-server')
+        //    falls back cleanly to 'my-keycloak-plugin' instead of stranding the reservation or hijacking rival's slug
+        ValidationRunPublication pending = new ValidationRunPublication();
+        pending.setRun(sampleRun);
+        pending.setCreatedByEmail("user@example.com");
+        pending.setProductName("My Keycloak Plugin");
+        pending.setProductSlug("my-keycloak-plugin");
+        pending.setProductVersion("1.0.0");
+        pending.setLicenseType("Apache-2.0");
+        pending.setShowSubmitter(true);
+        pending.setCoreScore(96);
+        pending.setSupportedCapabilities(10);
+        pending.setTotalCapabilities(10);
+        pending.setReportUrl("https://scimsandbox.org/compliance/?run=" + runId);
+        pending.setBadgeUrl("https://scimsandbox.org/compliance/badges/" + runId + ".svg");
+        pending.setPrUrl(ValidationRunService.PENDING_RESERVATION_PR_URL);
+        pending.setPublishedAt(OffsetDateTime.now(ZoneOffset.UTC));
+        sampleRun.setPublication(pending);
+        when(pubRepo.findById(runId)).thenReturn(Optional.of(pending));
+
+        ComplianceCatalogEntry collidingEntry = new ComplianceCatalogEntry(
+                runId,
+                "My Keycloak Plugin",
+                "Rival_SCIM_Server",
+                "1.0.0",
+                "Acme",
+                "https://github.com/acme/keycloak-scim",
+                "Apache-2.0",
+                96,
+                ColourGradientInfo.from("EMERALD", 96),
+                10,
+                10,
+                "compliance/reports/rival-scim-server/1.0.0.json",
+                "compliance/badges/rival-scim-server.svg",
+                "2026-11-18T12:05:00Z"
+        );
+        CompliancePublicationResult collidingResult = CompliancePublicationResult.reconciled(
+                runId,
+                "https://github.com/scimsandbox/scim-website/pull/102",
+                "https://scimsandbox.org/compliance/?run=" + runId,
+                "https://scimsandbox.org/compliance/badges/" + runId + ".svg",
+                "sha102",
+                OffsetDateTime.now(ZoneOffset.UTC),
+                collidingEntry
+        );
+        ValidationRunPublication savedFromPendingCollision = pubService.recordPublication(
+                sampleRun, "user@example.com", validRequest, collidingResult);
+        assertThat(savedFromPendingCollision.getProductSlug()).isEqualTo("my-keycloak-plugin");
+
+        // 3. Fresh recordPublication (no pending reservation) with colliding reconciled slug also falls back safely
+        sampleRun.setPublication(null);
+        when(pubRepo.findById(runId)).thenReturn(Optional.empty());
+        ValidationRunPublication savedFreshCollision = pubService.recordPublication(
+                sampleRun, "user@example.com", validRequest, collidingResult);
+        assertThat(savedFreshCollision.getProductSlug()).isEqualTo("my-keycloak-plugin");
+
+        // 4. Active PENDING_RESERVATION where retry request altered slug to another publisher's slug keeps reservedSlug
+        pending.setProductSlug("my-keycloak-plugin");
+        pending.setPrUrl(ValidationRunService.PENDING_RESERVATION_PR_URL);
+        pending.setPublishedAt(OffsetDateTime.now(ZoneOffset.UTC));
+        sampleRun.setPublication(pending);
+        when(pubRepo.findById(runId)).thenReturn(Optional.of(pending));
+        CompliancePublishRequest alteredCollidingReq = new CompliancePublishRequest(
+                runId,
+                "My Keycloak Plugin",
+                "rival-scim-server",
+                "1.0.0",
+                "Acme",
+                "https://github.com/acme/keycloak-scim",
+                "Apache-2.0",
+                true,
+                96,
+                "EMERALD",
+                10,
+                10,
+                "user@example.com",
+                "https://scim.example.com/v2"
+        );
+        CompliancePublicationResult nonReconciledResult = CompliancePublicationResult.reconciled(
+                runId,
+                "https://github.com/scimsandbox/scim-website/pull/103",
+                "https://scimsandbox.org/compliance/?run=" + runId,
+                "https://scimsandbox.org/compliance/badges/" + runId + ".svg",
+                "sha103",
+                OffsetDateTime.now(ZoneOffset.UTC),
+                null
+        );
+        ValidationRunPublication savedRetryCollision = pubService.recordPublication(
+                sampleRun, "user@example.com", alteredCollidingReq, nonReconciledResult);
+        assertThat(savedRetryCollision.getProductSlug()).isEqualTo("my-keycloak-plugin");
+
+        // 5. reservePublication validates sanitized slug ownership ("Rival_SCIM_Server", blank slug + "Rival SCIM Server",
+        //    and "a".repeat(119) + "-b" all reject with 409 CONFLICT; raw UUID slug still rejects with 400 BAD_REQUEST)
+        sampleRun.setPublication(null);
+        when(pubRepo.findById(runId)).thenReturn(Optional.empty());
+
+        List<CompliancePublishRequest> collidingReservations = List.of(
+                new CompliancePublishRequest(
+                        runId, "My Prod", "Rival_SCIM_Server", "1.0.0", "Acme", null, "MIT", false, 96, "EMERALD", 10, 10, "user@example.com", "https://scim.example.com/v2"),
+                new CompliancePublishRequest(
+                        runId, "Rival SCIM Server", "   ", "1.0.0", "Acme", null, "MIT", false, 96, "EMERALD", 10, 10, "user@example.com", "https://scim.example.com/v2"),
+                new CompliancePublishRequest(
+                        runId, "Long Prod", longOwnedSlug + "-b", "1.0.0", "Acme", null, "MIT", false, 96, "EMERALD", 10, 10, "user@example.com", "https://scim.example.com/v2")
+        );
+        for (CompliancePublishRequest badReserveReq : collidingReservations) {
+            assertThatThrownBy(() -> pubService.reservePublication(sampleRun, "user@example.com", badReserveReq))
+                    .isInstanceOf(ResponseStatusException.class)
+                    .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
+                            .isEqualTo(org.springframework.http.HttpStatus.CONFLICT));
+        }
+
+        CompliancePublishRequest uuidReserveReq = new CompliancePublishRequest(
+                runId, "UUID Prod", "11111111-1111-1111-1111-111111111111", "1.0.0", "Acme", null, "MIT", false, 96, "EMERALD", 10, 10, "user@example.com", "https://scim.example.com/v2");
+        assertThatThrownBy(() -> pubService.reservePublication(sampleRun, "user@example.com", uuidReserveReq))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
+                        .isEqualTo(org.springframework.http.HttpStatus.BAD_REQUEST));
+
+        // 6. Legacy PENDING_RESERVATION whose existing.getProductSlug() AND request.productSlug() (and reconciled entry)
+        //    all collide with another publisher safely falls back to 'product-' + runId without stranding PENDING_RESERVATION
+        pending.setProductSlug("rival-scim-server");
+        pending.setPrUrl(ValidationRunService.PENDING_RESERVATION_PR_URL);
+        pending.setPublishedAt(OffsetDateTime.now(ZoneOffset.UTC));
+        sampleRun.setPublication(pending);
+        when(pubRepo.findById(runId)).thenReturn(Optional.of(pending));
+
+        ValidationRunPublication savedDoubleCollision = pubService.recordPublication(
+                sampleRun, "user@example.com", alteredCollidingReq, collidingResult);
+        assertThat(savedDoubleCollision.getProductSlug())
+                .isEqualTo("product-" + runId.toString().toLowerCase(java.util.Locale.ROOT));
+    }
+
+    @Test
+    void validationExecutionListener_alwaysEndsTestContextEvenWhenRepositoriesThrow() {
+        ValidationRun run = new ValidationRun();
+        String secretToken = "listener-secret-token-123";
+        ValidationRunService.ValidationExecutionListener listener =
+                new ValidationRunService.ValidationExecutionListener(
+                        run, 2, progressTracker, testResultRepository, exchangeRepository, secretToken);
+
+        String runCtxId = UUID.randomUUID().toString();
+        ScimRunContext.beginRun(runCtxId);
+        try {
+            // Case 1: testResultRepository.save throws -> exception propagates AND ScimRunContext.endTest() still runs in finally
+            TestDescriptor d1 = org.mockito.Mockito.mock(TestDescriptor.class);
+            UniqueId uid1 = UniqueId.forEngine("test-engine").append("test", "save-throws");
+            when(d1.getUniqueId()).thenReturn(uid1);
+            when(d1.getType()).thenReturn(TestDescriptor.Type.TEST);
+            when(d1.getDisplayName()).thenReturn("saveThrows");
+            TestIdentifier id1 = TestIdentifier.from(d1);
+
+            when(testResultRepository.save(any(ValidationTestResult.class)))
+                    .thenThrow(new IllegalStateException("DB testResult save failure"));
+
+            listener.executionStarted(id1);
+            ScimHttpExchange ex1 = new ScimHttpExchange();
+            ex1.setMethod("GET");
+            ex1.setUrl("https://example.com/Users");
+            ex1.setResponseStatus(200);
+            ScimRunContext.record(ex1);
+            assertThatThrownBy(() -> listener.executionFinished(id1, TestExecutionResult.successful()))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("DB testResult save failure");
+
+            // Any exchange recorded after executionFinished must go to '_unassigned', NOT leak onto id1
+            ScimHttpExchange afterEx1 = new ScimHttpExchange();
+            afterEx1.setMethod("DELETE");
+            afterEx1.setUrl("https://example.com/Users/1");
+            afterEx1.setResponseStatus(204);
+            ScimRunContext.record(afterEx1);
+            assertThat(ScimRunContext.getForTest(id1.getUniqueId())).hasSize(1);
+            assertThat(ScimRunContext.getForTest("_unassigned")).hasSize(1);
+
+            // Case 2: exchangeRepository.saveAll throws -> warning logged (scrubbed), test outcome still counted,
+            //         and ScimRunContext.endTest() still runs in finally
+            org.mockito.Mockito.reset(testResultRepository, exchangeRepository);
+            when(testResultRepository.save(any(ValidationTestResult.class)))
+                    .thenAnswer(inv -> inv.getArgument(0));
+            when(exchangeRepository.saveAll(any()))
+                    .thenThrow(new IllegalStateException("Exchange insert failed carrying " + secretToken));
+
+            TestDescriptor d2 = org.mockito.Mockito.mock(TestDescriptor.class);
+            UniqueId uid2 = UniqueId.forEngine("test-engine").append("test", "exchange-save-throws");
+            when(d2.getUniqueId()).thenReturn(uid2);
+            when(d2.getType()).thenReturn(TestDescriptor.Type.TEST);
+            when(d2.getDisplayName()).thenReturn("exchangeSaveThrows");
+            TestIdentifier id2 = TestIdentifier.from(d2);
+
+            listener.executionStarted(id2);
+            ScimHttpExchange ex2 = new ScimHttpExchange();
+            ex2.setMethod("POST");
+            ex2.setUrl("https://example.com/Users");
+            ex2.setResponseStatus(201);
+            ScimRunContext.record(ex2);
+            listener.executionFinished(id2, TestExecutionResult.successful());
+
+            assertThat(listener.getTotal()).isEqualTo(1);
+            assertThat(listener.getPassed()).isEqualTo(1);
+
+            ScimHttpExchange afterEx2 = new ScimHttpExchange();
+            afterEx2.setMethod("GET");
+            afterEx2.setUrl("https://example.com/Groups");
+            afterEx2.setResponseStatus(200);
+            ScimRunContext.record(afterEx2);
+            assertThat(ScimRunContext.getForTest(id2.getUniqueId())).hasSize(1);
+            assertThat(ScimRunContext.getForTest("_unassigned")).hasSize(2);
+        } finally {
+            ScimRunContext.endRun();
+        }
+    }
+
     // ─── helpers ────────────────────────────────────────────────────────
 
     private static void restoreProperty(String key, String value) {

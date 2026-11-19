@@ -138,10 +138,10 @@ public class ValidationRunService {
     private static final Pattern SAFE_PRODUCT_SLUG_PATTERN = Pattern.compile(
             "^[a-z0-9]++(?:-[a-z0-9]++)*+$");
     private static final Pattern SAFE_HTTP_URL_SCHEME_HOST_PATTERN = Pattern.compile(
-            "^https?://[^/?#@\\s]\\S*+$",
-            Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS);
+            "^[Hh][Tt][Tt][Pp][Ss]?://[^/?#@\\s]\\S*+$",
+            Pattern.UNICODE_CHARACTER_CLASS);
     private static final Pattern HTTP_URL_USERINFO_PATTERN = Pattern.compile(
-            "^(?i)https?://[^/?#]*@");
+            "^[Hh][Tt][Tt][Pp][Ss]?://[^/?#]*@");
 
     private final ValidationRunRepository runRepository;
     private final ValidationMgmtUserRepository mgmtUserRepository;
@@ -669,6 +669,28 @@ public class ValidationRunService {
         return (start == 0 && end == value.length()) ? value : value.substring(start, end);
     }
 
+    private static boolean isAsciiAlphaEqual(char c, char lower, char upper) {
+        return c == lower || c == upper;
+    }
+
+    static String normalizeHttpSchemePrefix(String url) {
+        if (url != null && url.length() >= 7
+                && isAsciiAlphaEqual(url.charAt(0), 'h', 'H')
+                && isAsciiAlphaEqual(url.charAt(1), 't', 'T')
+                && isAsciiAlphaEqual(url.charAt(2), 't', 'T')
+                && isAsciiAlphaEqual(url.charAt(3), 'p', 'P')) {
+            if (url.length() >= 8
+                    && isAsciiAlphaEqual(url.charAt(4), 's', 'S')
+                    && url.startsWith("://", 5)) {
+                return url.startsWith("https://") ? url : "https://" + url.substring(8);
+            }
+            if (url.startsWith("://", 4)) {
+                return url.startsWith("http://") ? url : "http://" + url.substring(7);
+            }
+        }
+        return url;
+    }
+
     static String validateAndNormalizeTargetUrl(String rawBaseUrl) {
         if (rawBaseUrl == null) {
             throw new IllegalArgumentException("Invalid URL: target must not be empty");
@@ -687,7 +709,7 @@ public class ValidationRunService {
                         "Invalid URL: target URL must not contain whitespace or control characters");
             }
         }
-        return normalized;
+        return normalizeHttpSchemePrefix(normalized);
     }
 
     private static String normalizeRunName(String rawName) {
@@ -1128,7 +1150,8 @@ public class ValidationRunService {
             }
 
             try (var ignored = PinnedTargetHttpSupport.pin(resolvedTarget)) {
-                ValidatorConfiguration.useRunOverrides(trimUnicodeSpaces(form.baseUrl()), form.authToken());
+                ValidatorConfiguration.useRunOverrides(
+                        normalizeHttpSchemePrefix(trimUnicodeSpaces(form.baseUrl())), form.authToken());
                 ScimBaseSpec.resetRunState();
                 ScimRunContext.beginRun(runId.toString());
 
@@ -1576,14 +1599,10 @@ public class ValidationRunService {
         validateProductSlugOwnership(productSlug, ownerEmail, null);
     }
 
-    public void validateProductSlugOwnership(String productSlug, String ownerEmail, UUID currentRunId) {
-        if (productSlug != null && Slugifier.isUuidFormatted(productSlug)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Product slug '" + productSlug + "' cannot use a UUID format reserved for run badge identifiers.");
-        }
+    boolean isSlugOwnedByAnotherPublisher(String productSlug, String ownerEmail, UUID currentRunId) {
         if (publicationRepository == null || productSlug == null || productSlug.isBlank()
                 || ownerEmail == null || ownerEmail.isBlank()) {
-            return;
+            return false;
         }
         List<ValidationRunPublication> existing = publicationRepository
                 .findByProductSlugIgnoreCaseOrderByPublishedAtDesc(productSlug);
@@ -1596,10 +1615,21 @@ public class ValidationRunService {
                     continue;
                 }
                 if (p.getCreatedByEmail() != null && !p.getCreatedByEmail().equalsIgnoreCase(ownerEmail)) {
-                    throw new ResponseStatusException(HttpStatus.CONFLICT,
-                            "Product slug '" + productSlug + "' is already owned by another publisher.");
+                    return true;
                 }
             }
+        }
+        return false;
+    }
+
+    public void validateProductSlugOwnership(String productSlug, String ownerEmail, UUID currentRunId) {
+        if (productSlug != null && Slugifier.isUuidFormatted(productSlug)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Product slug '" + productSlug + "' cannot use a UUID format reserved for run badge identifiers.");
+        }
+        if (isSlugOwnedByAnotherPublisher(productSlug, ownerEmail, currentRunId)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Product slug '" + productSlug + "' is already owned by another publisher.");
         }
     }
 
@@ -1661,6 +1691,10 @@ public class ValidationRunService {
 
         String ownerEmail = resolveOwnerEmail(managedRun, run, actorEmail);
         validateOwnerQuotaAndSlug(ownerEmail, request.productSlug(), managedRun.getId());
+        String sanitizedSlug = sanitizeRequestedProductSlug(request.productSlug(), request.productName());
+        if (request.productSlug() == null || !sanitizedSlug.equalsIgnoreCase(request.productSlug())) {
+            validateProductSlugOwnership(sanitizedSlug, ownerEmail, managedRun.getId());
+        }
 
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
         ValidationRunPublication reservation;
@@ -1759,12 +1793,22 @@ public class ValidationRunService {
         String ownerEmail = resolveOwnerEmail(managedRun, run, actorEmail);
 
         if (existing != null && existing.isPendingReservation()) {
+            String reservedSlug = existing.getProductSlug() != null && !existing.getProductSlug().isBlank()
+                    ? sanitizeRequestedProductSlug(existing.getProductSlug(), existing.getProductName())
+                    : null;
             String fallbackReportUrl = existing.getReportUrl();
             String fallbackBadgeUrl = existing.getBadgeUrl();
             boolean originalShowSubmitter = existing.isShowSubmitter();
             populatePublicationMetadata(existing, managedRun, ownerEmail, request);
+            existing.setProductSlug(resolveNonCollidingPendingSlug(
+                    existing.getProductSlug(), reservedSlug, ownerEmail, managedRun.getId()));
             if (result != null && result.reconciledCatalogEntry() != null) {
-                applyReconciledCatalogMetadata(existing, result.reconciledCatalogEntry(), originalShowSubmitter);
+                String safeSlug = resolveSafeReconciledProductSlug(
+                        result.reconciledCatalogEntry().productSlug(),
+                        existing.getProductSlug(),
+                        ownerEmail,
+                        managedRun.getId());
+                applyReconciledCatalogMetadata(existing, result.reconciledCatalogEntry(), originalShowSubmitter, safeSlug);
             }
             existing.markNotNew();
             existing.setReportUrl(resolveValidReportUrl(result != null ? result.reportUrl() : null, fallbackReportUrl, managedRun.getId()));
@@ -1783,14 +1827,15 @@ public class ValidationRunService {
         }
         String fallbackSlug = sanitizeRequestedProductSlug(request.productSlug(), request.productName());
         String effectiveSlug = (result != null && result.reconciledCatalogEntry() != null)
-                ? sanitizeReconciledProductSlug(result.reconciledCatalogEntry().productSlug(), fallbackSlug)
+                ? resolveSafeReconciledProductSlug(
+                        result.reconciledCatalogEntry().productSlug(), fallbackSlug, ownerEmail, managedRun.getId())
                 : fallbackSlug;
         validateOwnerQuotaAndSlug(ownerEmail, effectiveSlug, managedRun.getId());
 
         ValidationRunPublication publication = new ValidationRunPublication();
         populatePublicationMetadata(publication, managedRun, ownerEmail, request);
         if (result != null && result.reconciledCatalogEntry() != null) {
-            applyReconciledCatalogMetadata(publication, result.reconciledCatalogEntry(), request.showSubmitter());
+            applyReconciledCatalogMetadata(publication, result.reconciledCatalogEntry(), request.showSubmitter(), effectiveSlug);
         }
         publication.setReportUrl(resolveValidReportUrl(result != null ? result.reportUrl() : null, null, managedRun.getId()));
         publication.setBadgeUrl(resolveValidBadgeUrl(result != null ? result.badgeUrl() : null, null, managedRun.getId()));
@@ -1807,10 +1852,11 @@ public class ValidationRunService {
     private void applyReconciledCatalogMetadata(
             ValidationRunPublication target,
             ComplianceCatalogEntry entry,
-            boolean fallbackShowSubmitter) {
+            boolean fallbackShowSubmitter,
+            String resolvedProductSlug) {
         target.setProductName(sanitizeNonBlankBounded(
                 entry.productName(), MAX_PRODUCT_NAME_CHARS, target.getProductName(), "productName"));
-        target.setProductSlug(sanitizeReconciledProductSlug(entry.productSlug(), target.getProductSlug()));
+        target.setProductSlug(resolvedProductSlug);
         target.setProductVersion(sanitizeNonBlankBounded(
                 entry.productVersion(), MAX_PRODUCT_VERSION_CHARS, target.getProductVersion(), "productVersion"));
         target.setVendorName(sanitizeOptionalBounded(
@@ -1837,6 +1883,53 @@ public class ValidationRunService {
                     entry.supportedCapabilities(), entry.totalCapabilities(),
                     target.getSupportedCapabilities(), target.getTotalCapabilities());
         }
+    }
+
+    private String resolveNonCollidingPendingSlug(
+            String requestedSlug,
+            String reservedSlug,
+            String ownerEmail,
+            UUID runId) {
+        if (!isSlugOwnedByAnotherPublisher(requestedSlug, ownerEmail, runId)) {
+            return requestedSlug;
+        }
+        if (reservedSlug != null
+                && !reservedSlug.equalsIgnoreCase(requestedSlug)
+                && !isSlugOwnedByAnotherPublisher(reservedSlug, ownerEmail, runId)) {
+            log.warn("Retry productSlug '{}' is owned by another publisher; keeping reserved slug '{}'",
+                    requestedSlug, reservedSlug);
+            return reservedSlug;
+        }
+        String perRunSlug = runId != null
+                ? "product-" + runId.toString().toLowerCase(Locale.ROOT)
+                : "scim-product";
+        log.warn("Pending reservation productSlug '{}' is owned by another publisher; falling back to '{}'",
+                requestedSlug, perRunSlug);
+        return perRunSlug;
+    }
+
+    private String resolveSafeReconciledProductSlug(
+            String rawReconciledSlug,
+            String fallbackSlug,
+            String ownerEmail,
+            UUID runId) {
+        String candidate = sanitizeReconciledProductSlug(rawReconciledSlug, fallbackSlug);
+        if (isSlugOwnedByAnotherPublisher(candidate, ownerEmail, runId)) {
+            if (fallbackSlug != null && !fallbackSlug.isBlank()
+                    && !candidate.equalsIgnoreCase(fallbackSlug)
+                    && !isSlugOwnedByAnotherPublisher(fallbackSlug, ownerEmail, runId)) {
+                log.warn("Reconciled catalog productSlug '{}' is owned by another publisher; keeping fallback slug '{}'",
+                        candidate, fallbackSlug);
+                return fallbackSlug;
+            }
+            String perRunSlug = runId != null
+                    ? "product-" + runId.toString().toLowerCase(Locale.ROOT)
+                    : "scim-product";
+            log.warn("Reconciled/fallback productSlug '{}' is owned by another publisher; falling back to '{}'",
+                    candidate, perRunSlug);
+            return perRunSlug;
+        }
+        return candidate;
     }
 
     static boolean isValidPublicationHttpUrl(String candidate) {
@@ -1906,12 +1999,21 @@ public class ValidationRunService {
 
     static String sanitizeReconciledProductSlug(String reconciledSlug, String fallbackSlug) {
         if (reconciledSlug != null) {
-            String normalized = trimUnicodeSpaces(reconciledSlug).toLowerCase(Locale.ROOT);
-            if (!normalized.isEmpty()
-                    && normalized.length() <= MAX_PRODUCT_SLUG_CHARS
-                    && SAFE_PRODUCT_SLUG_PATTERN.matcher(normalized).matches()
-                    && !Slugifier.isUuidFormatted(normalized)) {
-                return normalized;
+            String trimmed = trimUnicodeSpaces(reconciledSlug);
+            if (!trimmed.isEmpty() && !Slugifier.isUuidFormatted(trimmed)) {
+                String candidate = Slugifier.slugify(trimmed);
+                if (candidate.length() > MAX_PRODUCT_SLUG_CHARS) {
+                    int end = MAX_PRODUCT_SLUG_CHARS;
+                    while (end > 0 && candidate.charAt(end - 1) == '-') {
+                        end--;
+                    }
+                    candidate = candidate.substring(0, end);
+                }
+                if (!candidate.isEmpty()
+                        && SAFE_PRODUCT_SLUG_PATTERN.matcher(candidate).matches()
+                        && !Slugifier.isUuidFormatted(candidate)) {
+                    return candidate;
+                }
             }
             log.warn("Ignoring invalid reconciled catalog productSlug '{}' and keeping fallback slug '{}'",
                     reconciledSlug, fallbackSlug);
@@ -2233,76 +2335,85 @@ public class ValidationRunService {
                 return;
             }
 
-            String uniqueId = testIdentifier.getUniqueId();
-            OffsetDateTime startedAt = starts.getOrDefault(uniqueId, OffsetDateTime.now());
-            OffsetDateTime finishedAt = OffsetDateTime.now();
+            try {
+                String uniqueId = testIdentifier.getUniqueId();
+                OffsetDateTime startedAt = starts.getOrDefault(uniqueId, OffsetDateTime.now());
+                OffsetDateTime finishedAt = OffsetDateTime.now();
 
-            ValidationTestResult testResult = new ValidationTestResult();
-            testResult.setRun(run);
-            testResult.setTestIdentifier(truncateChars(uniqueId, MAX_TEST_IDENTIFIER_CHARS));
-            testResult.setDisplayName(truncateChars(testIdentifier.getDisplayName(), MAX_DISPLAY_NAME_CHARS));
-            testResult.setStatus(normalizeStatus(testExecutionResult.getStatus()));
-            testResult.setStartedAt(startedAt);
-            testResult.setFinishedAt(finishedAt);
+                ValidationTestResult testResult = new ValidationTestResult();
+                testResult.setRun(run);
+                testResult.setTestIdentifier(truncateChars(uniqueId, MAX_TEST_IDENTIFIER_CHARS));
+                testResult.setDisplayName(truncateChars(testIdentifier.getDisplayName(), MAX_DISPLAY_NAME_CHARS));
+                testResult.setStatus(normalizeStatus(testExecutionResult.getStatus()));
+                testResult.setStartedAt(startedAt);
+                testResult.setFinishedAt(finishedAt);
 
-            Object source = testIdentifier.getSource().orElse(null);
-            if (source instanceof MethodSource methodSource) {
-                testResult.setClassName(truncateChars(methodSource.getClassName(), MAX_CLASS_NAME_CHARS));
-                testResult.setTestName(truncateChars(methodSource.getMethodName(), MAX_TEST_NAME_CHARS));
-            }
+                Object source = testIdentifier.getSource().orElse(null);
+                if (source instanceof MethodSource methodSource) {
+                    testResult.setClassName(truncateChars(methodSource.getClassName(), MAX_CLASS_NAME_CHARS));
+                    testResult.setTestName(truncateChars(methodSource.getMethodName(), MAX_TEST_NAME_CHARS));
+                }
 
-            Throwable throwable = testExecutionResult.getThrowable().orElse(null);
-            if (throwable != null) {
-                testResult.setErrorMessage(truncateUtf8Bytes(scrubSecrets(throwable.getMessage(), authToken), MAX_DB_TEXT_BYTES));
-                testResult.setStackTrace(truncateUtf8Bytes(scrubSecrets(stackTrace(throwable), authToken), MAX_DB_TEXT_BYTES));
-            }
+                Throwable throwable = testExecutionResult.getThrowable().orElse(null);
+                if (throwable != null) {
+                    testResult.setErrorMessage(truncateUtf8Bytes(scrubSecrets(throwable.getMessage(), authToken), MAX_DB_TEXT_BYTES));
+                    testResult.setStackTrace(truncateUtf8Bytes(scrubSecrets(stackTrace(throwable), authToken), MAX_DB_TEXT_BYTES));
+                }
 
-            testResult = testResultRepository.save(testResult);
+                testResult = testResultRepository.save(testResult);
 
-            List<ScimHttpExchange> exchanges = ScimRunContext.getForTest(uniqueId);
-            List<ValidationHttpExchange> persisted = new ArrayList<>();
-            for (int i = 0; i < exchanges.size(); i++) {
-                ScimHttpExchange captured = exchanges.get(i);
-                ValidationHttpExchange exchange = new ValidationHttpExchange();
-                exchange.setRun(run);
-                exchange.setTestResult(testResult);
-                exchange.setSequenceNumber(i + 1);
-                exchange.setMethod(truncateChars(captured.getMethod(), MAX_EXCHANGE_METHOD_CHARS));
-                exchange.setUrl(truncateChars(captured.getUrl(), MAX_EXCHANGE_URL_CHARS));
-                exchange.setRequestHeaders(truncateUtf8Bytes(scrubSecrets(captured.getRequestHeaders(), authToken), MAX_DB_TEXT_BYTES));
-                exchange.setRequestBody(truncateUtf8Bytes(scrubSecrets(captured.getRequestBody(), authToken), MAX_DB_TEXT_BYTES));
-                exchange.setResponseStatus(captured.getResponseStatus());
-                exchange.setResponseHeaders(truncateUtf8Bytes(scrubSecrets(captured.getResponseHeaders(), authToken), MAX_DB_TEXT_BYTES));
-                exchange.setResponseBody(truncateUtf8Bytes(scrubSecrets(captured.getResponseBody(), authToken), MAX_DB_TEXT_BYTES));
-                exchange.setCreatedAt(captured.getCreatedAt() == null ? OffsetDateTime.now() : captured.getCreatedAt());
-                persisted.add(exchange);
-            }
-            exchangeRepository.saveAll(persisted);
+                List<ScimHttpExchange> exchanges = ScimRunContext.getForTest(uniqueId);
+                List<ValidationHttpExchange> persisted = new ArrayList<>(exchanges.size());
+                for (int i = 0; i < exchanges.size(); i++) {
+                    ScimHttpExchange captured = exchanges.get(i);
+                    ValidationHttpExchange exchange = new ValidationHttpExchange();
+                    exchange.setRun(run);
+                    exchange.setTestResult(testResult);
+                    exchange.setSequenceNumber(i + 1);
+                    exchange.setMethod(truncateChars(captured.getMethod(), MAX_EXCHANGE_METHOD_CHARS));
+                    exchange.setUrl(truncateChars(captured.getUrl(), MAX_EXCHANGE_URL_CHARS));
+                    exchange.setRequestHeaders(truncateUtf8Bytes(scrubSecrets(captured.getRequestHeaders(), authToken), MAX_DB_TEXT_BYTES));
+                    exchange.setRequestBody(truncateUtf8Bytes(scrubSecrets(captured.getRequestBody(), authToken), MAX_DB_TEXT_BYTES));
+                    exchange.setResponseStatus(captured.getResponseStatus());
+                    exchange.setResponseHeaders(truncateUtf8Bytes(scrubSecrets(captured.getResponseHeaders(), authToken), MAX_DB_TEXT_BYTES));
+                    exchange.setResponseBody(truncateUtf8Bytes(scrubSecrets(captured.getResponseBody(), authToken), MAX_DB_TEXT_BYTES));
+                    exchange.setCreatedAt(captured.getCreatedAt() == null ? OffsetDateTime.now() : captured.getCreatedAt());
+                    persisted.add(exchange);
+                }
+                try {
+                    exchangeRepository.saveAll(persisted);
+                } catch (RuntimeException ex) {
+                    String safeMsg = scrubSecrets(
+                            ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName(), authToken);
+                    log.warn("Failed to persist HTTP exchanges for test {}: {}", uniqueId, safeMsg);
+                }
 
-            total++;
-            if ("SUCCESS".equals(testResult.getStatus())) {
-                passed++;
-            } else if ("ABORTED".equals(testResult.getStatus())) {
-                aborted++;
-            } else {
-                failed++;
-            }
-            ScimRunContext.endTest();
+                total++;
+                if ("SUCCESS".equals(testResult.getStatus())) {
+                    passed++;
+                } else if ("ABORTED".equals(testResult.getStatus())) {
+                    aborted++;
+                } else {
+                    failed++;
+                }
 
-            int effectiveTotal = Math.max(plannedTotal, total);
-            String displayName = testIdentifier.getDisplayName();
-            String specName = resolveSpecName(testIdentifier);
+                int effectiveTotal = Math.max(plannedTotal, total);
+                String displayName = testIdentifier.getDisplayName();
+                String specName = resolveSpecName(testIdentifier);
 
-            if (progressTracker != null && run.getId() != null) {
-                progressTracker.updateProgress(
-                        run.getId(),
-                        total,
-                        effectiveTotal,
-                        passed,
-                        failed,
-                        specName,
-                        displayName
-                );
+                if (progressTracker != null && run.getId() != null) {
+                    progressTracker.updateProgress(
+                            run.getId(),
+                            total,
+                            effectiveTotal,
+                            passed,
+                            failed,
+                            specName,
+                            displayName
+                    );
+                }
+            } finally {
+                ScimRunContext.endTest();
             }
         }
 
