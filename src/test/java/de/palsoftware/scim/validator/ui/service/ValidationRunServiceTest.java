@@ -1229,7 +1229,7 @@ class ValidationRunServiceTest {
 
         ValidationRunService pubService = new ValidationRunService(
                 runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, pubRepo, progressTracker);
-        pubService.setPublicBaseUrl("https://scimsandbox.org");
+        pubService.setPublicBaseUrl("https://scimsandbox.net");
 
         CompliancePublishRequest validRequest = new CompliancePublishRequest(
                 runId,
@@ -1261,8 +1261,8 @@ class ValidationRunServiceTest {
         pending.setCoreScore(94);
         pending.setSupportedCapabilities(9);
         pending.setTotalCapabilities(10);
-        pending.setReportUrl("https://scimsandbox.org/compliance/?run=" + runId);
-        pending.setBadgeUrl("https://scimsandbox.org/compliance/badges/" + runId + ".svg");
+        pending.setReportUrl("https://scimsandbox.net/compliance/?run=" + runId);
+        pending.setBadgeUrl("https://scimsandbox.net/compliance/badges/" + runId + ".svg");
         pending.setPrUrl(ValidationRunService.PENDING_RESERVATION_PR_URL);
         pending.setPublishedAt(OffsetDateTime.now(ZoneOffset.UTC));
         when(pubRepo.findById(runId)).thenReturn(Optional.of(pending));
@@ -1287,7 +1287,7 @@ class ValidationRunServiceTest {
                 runId,
                 "https://github.com/scimsandbox/scim-website/blob/main/bad path with spaces.json",
                 "javascript:alert(1)",
-                "https://user:secret@scimsandbox.org/badge.svg",
+                "https://user:secret@scimsandbox.net/badge.svg",
                 "reconciled",
                 OffsetDateTime.now(ZoneOffset.UTC),
                 malformedEntry
@@ -1307,8 +1307,8 @@ class ValidationRunServiceTest {
         assertThat(savedFromPending.getSupportedCapabilities()).isEqualTo(9);
         assertThat(savedFromPending.getTotalCapabilities()).isEqualTo(10);
         assertThat(savedFromPending.getPrUrl()).isNull();
-        assertThat(savedFromPending.getReportUrl()).isEqualTo("https://scimsandbox.org/compliance/?run=" + runId);
-        assertThat(savedFromPending.getBadgeUrl()).isEqualTo("https://scimsandbox.org/compliance/badges/" + runId + ".svg");
+        assertThat(savedFromPending.getReportUrl()).isEqualTo("https://scimsandbox.net/compliance/?run=" + runId);
+        assertThat(savedFromPending.getBadgeUrl()).isEqualTo("https://scimsandbox.net/compliance/badges/" + runId + ".svg");
 
         // Case 2: No prior reservation + blank reconciled projectUrl clears projectUrl to null,
         // mixed-case trimmed slug normalizes cleanly, and mixed-case HTTPS URLs are accepted
@@ -1334,8 +1334,8 @@ class ValidationRunServiceTest {
         CompliancePublicationResult cleanMixedResult = CompliancePublicationResult.reconciled(
                 runId,
                 "HTTPS://github.com/scimsandbox/scim-website/pull/99",
-                "HTTPS://scimsandbox.org/compliance/?run=" + runId,
-                "Http://scimsandbox.org/compliance/badges/" + runId + ".svg",
+                "HTTPS://scimsandbox.net/compliance/?run=" + runId,
+                "Http://scimsandbox.net/compliance/badges/" + runId + ".svg",
                 "sha99",
                 OffsetDateTime.now(ZoneOffset.UTC),
                 blankUrlAndMixedSlugEntry
@@ -1354,8 +1354,8 @@ class ValidationRunServiceTest {
         assertThat(savedFresh.getSupportedCapabilities()).isEqualTo(10);
         assertThat(savedFresh.getTotalCapabilities()).isEqualTo(10);
         assertThat(savedFresh.getPrUrl()).isEqualTo("HTTPS://github.com/scimsandbox/scim-website/pull/99");
-        assertThat(savedFresh.getReportUrl()).isEqualTo("HTTPS://scimsandbox.org/compliance/?run=" + runId);
-        assertThat(savedFresh.getBadgeUrl()).isEqualTo("Http://scimsandbox.org/compliance/badges/" + runId + ".svg");
+        assertThat(savedFresh.getReportUrl()).isEqualTo("HTTPS://scimsandbox.net/compliance/?run=" + runId);
+        assertThat(savedFresh.getBadgeUrl()).isEqualTo("Http://scimsandbox.net/compliance/badges/" + runId + ".svg");
 
         assertThat(ValidationRunService.sanitizePrUrl("PENDING_RESERVATION")).isNull();
         assertThat(ValidationRunService.sanitizePrUrl("   ")).isNull();
@@ -1372,8 +1372,8 @@ class ValidationRunServiceTest {
                 runId, null, null, null, "sha0", null, null);
         ValidationRunPublication savedDefaults = pubService.recordPublication(
                 sampleRun, "user@example.com", validRequest, nullDatesAndUrls);
-        assertThat(savedDefaults.getReportUrl()).isEqualTo("https://scimsandbox.org/compliance/?run=" + runId);
-        assertThat(savedDefaults.getBadgeUrl()).isEqualTo("https://scimsandbox.org/compliance/badges/" + runId + ".svg");
+        assertThat(savedDefaults.getReportUrl()).isEqualTo("https://invalid-compliance-base.invalid/compliance/?run=" + runId);
+        assertThat(savedDefaults.getBadgeUrl()).isEqualTo("https://invalid-compliance-base.invalid/compliance/badges/" + runId + ".svg");
         assertThat(savedDefaults.getPublishedAt()).isNotNull();
     }
 
@@ -1428,7 +1428,7 @@ class ValidationRunServiceTest {
 
         ValidationRunService pubService = new ValidationRunService(
                 runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, pubRepo, progressTracker);
-        pubService.setPublicBaseUrl("https://scimsandbox.org");
+        pubService.setPublicBaseUrl("https://scimsandbox.net");
 
         CompliancePublishRequest requestWithNbspPadding = new CompliancePublishRequest(
                 runId,
@@ -1467,8 +1467,8 @@ class ValidationRunServiceTest {
         CompliancePublicationResult internalNbspResult = CompliancePublicationResult.reconciled(
                 runId,
                 "https://github.com/scimsandbox/scim-website/pull/\u202F42",
-                "https://scimsandbox.org/compliance/?run=\u2007" + runId,
-                "https://scimsandbox.org/compliance/badges/\uFEFF" + runId + ".svg",
+                "https://scimsandbox.net/compliance/?run=\u2007" + runId,
+                "https://scimsandbox.net/compliance/badges/\uFEFF" + runId + ".svg",
                 "sha-nbsp",
                 OffsetDateTime.now(ZoneOffset.UTC),
                 internalNbspEntry
@@ -1482,8 +1482,8 @@ class ValidationRunServiceTest {
         assertThat(savedFallback.getProductSlug()).isEqualTo("nbsp-product");
         assertThat(savedFallback.getProjectUrl()).isEqualTo("https://github.com/acme/nbsp-fallback");
         assertThat(savedFallback.getPrUrl()).isNull();
-        assertThat(savedFallback.getReportUrl()).isEqualTo("https://scimsandbox.org/compliance/?run=" + runId);
-        assertThat(savedFallback.getBadgeUrl()).isEqualTo("https://scimsandbox.org/compliance/badges/" + runId + ".svg");
+        assertThat(savedFallback.getReportUrl()).isEqualTo("https://scimsandbox.net/compliance/?run=" + runId);
+        assertThat(savedFallback.getBadgeUrl()).isEqualTo("https://scimsandbox.net/compliance/badges/" + runId + ".svg");
 
         // Leading/trailing NBSP/BOM on reconciled URLs -> stripped cleanly, and NBSP-only projectUrl clears to null
         ComplianceCatalogEntry nbspOnlyProjectEntry = new ComplianceCatalogEntry(
@@ -1505,8 +1505,8 @@ class ValidationRunServiceTest {
         CompliancePublicationResult paddedValidResult = CompliancePublicationResult.reconciled(
                 runId,
                 "\u00A0https://github.com/scimsandbox/scim-website/pull/43\u202F",
-                "\uFEFFhttps://scimsandbox.org/compliance/?run=" + runId + "\u2007",
-                "\u0085https://scimsandbox.org/compliance/badges/" + runId + ".svg\u00A0",
+                "\uFEFFhttps://scimsandbox.net/compliance/?run=" + runId + "\u2007",
+                "\u0085https://scimsandbox.net/compliance/badges/" + runId + ".svg\u00A0",
                 "sha-padded",
                 OffsetDateTime.now(ZoneOffset.UTC),
                 nbspOnlyProjectEntry
@@ -1519,8 +1519,8 @@ class ValidationRunServiceTest {
 
         assertThat(savedPadded.getProjectUrl()).isNull();
         assertThat(savedPadded.getPrUrl()).isEqualTo("https://github.com/scimsandbox/scim-website/pull/43");
-        assertThat(savedPadded.getReportUrl()).isEqualTo("https://scimsandbox.org/compliance/?run=" + runId);
-        assertThat(savedPadded.getBadgeUrl()).isEqualTo("https://scimsandbox.org/compliance/badges/" + runId + ".svg");
+        assertThat(savedPadded.getReportUrl()).isEqualTo("https://scimsandbox.net/compliance/?run=" + runId);
+        assertThat(savedPadded.getBadgeUrl()).isEqualTo("https://scimsandbox.net/compliance/badges/" + runId + ".svg");
     }
 
     @Test
@@ -1623,7 +1623,7 @@ class ValidationRunServiceTest {
         assertThat(ValidationRunService.sanitizeRequestedProductSlug(null, "   "))
                 .isEqualTo("scim-product");
 
-        // 2. Misconfigured publicBaseUrl (embedded userinfo or >500 chars) falls back cleanly to scimsandbox.org
+        // 2. Misconfigured publicBaseUrl (embedded userinfo or >500 chars) falls back cleanly to .invalid placeholder
         ValidationRunPublicationRepository pubRepo = org.mockito.Mockito.mock(ValidationRunPublicationRepository.class);
         when(pubRepo.save(any(ValidationRunPublication.class))).thenAnswer(inv -> inv.getArgument(0));
         when(runRepository.findById(runId)).thenReturn(Optional.of(sampleRun));
@@ -1655,8 +1655,8 @@ class ValidationRunServiceTest {
         when(pubRepo.findById(runId)).thenReturn(Optional.empty());
         ValidationRunPublication reserved = pubService.reservePublication(sampleRun, "user@example.com", edgeSlugRequest);
         assertThat(reserved.getProductSlug()).isEqualTo("a".repeat(119));
-        assertThat(reserved.getReportUrl()).isEqualTo("https://scimsandbox.org/compliance/?run=" + runId);
-        assertThat(reserved.getBadgeUrl()).isEqualTo("https://scimsandbox.org/compliance/badges/" + runId + ".svg");
+        assertThat(reserved.getReportUrl()).isEqualTo("https://invalid-compliance-base.invalid/compliance/?run=" + runId);
+        assertThat(reserved.getBadgeUrl()).isEqualTo("https://invalid-compliance-base.invalid/compliance/badges/" + runId + ".svg");
 
         // 2b. Overlong publicBaseUrl (> 500 chars when path appended) during recordPublication
         pubService.setPublicBaseUrl("https://scimsandbox.net/" + "p".repeat(480));
@@ -1667,8 +1667,8 @@ class ValidationRunServiceTest {
         ValidationRunPublication published = pubService.recordPublication(
                 sampleRun, "user@example.com", edgeSlugRequest, emptyUrlResult);
         assertThat(published.getProductSlug()).isEqualTo("a".repeat(119));
-        assertThat(published.getReportUrl()).isEqualTo("https://scimsandbox.org/compliance/?run=" + runId);
-        assertThat(published.getBadgeUrl()).isEqualTo("https://scimsandbox.org/compliance/badges/" + runId + ".svg");
+        assertThat(published.getReportUrl()).isEqualTo("https://invalid-compliance-base.invalid/compliance/?run=" + runId);
+        assertThat(published.getBadgeUrl()).isEqualTo("https://invalid-compliance-base.invalid/compliance/badges/" + runId + ".svg");
     }
 
     @Test
@@ -2567,7 +2567,7 @@ class ValidationRunServiceTest {
 
         ValidationRunService pubService = new ValidationRunService(
                 runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, pubRepo, progressTracker);
-        pubService.setPublicBaseUrl("https://scimsandbox.org");
+        pubService.setPublicBaseUrl("https://scimsandbox.net");
 
         CompliancePublishRequest validRequest = new CompliancePublishRequest(
                 runId,
@@ -2606,8 +2606,8 @@ class ValidationRunServiceTest {
         CompliancePublicationResult underscoreResult = CompliancePublicationResult.reconciled(
                 runId,
                 "https://github.com/scimsandbox/scim-website/pull/101",
-                "https://scimsandbox.org/compliance/?run=" + runId,
-                "https://scimsandbox.org/compliance/badges/" + runId + ".svg",
+                "https://scimsandbox.net/compliance/?run=" + runId,
+                "https://scimsandbox.net/compliance/badges/" + runId + ".svg",
                 "sha101",
                 OffsetDateTime.now(ZoneOffset.UTC),
                 underscoreEntry
@@ -2631,8 +2631,8 @@ class ValidationRunServiceTest {
         pending.setCoreScore(96);
         pending.setSupportedCapabilities(10);
         pending.setTotalCapabilities(10);
-        pending.setReportUrl("https://scimsandbox.org/compliance/?run=" + runId);
-        pending.setBadgeUrl("https://scimsandbox.org/compliance/badges/" + runId + ".svg");
+        pending.setReportUrl("https://scimsandbox.net/compliance/?run=" + runId);
+        pending.setBadgeUrl("https://scimsandbox.net/compliance/badges/" + runId + ".svg");
         pending.setPrUrl(ValidationRunService.PENDING_RESERVATION_PR_URL);
         pending.setPublishedAt(OffsetDateTime.now(ZoneOffset.UTC));
         sampleRun.setPublication(pending);
@@ -2657,8 +2657,8 @@ class ValidationRunServiceTest {
         CompliancePublicationResult collidingResult = CompliancePublicationResult.reconciled(
                 runId,
                 "https://github.com/scimsandbox/scim-website/pull/102",
-                "https://scimsandbox.org/compliance/?run=" + runId,
-                "https://scimsandbox.org/compliance/badges/" + runId + ".svg",
+                "https://scimsandbox.net/compliance/?run=" + runId,
+                "https://scimsandbox.net/compliance/badges/" + runId + ".svg",
                 "sha102",
                 OffsetDateTime.now(ZoneOffset.UTC),
                 collidingEntry
@@ -2699,8 +2699,8 @@ class ValidationRunServiceTest {
         CompliancePublicationResult nonReconciledResult = CompliancePublicationResult.reconciled(
                 runId,
                 "https://github.com/scimsandbox/scim-website/pull/103",
-                "https://scimsandbox.org/compliance/?run=" + runId,
-                "https://scimsandbox.org/compliance/badges/" + runId + ".svg",
+                "https://scimsandbox.net/compliance/?run=" + runId,
+                "https://scimsandbox.net/compliance/badges/" + runId + ".svg",
                 "sha103",
                 OffsetDateTime.now(ZoneOffset.UTC),
                 null

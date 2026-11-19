@@ -114,7 +114,7 @@ public class ValidationRunService {
     static final String MSG_STARTUP_ORPHAN_ABORT = "Validation run interrupted by server restart";
     static final String MSG_STALE_RUN_TIMEOUT = "Validation run timed out";
     static final String TRUNCATED_SUFFIX = "...[truncated]";
-    static final String DEFAULT_PUBLIC_COMPLIANCE_BASE_URL = "https://scimsandbox.org";
+    static final String DEFAULT_PUBLIC_COMPLIANCE_BASE_URL = "https://invalid-compliance-base.invalid";
     private static final int MAX_RUN_NAME_CHARS = 200;
     private static final int MAX_TARGET_URL_CHARS = 500;
     private static final int MAX_TEST_IDENTIFIER_CHARS = 500;
@@ -2078,7 +2078,7 @@ public class ValidationRunService {
             try {
                 return getEffectivePublicBaseUrl();
             } catch (RuntimeException ignored) {
-                // Fall back to default public compliance URL if unconfigured/invalid in unit tests
+                // Fall back to .invalid placeholder if unconfigured/invalid
             }
         }
         return DEFAULT_PUBLIC_COMPLIANCE_BASE_URL;
@@ -2097,7 +2097,7 @@ public class ValidationRunService {
         if (isValidPublicationHttpUrl(constructed)) {
             return constructed;
         }
-        log.warn("Configured publicBaseUrl produced invalid reportUrl (length={}); falling back to default domain",
+        log.warn("Configured publicBaseUrl produced invalid reportUrl (length={}); falling back to .invalid placeholder",
                 constructed.length());
         return DEFAULT_PUBLIC_COMPLIANCE_BASE_URL + "/compliance/?run=" + runId;
     }
@@ -2115,7 +2115,7 @@ public class ValidationRunService {
         if (isValidPublicationHttpUrl(constructed)) {
             return constructed;
         }
-        log.warn("Configured publicBaseUrl produced invalid badgeUrl (length={}); falling back to default domain",
+        log.warn("Configured publicBaseUrl produced invalid badgeUrl (length={}); falling back to .invalid placeholder",
                 constructed.length());
         return DEFAULT_PUBLIC_COMPLIANCE_BASE_URL + "/compliance/badges/" + runId + ".svg";
     }
