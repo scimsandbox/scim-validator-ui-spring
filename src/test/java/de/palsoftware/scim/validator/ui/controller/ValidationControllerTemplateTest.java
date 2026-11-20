@@ -354,4 +354,21 @@ class ValidationControllerTemplateTest {
                                 .contains("var hashStr = window.location.hash.substring(1);")
                                 .contains("var hashParams = new URLSearchParams(hashStr);");
         }
+
+        @Test
+        void dockNewsScript_isServedSelfContainedAndSanitizesHrefAndFeedUrls() throws Exception {
+                String dockNewsJs = mockMvc.perform(get("/validator-ui/js/dock-news.js")
+                                .contextPath("/validator-ui"))
+                                .andExpect(status().isOk())
+                                .andReturn().getResponse().getContentAsString();
+
+                org.assertj.core.api.Assertions.assertThat(dockNewsJs)
+                                .as("dock-news.js must stay self-contained without external helper dependencies")
+                                .contains("Keep this file identical in scim-server-ui-spring and scim-validator-ui-spring.")
+                                .contains("function sanitizeHttpUrl(rawUrl)")
+                                .contains("if (rawHref && !sanitizeHttpUrl(rawHref))")
+                                .contains("btn.removeAttribute('href');")
+                                .contains("const feedUrl = sanitizeHttpUrl(btn.getAttribute('data-news-feed-url'));")
+                                .doesNotContain("api-client.js");
+        }
 }
