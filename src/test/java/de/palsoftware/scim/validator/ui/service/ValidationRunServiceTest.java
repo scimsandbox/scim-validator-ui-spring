@@ -1,21 +1,32 @@
 package de.palsoftware.scim.validator.ui.service;
 
+import de.palsoftware.scim.validator.base.ScimHttpExchange;
+import de.palsoftware.scim.validator.base.ScimRunContext;
+import de.palsoftware.scim.validator.ui.dto.ValidationRunForm;
 import de.palsoftware.scim.validator.ui.dto.ValidationRunView;
 import de.palsoftware.scim.validator.ui.dto.ValidationTestResultView;
 import de.palsoftware.scim.validator.ui.model.ValidationHttpExchange;
 import de.palsoftware.scim.validator.ui.model.ValidationMgmtUser;
 import de.palsoftware.scim.validator.ui.model.ValidationRun;
+import de.palsoftware.scim.validator.ui.model.ValidationRunPublication;
 import de.palsoftware.scim.validator.ui.model.ValidationTestResult;
+import de.palsoftware.scim.validator.ui.model.spec.ColourGradientInfo;
+import de.palsoftware.scim.validator.ui.model.spec.ComplianceCatalogEntry;
+import de.palsoftware.scim.validator.ui.model.spec.CompliancePublicationResult;
+import de.palsoftware.scim.validator.ui.model.spec.CompliancePublishRequest;
 import de.palsoftware.scim.validator.ui.repo.ValidationMgmtUserRepository;
 import de.palsoftware.scim.validator.ui.repo.ValidationHttpExchangeRepository;
+import de.palsoftware.scim.validator.ui.repo.ValidationRunPublicationRepository;
 import de.palsoftware.scim.validator.ui.repo.ValidationRunRepository;
 import de.palsoftware.scim.validator.ui.repo.ValidationTestResultRepository;
+import de.palsoftware.scim.validator.ui.security.TargetUrlPolicy;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.platform.engine.TestDescriptor;
 import org.junit.platform.engine.TestExecutionResult;
 import org.junit.platform.engine.UniqueId;
+import org.junit.platform.engine.support.descriptor.MethodSource;
 import org.junit.platform.launcher.LauncherDiscoveryRequest;
 import org.junit.platform.launcher.TestIdentifier;
 import org.mockito.ArgumentCaptor;
@@ -26,11 +37,14 @@ import org.springframework.data.domain.Sort;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -461,9 +475,11 @@ class ValidationRunServiceTest {
                 listener.executionSkipped(id2, "Optional capability not supported");
             }
         };
+        partialRunService.setTargetUrlPolicy(new TargetUrlPolicy(
+                false, host -> new java.net.InetAddress[]{java.net.InetAddress.getByName("93.184.216.34")}));
 
-        de.palsoftware.scim.validator.ui.dto.ValidationRunForm form =
-                new de.palsoftware.scim.validator.ui.dto.ValidationRunForm("Partial Run", "https://example.com/scim/v2", "token");
+        ValidationRunForm form =
+                new ValidationRunForm("Partial Run", "https://example.com/scim/v2", "token");
         ValidationRunService.ExecutionResult result = partialRunService.executeRun(form, "user@example.com");
 
         assertThat(result.getRun().getStatus()).isEqualTo("PARTIAL");
@@ -491,6 +507,2326 @@ class ValidationRunServiceTest {
 
         assertThat(reloadedRun.getSkippedTests()).isEqualTo(2);
         assertThat(reloadedRun.getAbortedTests()).isEqualTo(1);
+    }
+
+    @Test
+    void scrubSecrets_redactsRawBearerTokenAndAuthorizationHeadersFromPersistedArtifacts() {
+        String rawSecret = "super-secret-scim-bearer-9876543210";
+        String input = "Request failed with Authorization: Bearer " + rawSecret
+                + " and echoed token=" + rawSecret + " plus Bearer anotherLongBearerToken12345";
+
+        String scrubbed = ValidationRunService.scrubSecrets(input, rawSecret);
+
+        assertThat(scrubbed)
+                .doesNotContain(rawSecret)
+                .doesNotContain("anotherLongBearerToken12345")
+                .contains("[REDACTED]");
+
+        // Short tokens (< 8 chars) must NOT corrupt non-secret JSON fields, while still redacting Authorization headers
+        String shortJsonAndHeaders = "Authorization: Bearer test\r\n"
+                + "{\"Authorization\":\"Bearer test\",\"userName\":\"test\",\"active\":true}\r\n"
+                + "Authorization: Basic x";
+        String scrubbedShort = ValidationRunService.scrubSecrets(shortJsonAndHeaders, "test");
+        assertThat(scrubbedShort)
+                .contains("Authorization: Bearer [REDACTED]")
+                .contains("\"Authorization\":\"Bearer [REDACTED]\"")
+                .contains("Authorization: Basic [REDACTED]")
+                .contains("\"userName\":\"test\"");
+    }
+
+    @Test
+    void executeRunAsync_whenBoundedExecutorQueueFull_rejectsWith429BeforePruningOrSaving() throws Exception {
+        java.util.concurrent.CountDownLatch blockWorker = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.ThreadPoolExecutor tinyExecutor = ValidationRunService.createBoundedRunExecutor(1, 1);
+        try {
+            // Occupy the single worker thread and single queue slot
+            tinyExecutor.submit(() -> {
+                try {
+                    blockWorker.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+            tinyExecutor.submit(() -> {});
+
+            ValidationRunService boundedService = new ValidationRunService(
+                    runRepository, mgmtUserRepository, testResultRepository, exchangeRepository,
+                    progressTracker, tinyExecutor) {
+                @Override
+                int discoverTestCount(String baseUrl, String authToken) {
+                    throw new AssertionError("discoverTestCount must not be invoked when executor rejects");
+                }
+            };
+            boundedService.setTargetUrlPolicy(new TargetUrlPolicy(
+                    false, host -> new java.net.InetAddress[]{java.net.InetAddress.getByName("93.184.216.34")}));
+            boundedService.setMaxActiveRunsPerUser(5);
+
+            ValidationRunForm form = new ValidationRunForm("Overflow Run", "https://example.com/scim/v2", "tok");
+            assertThatThrownBy(() -> boundedService.executeRunAsync(form, "user@example.com"))
+                    .isInstanceOf(ResponseStatusException.class)
+                    .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
+                            .isEqualTo(org.springframework.http.HttpStatus.TOO_MANY_REQUESTS));
+
+            verify(runRepository, org.mockito.Mockito.never()).delete(any(ValidationRun.class));
+            verify(runRepository, org.mockito.Mockito.never()).deleteById(any(UUID.class));
+            verify(runRepository, org.mockito.Mockito.never()).saveAndFlush(any(ValidationRun.class));
+        } finally {
+            blockWorker.countDown();
+            tinyExecutor.shutdownNow();
+        }
+    }
+
+    @Test
+    void executeRun_whenGlobalConcurrentLimitExceeded_rejectsWith429WithoutPruningOrSaving() throws Exception {
+        ValidationMgmtUser owner = new ValidationMgmtUser("user1@example.com", OffsetDateTime.now());
+        when(mgmtUserRepository.findById("user1@example.com")).thenReturn(Optional.of(owner));
+        when(runRepository.save(any(ValidationRun.class))).thenAnswer(inv -> {
+            ValidationRun r = inv.getArgument(0);
+            if (r.getId() == null) {
+                var f = ValidationRun.class.getDeclaredField("id");
+                f.setAccessible(true);
+                f.set(r, runId);
+            }
+            return r;
+        });
+
+        java.util.concurrent.CountDownLatch inFlight = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+
+        ValidationRunService syncLimitedService = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, progressTracker, null) {
+            @Override
+            int discoverTestCount(String baseUrl, String authToken) {
+                return 1;
+            }
+
+            @Override
+            void executeLauncher(org.junit.platform.launcher.Launcher launcher,
+                                 LauncherDiscoveryRequest request,
+                                 org.junit.platform.launcher.TestExecutionListener listener) {
+                inFlight.countDown();
+                try {
+                    release.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        };
+        syncLimitedService.setTargetUrlPolicy(new TargetUrlPolicy(
+                false, host -> new java.net.InetAddress[]{java.net.InetAddress.getByName("93.184.216.34")}));
+        syncLimitedService.setMaxConcurrentRuns(1);
+        syncLimitedService.setMaxActiveRunsPerUser(5);
+
+        java.util.concurrent.ExecutorService callerPool = java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            ValidationRunForm form1 = new ValidationRunForm("Sync 1", "https://example.com/scim/v2", "tok12345");
+            java.util.concurrent.Future<ValidationRunService.ExecutionResult> firstCall =
+                    callerPool.submit(() -> syncLimitedService.executeRun(form1, "user1@example.com"));
+
+            assertThat(inFlight.await(3, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+
+            ValidationRunForm form2 = new ValidationRunForm("Sync 2", "https://example.com/scim/v2", "tok12345");
+            assertThatThrownBy(() -> syncLimitedService.executeRun(form2, "user2@example.com"))
+                    .isInstanceOf(ResponseStatusException.class)
+                    .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
+                            .isEqualTo(org.springframework.http.HttpStatus.TOO_MANY_REQUESTS));
+
+            verify(runRepository, org.mockito.Mockito.never()).delete(any(ValidationRun.class));
+
+            release.countDown();
+            assertThat(firstCall.get(3, java.util.concurrent.TimeUnit.SECONDS)).isNotNull();
+        } finally {
+            release.countDown();
+            callerPool.shutdownNow();
+            syncLimitedService.shutdownExecutor();
+        }
+    }
+
+    @Test
+    void executeRunAndAsync_resolveDnsOncePerRunAndPinTargetDuringExecution() throws Exception {
+        ValidationMgmtUser owner = new ValidationMgmtUser("user@example.com", OffsetDateTime.now());
+        when(mgmtUserRepository.findById("user@example.com")).thenReturn(Optional.of(owner));
+        when(runRepository.save(any(ValidationRun.class))).thenAnswer(inv -> {
+            ValidationRun r = inv.getArgument(0);
+            if (r.getId() == null) {
+                var f = ValidationRun.class.getDeclaredField("id");
+                f.setAccessible(true);
+                f.set(r, runId);
+            }
+            return r;
+        });
+        when(runRepository.saveAndFlush(any(ValidationRun.class))).thenAnswer(inv -> {
+            ValidationRun r = inv.getArgument(0);
+            var f = ValidationRun.class.getDeclaredField("id");
+            f.setAccessible(true);
+            f.set(r, runId);
+            return r;
+        });
+        when(runRepository.findById(runId)).thenReturn(Optional.of(sampleRun));
+
+        java.util.concurrent.atomic.AtomicInteger dnsLookups = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicReference<TargetUrlPolicy.ResolvedTarget> pinnedInDiscover =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicReference<TargetUrlPolicy.ResolvedTarget> pinnedInExecute =
+                new java.util.concurrent.atomic.AtomicReference<>();
+
+        TargetUrlPolicy countingPolicy = new TargetUrlPolicy(false, host -> {
+            dnsLookups.incrementAndGet();
+            return new java.net.InetAddress[]{java.net.InetAddress.getByName("93.184.216.34")};
+        });
+
+        ValidationRunService pinnedService = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, progressTracker, null) {
+            @Override
+            int discoverTestCount(String baseUrl, String authToken) {
+                pinnedInDiscover.set(de.palsoftware.scim.validator.ui.security.PinnedTargetHttpSupport.currentPinnedTarget());
+                return 1;
+            }
+
+            @Override
+            void executeLauncher(org.junit.platform.launcher.Launcher launcher,
+                                 LauncherDiscoveryRequest request,
+                                 org.junit.platform.launcher.TestExecutionListener listener) {
+                pinnedInExecute.set(de.palsoftware.scim.validator.ui.security.PinnedTargetHttpSupport.currentPinnedTarget());
+            }
+        };
+        pinnedService.setTargetUrlPolicy(countingPolicy);
+        try {
+            ValidationRunForm form = new ValidationRunForm("Pinned Run", "https://example.com/scim/v2", "tok12345");
+            pinnedService.executeRun(form, "user@example.com");
+
+            assertThat(dnsLookups.get()).isEqualTo(1);
+            assertThat(pinnedInDiscover.get()).isNotNull();
+            assertThat(pinnedInExecute.get()).isSameAs(pinnedInDiscover.get());
+            assertThat(de.palsoftware.scim.validator.ui.security.PinnedTargetHttpSupport.currentPinnedTarget()).isNull();
+
+            // Async path also resolves DNS exactly once across foreground + background worker
+            dnsLookups.set(0);
+            pinnedInDiscover.set(null);
+            pinnedInExecute.set(null);
+
+            ValidationRun asyncSample = sampleRun;
+            java.util.concurrent.CountDownLatch bgDone = new java.util.concurrent.CountDownLatch(1);
+            ValidationRunService asyncPinnedService = new ValidationRunService(
+                    runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, progressTracker, null) {
+                @Override
+                int discoverTestCount(String baseUrl, String authToken) {
+                    pinnedInDiscover.set(de.palsoftware.scim.validator.ui.security.PinnedTargetHttpSupport.currentPinnedTarget());
+                    return 1;
+                }
+
+                @Override
+                void executeLauncher(org.junit.platform.launcher.Launcher launcher,
+                                     LauncherDiscoveryRequest request,
+                                     org.junit.platform.launcher.TestExecutionListener listener) {
+                    pinnedInExecute.set(de.palsoftware.scim.validator.ui.security.PinnedTargetHttpSupport.currentPinnedTarget());
+                    bgDone.countDown();
+                }
+            };
+            asyncPinnedService.setTargetUrlPolicy(countingPolicy);
+            try {
+                assertThat(asyncSample).isNotNull();
+                asyncPinnedService.executeRunAsync(form, "user@example.com");
+                assertThat(bgDone.await(3, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                assertThat(dnsLookups.get()).isEqualTo(1);
+                assertThat(pinnedInDiscover.get()).isNotNull();
+                assertThat(pinnedInExecute.get()).isSameAs(pinnedInDiscover.get());
+            } finally {
+                asyncPinnedService.shutdownExecutor();
+            }
+        } finally {
+            pinnedService.shutdownExecutor();
+        }
+    }
+
+    @Test
+    void executeRunAsync_whenPerUserActiveLimitExceeded_rejectsWith429UntilCompleted() throws Exception {
+        ValidationMgmtUser owner = new ValidationMgmtUser("user@example.com", OffsetDateTime.now());
+        when(mgmtUserRepository.findById("user@example.com")).thenReturn(Optional.of(owner));
+        when(runRepository.saveAndFlush(any(ValidationRun.class))).thenAnswer(inv -> {
+            ValidationRun r = inv.getArgument(0);
+            var f = ValidationRun.class.getDeclaredField("id");
+            f.setAccessible(true);
+            f.set(r, runId);
+            return r;
+        });
+        when(runRepository.findById(runId)).thenReturn(Optional.of(sampleRun));
+
+        java.util.concurrent.CountDownLatch releaseRun = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch startedRun = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.ThreadPoolExecutor executor = ValidationRunService.createBoundedRunExecutor(2, 4);
+        try {
+            ValidationRunService perUserLimitedService = new ValidationRunService(
+                    runRepository, mgmtUserRepository, testResultRepository, exchangeRepository,
+                    progressTracker, executor) {
+                @Override
+                int discoverTestCount(String baseUrl, String authToken) {
+                    return 2;
+                }
+
+                @Override
+                void executeLauncher(org.junit.platform.launcher.Launcher launcher,
+                                     LauncherDiscoveryRequest request,
+                                     org.junit.platform.launcher.TestExecutionListener listener) {
+                    startedRun.countDown();
+                    try {
+                        releaseRun.await();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+            };
+            perUserLimitedService.setTargetUrlPolicy(new TargetUrlPolicy(
+                    false, host -> new java.net.InetAddress[]{java.net.InetAddress.getByName("93.184.216.34")}));
+            perUserLimitedService.setMaxActiveRunsPerUser(1);
+
+            ValidationRunForm form = new ValidationRunForm("Run 1", "https://example.com/scim/v2", "tok");
+            perUserLimitedService.executeRunAsync(form, "user@example.com");
+            assertThat(startedRun.await(3, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+
+            assertThatThrownBy(() -> perUserLimitedService.executeRunAsync(form, "USER@example.com"))
+                    .isInstanceOf(ResponseStatusException.class)
+                    .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
+                            .isEqualTo(org.springframework.http.HttpStatus.TOO_MANY_REQUESTS));
+        } finally {
+            releaseRun.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void constructorsSettersShutdownAndScrubSecretsEdgeCasesAreCovered() {
+        ValidationRunService fourArg = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository);
+        fourArg.shutdownExecutor();
+
+        ValidationRunService autowiredCtor = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository,
+                null, null, null, null, null, null, null);
+        autowiredCtor.setSpecCatalogService(null);
+        autowiredCtor.setTargetUrlPolicy(null);
+        autowiredCtor.setMaxActiveRunsPerUser(3);
+        autowiredCtor.setMaxConcurrentRuns(2);
+        assertThat(autowiredCtor.getMaxActiveRunsPerUser()).isEqualTo(3);
+        autowiredCtor.shutdownExecutor();
+
+        java.util.concurrent.ThreadPoolExecutor externalExec = ValidationRunService.createBoundedRunExecutor(1, 1);
+        try {
+            ValidationRunService nonOwning = new ValidationRunService(
+                    runRepository, mgmtUserRepository, testResultRepository, exchangeRepository,
+                    progressTracker, externalExec);
+            nonOwning.shutdownExecutor();
+            assertThat(externalExec.isShutdown()).isFalse();
+        } finally {
+            externalExec.shutdownNow();
+        }
+
+        assertThat(ValidationRunService.scrubSecrets(null, "tok")).isNull();
+        assertThat(ValidationRunService.scrubSecrets("", "tok")).isEmpty();
+        assertThat(ValidationRunService.scrubSecrets("plain text", null)).isEqualTo("plain text");
+        assertThat(ValidationRunService.scrubSecrets("plain text", "   ")).isEqualTo("plain text");
+        assertThat(ValidationRunService.scrubSecrets("leaked padded-secret-123 here", "  padded-secret-123  "))
+                .isEqualTo("leaked [REDACTED] here");
+    }
+
+    @Test
+    void executeRun_passedFailedErrorAndTransactionTemplateBranchesAreCovered() {
+        ValidationMgmtUser owner = new ValidationMgmtUser("user@example.com", OffsetDateTime.now());
+        when(mgmtUserRepository.findById("user@example.com")).thenReturn(Optional.of(owner));
+        when(runRepository.save(any(ValidationRun.class))).thenAnswer(inv -> {
+            ValidationRun r = inv.getArgument(0);
+            if (r.getId() == null) {
+                var f = ValidationRun.class.getDeclaredField("id");
+                f.setAccessible(true);
+                f.set(r, runId);
+            }
+            return r;
+        });
+        when(testResultRepository.save(any(ValidationTestResult.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        org.springframework.transaction.PlatformTransactionManager txManager =
+                org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class);
+        when(txManager.getTransaction(any())).thenReturn(new org.springframework.transaction.support.SimpleTransactionStatus());
+
+        TargetUrlPolicy publicPolicy = new TargetUrlPolicy(
+                false, host -> new java.net.InetAddress[]{java.net.InetAddress.getByName("93.184.216.34")});
+
+        // 1. PASSED branch + TransactionTemplate branch
+        ValidationRunService passedSvc = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, progressTracker, null) {
+            @Override
+            int discoverTestCount(String baseUrl, String authToken) {
+                return 1;
+            }
+
+            @Override
+            void executeLauncher(org.junit.platform.launcher.Launcher launcher,
+                                 LauncherDiscoveryRequest request,
+                                 org.junit.platform.launcher.TestExecutionListener listener) {
+                TestDescriptor d = org.mockito.Mockito.mock(TestDescriptor.class);
+                when(d.getUniqueId()).thenReturn(UniqueId.forEngine("test-engine").append("test", "pass"));
+                when(d.getType()).thenReturn(TestDescriptor.Type.TEST);
+                when(d.getDisplayName()).thenReturn("USR_01");
+                TestIdentifier id = TestIdentifier.from(d);
+                listener.executionStarted(id);
+                listener.executionFinished(id, TestExecutionResult.successful());
+            }
+        };
+        passedSvc.setTargetUrlPolicy(publicPolicy);
+        passedSvc.setTransactionManager(txManager);
+        try {
+            ValidationRunForm form = new ValidationRunForm("Pass Run", "https://example.com/scim/v2", "secret-12345");
+            assertThat(passedSvc.executeRun(form, "user@example.com").getRun().getStatus()).isEqualTo("PASSED");
+        } finally {
+            passedSvc.shutdownExecutor();
+        }
+
+        // 2. FAILED branch
+        ValidationRunService failedSvc = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, progressTracker, null) {
+            @Override
+            int discoverTestCount(String baseUrl, String authToken) {
+                return 1;
+            }
+
+            @Override
+            void executeLauncher(org.junit.platform.launcher.Launcher launcher,
+                                 LauncherDiscoveryRequest request,
+                                 org.junit.platform.launcher.TestExecutionListener listener) {
+                TestDescriptor d = org.mockito.Mockito.mock(TestDescriptor.class);
+                when(d.getUniqueId()).thenReturn(UniqueId.forEngine("test-engine").append("test", "fail"));
+                when(d.getType()).thenReturn(TestDescriptor.Type.TEST);
+                when(d.getDisplayName()).thenReturn("USR_02");
+                TestIdentifier id = TestIdentifier.from(d);
+                listener.executionFinished(id, TestExecutionResult.failed(new AssertionError("Failed with secret-12345")));
+            }
+        };
+        failedSvc.setTargetUrlPolicy(publicPolicy);
+        try {
+            ValidationRunForm form = new ValidationRunForm("Fail Run", "https://example.com/scim/v2", "secret-12345");
+            assertThat(failedSvc.executeRun(form, "user@example.com").getRun().getStatus()).isEqualTo("FAILED");
+        } finally {
+            failedSvc.shutdownExecutor();
+        }
+
+        // 3. ERROR catch branch (launcher throws RuntimeException containing token)
+        ValidationRunService errorSvc = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, progressTracker, null) {
+            @Override
+            int discoverTestCount(String baseUrl, String authToken) {
+                return 1;
+            }
+
+            @Override
+            void executeLauncher(org.junit.platform.launcher.Launcher launcher,
+                                 LauncherDiscoveryRequest request,
+                                 org.junit.platform.launcher.TestExecutionListener listener) {
+                throw new IllegalStateException("Crash carrying secret-12345");
+            }
+        };
+        errorSvc.setTargetUrlPolicy(publicPolicy);
+        try {
+            ValidationRunForm form = new ValidationRunForm("Error Run", "https://example.com/scim/v2", "secret-12345");
+            assertThat(errorSvc.executeRun(form, "user@example.com").getRun().getStatus()).isEqualTo("ERROR");
+            verify(progressTracker).failRun(eq(runId), eq("Crash carrying [REDACTED]"));
+        } finally {
+            errorSvc.shutdownExecutor();
+        }
+    }
+
+    @Test
+    void executeRunAsync_withActiveTransactionSynchronization_handlesCommitRejectionAndRollback() throws Exception {
+        ValidationMgmtUser anonOwner = new ValidationMgmtUser("   ", OffsetDateTime.now());
+        when(mgmtUserRepository.findById("   ")).thenReturn(Optional.of(anonOwner));
+        when(runRepository.saveAndFlush(any(ValidationRun.class))).thenAnswer(inv -> {
+            ValidationRun r = inv.getArgument(0);
+            var f = ValidationRun.class.getDeclaredField("id");
+            f.setAccessible(true);
+            f.set(r, runId);
+            return r;
+        });
+
+        TargetUrlPolicy publicPolicy = new TargetUrlPolicy(
+                false, host -> new java.net.InetAddress[]{java.net.InetAddress.getByName("93.184.216.34")});
+        ValidationRunForm form = new ValidationRunForm("SyncTx Run", "https://example.com/scim/v2", "secret-xyz");
+
+        // Case A: Transaction synchronization active + shut/full executor rejects BEFORE DB insert or prune
+        java.util.concurrent.ThreadPoolExecutor shutExecutor = ValidationRunService.createBoundedRunExecutor(1, 1);
+        shutExecutor.shutdownNow();
+
+        ValidationRunService txRejectedService = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, progressTracker, shutExecutor) {
+            @Override
+            int discoverTestCount(String baseUrl, String authToken) {
+                throw new AssertionError("discoverTestCount must not run when executor rejects");
+            }
+        };
+        txRejectedService.setTargetUrlPolicy(publicPolicy);
+        txRejectedService.setMaxActiveRunsPerUser(1);
+
+        org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+        try {
+            assertThatThrownBy(() -> txRejectedService.executeRunAsync(form, "   "))
+                    .isInstanceOf(ResponseStatusException.class)
+                    .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
+                            .isEqualTo(org.springframework.http.HttpStatus.TOO_MANY_REQUESTS));
+        } finally {
+            org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
+        }
+        verify(runRepository, org.mockito.Mockito.never()).saveAndFlush(any(ValidationRun.class));
+
+        // Case B: Transaction synchronization active + live executor -> commit hands off task; rollback cancels cleanly
+        java.util.concurrent.CountDownLatch committedBgDone = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicInteger launcherRuns = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.ThreadPoolExecutor liveExecutor = ValidationRunService.createBoundedRunExecutor(2, 4);
+        when(runRepository.findById(runId)).thenReturn(Optional.of(sampleRun));
+        when(runRepository.save(any(ValidationRun.class))).thenAnswer(inv -> inv.getArgument(0));
+        try {
+            ValidationRunService txLiveService = new ValidationRunService(
+                    runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, progressTracker, liveExecutor) {
+                @Override
+                int discoverTestCount(String baseUrl, String authToken) {
+                    return 3;
+                }
+
+                @Override
+                void executeLauncher(org.junit.platform.launcher.Launcher launcher,
+                                     LauncherDiscoveryRequest request,
+                                     org.junit.platform.launcher.TestExecutionListener listener) {
+                    launcherRuns.incrementAndGet();
+                    committedBgDone.countDown();
+                }
+            };
+            txLiveService.setTargetUrlPolicy(publicPolicy);
+            txLiveService.setMaxActiveRunsPerUser(1);
+
+            // Rollback first: must release user's single active slot and NOT invoke executeLauncher
+            org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+            try {
+                txLiveService.executeRunAsync(form, "   ");
+                for (org.springframework.transaction.support.TransactionSynchronization sync :
+                        org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations()) {
+                    sync.afterCompletion(org.springframework.transaction.support.TransactionSynchronization.STATUS_ROLLED_BACK);
+                }
+            } finally {
+                org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
+            }
+            assertThat(launcherRuns.get()).isZero();
+            verify(progressTracker).removeRun(runId);
+
+            // Commit second (same user, maxActiveRunsPerUser=1 proves rollback released slot): invokes executeLauncher
+            org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+            try {
+                txLiveService.executeRunAsync(form, "   ");
+                for (org.springframework.transaction.support.TransactionSynchronization sync :
+                        org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations()) {
+                    sync.afterCommit();
+                    sync.afterCompletion(org.springframework.transaction.support.TransactionSynchronization.STATUS_COMMITTED);
+                }
+            } finally {
+                org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
+            }
+            assertThat(committedBgDone.await(3, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(launcherRuns.get()).isEqualTo(1);
+        } finally {
+            liveExecutor.shutdownNow();
+        }
+
+        // Case C: runTestsInBackground exception branch scrubs token and marks run ERROR
+        ValidationRunService bgErrorService = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, progressTracker, shutExecutor) {
+            @Override
+            void executeLauncher(org.junit.platform.launcher.Launcher launcher,
+                                 LauncherDiscoveryRequest request,
+                                 org.junit.platform.launcher.TestExecutionListener listener) {
+                throw new RuntimeException("Background failure with secret-xyz");
+            }
+        };
+        bgErrorService.setTargetUrlPolicy(publicPolicy);
+        bgErrorService.runTestsInBackground(runId, form, 4);
+        assertThat(sampleRun.getStatus()).isEqualTo("ERROR");
+        verify(progressTracker).failRun(eq(runId), eq("Background failure with [REDACTED]"));
+
+        // Case D: Background worker interrupted while waiting for global concurrent permit marks run ERROR cleanly
+        bgErrorService.setMaxConcurrentRuns(1);
+        java.lang.reflect.Method execPermitted = ValidationRunService.class.getDeclaredMethod(
+                "executePermittedBackgroundRun",
+                UUID.class, ValidationRunForm.class, int.class, TargetUrlPolicy.ResolvedTarget.class, Runnable.class);
+        execPermitted.setAccessible(true);
+        sampleRun.setStatus("RUNNING");
+        Thread.currentThread().interrupt();
+        try {
+            execPermitted.invoke(bgErrorService, runId, form, 4, publicPolicy.resolve(form.baseUrl()), (Runnable) () -> {});
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+        } finally {
+            Thread.interrupted();
+        }
+        assertThat(sampleRun.getStatus()).isEqualTo("ERROR");
+        verify(progressTracker).failRun(eq(runId), eq("Validation run interrupted"));
+    }
+
+    // ─── 2 MiB UTF-8 & VARCHAR defensive truncation (Issue #4) ──────────
+
+    @Test
+    void truncateUtf8Bytes_and_truncateChars_preserveCodePointAndSurrogateBoundaries() {
+        assertThat(ValidationRunService.truncateUtf8Bytes(null, ValidationRunService.MAX_DB_TEXT_BYTES)).isNull();
+        assertThat(ValidationRunService.truncateUtf8Bytes("exact", 5)).isEqualTo("exact");
+        assertThat(ValidationRunService.truncateUtf8Bytes("overflow", 0)).isEmpty();
+        assertThat(ValidationRunService.truncateUtf8Bytes("overflow-small-budget", 5)).isEqualTo("...[t");
+
+        // Exact 2 MiB ASCII stays untouched
+        String exact2MiB = "a".repeat(ValidationRunService.MAX_DB_TEXT_BYTES);
+        assertThat(ValidationRunService.truncateUtf8Bytes(exact2MiB, ValidationRunService.MAX_DB_TEXT_BYTES))
+                .isSameAs(exact2MiB);
+
+        // > 2 MiB ASCII truncates to exact 2,097,152 bytes with '...[truncated]' suffix
+        String overAscii = "a".repeat(ValidationRunService.MAX_DB_TEXT_BYTES + 1000);
+        String truncatedAscii = ValidationRunService.truncateUtf8Bytes(overAscii, ValidationRunService.MAX_DB_TEXT_BYTES);
+        assertThat(truncatedAscii.getBytes(StandardCharsets.UTF_8)).hasSize(ValidationRunService.MAX_DB_TEXT_BYTES);
+        assertThat(truncatedAscii).endsWith("...[truncated]");
+
+        // > 2 MiB misaligned 3-byte UTF-8 ('€' = 3 bytes) and 4-byte UTF-8 ('🚀' = 4 bytes, UTF-16 surrogate pair)
+        for (String prefix : List.of("", "x", "xy")) {
+            String overEuro = prefix + "€".repeat(750_000);
+            String truncatedEuro = ValidationRunService.truncateUtf8Bytes(overEuro, ValidationRunService.MAX_DB_TEXT_BYTES);
+            int euroBytes = truncatedEuro.getBytes(StandardCharsets.UTF_8).length;
+            assertThat(euroBytes).isBetween(ValidationRunService.MAX_DB_TEXT_BYTES - 3, ValidationRunService.MAX_DB_TEXT_BYTES);
+            assertThat(truncatedEuro).endsWith("...[truncated]").doesNotContain("\uFFFD");
+        }
+        for (String prefix : List.of("", "a", "ab", "abc")) {
+            String overRocket = prefix + "🚀".repeat(550_000);
+            String truncatedRocket = ValidationRunService.truncateUtf8Bytes(overRocket, ValidationRunService.MAX_DB_TEXT_BYTES);
+            int rocketBytes = truncatedRocket.getBytes(StandardCharsets.UTF_8).length;
+            assertThat(rocketBytes).isBetween(ValidationRunService.MAX_DB_TEXT_BYTES - 3, ValidationRunService.MAX_DB_TEXT_BYTES);
+            assertThat(truncatedRocket).endsWith("...[truncated]").doesNotContain("\uFFFD");
+            assertThat(Character.isHighSurrogate(truncatedRocket.charAt(truncatedRocket.length() - 15))).isFalse();
+        }
+
+        // truncateChars avoids splitting UTF-16 surrogate pairs at the boundary
+        assertThat(ValidationRunService.truncateChars(null, 10)).isNull();
+        assertThat(ValidationRunService.truncateChars("abc", 0)).isEmpty();
+        assertThat(ValidationRunService.truncateChars("abc", 5)).isEqualTo("abc");
+        String surrogateAtBoundary = "a".repeat(9) + "🚀" + "z"; // '🚀' occupies indices 9 (high) and 10 (low)
+        String truncatedSurrogate = ValidationRunService.truncateChars(surrogateAtBoundary, 10);
+        assertThat(truncatedSurrogate).isEqualTo("a".repeat(9));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void validationExecutionListener_boundsOversizedTextAndVarcharColumnsAfterScrubbingSecrets() {
+        ValidationRun run = new ValidationRun();
+        String secretToken = "tok12345"; // 8 chars -> replaced by 10-char "[REDACTED]"
+        ValidationRunService.ValidationExecutionListener listener =
+                new ValidationRunService.ValidationExecutionListener(
+                        run, 2, progressTracker, testResultRepository, exchangeRepository, secretToken);
+
+        String longClassName = "com.example." + "C".repeat(350);
+        String longMethodName = "test" + "M".repeat(350);
+        String longDisplayName = "Display " + "D".repeat(550);
+        UniqueId longUniqueId = UniqueId.forEngine("test-engine").append("test", "U".repeat(550));
+
+        TestDescriptor descriptor = org.mockito.Mockito.mock(TestDescriptor.class);
+        when(descriptor.getUniqueId()).thenReturn(longUniqueId);
+        when(descriptor.getType()).thenReturn(TestDescriptor.Type.TEST);
+        when(descriptor.getDisplayName()).thenReturn(longDisplayName);
+        when(descriptor.getSource()).thenReturn(Optional.of(MethodSource.from(longClassName, longMethodName)));
+        TestIdentifier identifier = TestIdentifier.from(descriptor);
+
+        when(testResultRepository.save(any(ValidationTestResult.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        String hugeError = secretToken + " " + "€".repeat(750_000);
+        RuntimeException hugeException = new RuntimeException(hugeError) {
+            @Override
+            public void printStackTrace(java.io.PrintWriter s) {
+                s.print("Stack leak " + secretToken + " " + "🚀".repeat(550_000));
+            }
+        };
+
+        ScimRunContext.beginRun("run-oversized");
+        try {
+            listener.executionStarted(identifier);
+
+            ScimHttpExchange rawExchange = new ScimHttpExchange();
+            rawExchange.setMethod("CUSTOM_LONG_METHOD_NAME");
+            rawExchange.setUrl("https://scim.example.com/v2/Users?" + "q".repeat(1200));
+            rawExchange.setRequestHeaders("X-Leak: " + secretToken + "\n" + "H".repeat(ValidationRunService.MAX_DB_TEXT_BYTES + 500));
+            rawExchange.setRequestBody(secretToken + "€".repeat(750_000));
+            rawExchange.setResponseStatus(500);
+            rawExchange.setResponseHeaders("X-Resp: " + "🚀".repeat(550_000));
+            rawExchange.setResponseBody("B".repeat(ValidationRunService.MAX_DB_TEXT_BYTES + 5000));
+            ScimRunContext.record(rawExchange);
+
+            listener.executionFinished(identifier, TestExecutionResult.failed(hugeException));
+
+            // Also verify executionSkipped truncates oversized reason and VARCHAR fields
+            listener.executionSkipped(identifier, secretToken + " " + "S".repeat(ValidationRunService.MAX_DB_TEXT_BYTES + 500));
+        } finally {
+            ScimRunContext.endRun();
+        }
+
+        ArgumentCaptor<ValidationTestResult> trCaptor = ArgumentCaptor.forClass(ValidationTestResult.class);
+        verify(testResultRepository, times(2)).save(trCaptor.capture());
+
+        ValidationTestResult finishedResult = trCaptor.getAllValues().get(0);
+        assertThat(finishedResult.getTestIdentifier()).hasSize(500);
+        assertThat(finishedResult.getDisplayName()).hasSize(500);
+        assertThat(finishedResult.getClassName()).hasSize(300);
+        assertThat(finishedResult.getTestName()).hasSize(300);
+        assertThat(finishedResult.getErrorMessage())
+                .startsWith("[REDACTED]")
+                .doesNotContain(secretToken)
+                .endsWith("...[truncated]");
+        assertThat(finishedResult.getErrorMessage().getBytes(StandardCharsets.UTF_8).length)
+                .isLessThanOrEqualTo(ValidationRunService.MAX_DB_TEXT_BYTES);
+        assertThat(finishedResult.getStackTrace())
+                .contains("[REDACTED]")
+                .doesNotContain(secretToken)
+                .endsWith("...[truncated]");
+        assertThat(finishedResult.getStackTrace().getBytes(StandardCharsets.UTF_8).length)
+                .isLessThanOrEqualTo(ValidationRunService.MAX_DB_TEXT_BYTES);
+
+        ValidationTestResult skippedResult = trCaptor.getAllValues().get(1);
+        assertThat(skippedResult.getTestIdentifier()).hasSize(500);
+        assertThat(skippedResult.getDisplayName()).hasSize(500);
+        assertThat(skippedResult.getClassName()).hasSize(300);
+        assertThat(skippedResult.getTestName()).hasSize(300);
+        assertThat(skippedResult.getErrorMessage())
+                .startsWith("[REDACTED]")
+                .doesNotContain(secretToken)
+                .endsWith("...[truncated]");
+        assertThat(skippedResult.getErrorMessage().getBytes(StandardCharsets.UTF_8).length)
+                .isEqualTo(ValidationRunService.MAX_DB_TEXT_BYTES);
+
+        ArgumentCaptor<List<ValidationHttpExchange>> exCaptor = ArgumentCaptor.forClass(List.class);
+        verify(exchangeRepository).saveAll(exCaptor.capture());
+        assertThat(exCaptor.getValue()).hasSize(1);
+        ValidationHttpExchange savedEx = exCaptor.getValue().get(0);
+        assertThat(savedEx.getMethod()).hasSize(16);
+        assertThat(savedEx.getUrl()).hasSize(1000);
+        assertThat(savedEx.getRequestHeaders()).doesNotContain(secretToken).endsWith("...[truncated]");
+        assertThat(savedEx.getRequestHeaders().getBytes(StandardCharsets.UTF_8).length)
+                .isEqualTo(ValidationRunService.MAX_DB_TEXT_BYTES);
+        assertThat(savedEx.getRequestBody()).startsWith("[REDACTED]").doesNotContain(secretToken).endsWith("...[truncated]");
+        assertThat(savedEx.getRequestBody().getBytes(StandardCharsets.UTF_8).length)
+                .isLessThanOrEqualTo(ValidationRunService.MAX_DB_TEXT_BYTES);
+        assertThat(savedEx.getResponseHeaders()).endsWith("...[truncated]");
+        assertThat(savedEx.getResponseHeaders().getBytes(StandardCharsets.UTF_8).length)
+                .isLessThanOrEqualTo(ValidationRunService.MAX_DB_TEXT_BYTES);
+        assertThat(savedEx.getResponseBody()).endsWith("...[truncated]");
+        assertThat(savedEx.getResponseBody().getBytes(StandardCharsets.UTF_8).length)
+                .isEqualTo(ValidationRunService.MAX_DB_TEXT_BYTES);
+    }
+
+    // ─── Reconciled catalog metadata sanitization (Issue #5) ────────────
+
+    @Test
+    void recordPublication_sanitizesMalformedReconciledCatalogEntryAndPrUrl() {
+        ValidationRunPublicationRepository pubRepo = org.mockito.Mockito.mock(ValidationRunPublicationRepository.class);
+        when(pubRepo.save(any(ValidationRunPublication.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(runRepository.findById(runId)).thenReturn(Optional.of(sampleRun));
+        when(runRepository.save(any(ValidationRun.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        ValidationRunService pubService = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, pubRepo, progressTracker);
+        pubService.setPublicBaseUrl("https://scimsandbox.net");
+
+        CompliancePublishRequest validRequest = new CompliancePublishRequest(
+                runId,
+                "Validated Product",
+                "validated-product",
+                "1.0.0",
+                "Validated Vendor",
+                "https://github.com/acme/validated",
+                "Apache-2.0",
+                true,
+                94,
+                "EMERALD",
+                9,
+                10,
+                "user@example.com",
+                "https://scim.example.com/v2"
+        );
+
+        // Case 1: Active PENDING_RESERVATION + malformed reconciled catalog entry (UUID slug, schemeless projectUrl,
+        // oversized/blank strings, out-of-bounds score & capabilities, malformed prUrl/reportUrl/badgeUrl)
+        ValidationRunPublication pending = new ValidationRunPublication();
+        pending.setRun(sampleRun);
+        pending.setCreatedByEmail("user@example.com");
+        pending.setProductName("Validated Product");
+        pending.setProductSlug("validated-product");
+        pending.setProductVersion("1.0.0");
+        pending.setLicenseType("Apache-2.0");
+        pending.setShowSubmitter(true);
+        pending.setCoreScore(94);
+        pending.setSupportedCapabilities(9);
+        pending.setTotalCapabilities(10);
+        pending.setReportUrl("https://scimsandbox.net/compliance/?run=" + runId);
+        pending.setBadgeUrl("https://scimsandbox.net/compliance/badges/" + runId + ".svg");
+        pending.setPrUrl(ValidationRunService.PENDING_RESERVATION_PR_URL);
+        pending.setPublishedAt(OffsetDateTime.now(ZoneOffset.UTC));
+        when(pubRepo.findById(runId)).thenReturn(Optional.of(pending));
+
+        ComplianceCatalogEntry malformedEntry = new ComplianceCatalogEntry(
+                runId,
+                "   ", // blank productName -> fallback
+                "11111111-1111-1111-1111-111111111111", // UUID slug -> fallback
+                "v".repeat(61), // > 60 chars productVersion -> fallback
+                "V".repeat(121), // > 120 chars vendorName -> fallback
+                "github.com/schemeless/repo", // malformed projectUrl -> fallback to request.projectUrl()
+                "L\nInvalidControl", // control char in licenseType -> fallback
+                150, // out-of-range coreScore -> fallback
+                ColourGradientInfo.from("EMERALD", 94),
+                12, // supported > total -> fallback
+                10,
+                "compliance/reports/bad path with spaces.json",
+                "compliance/badges/validated-product.svg",
+                "2026-11-13T10:00:00Z"
+        );
+        CompliancePublicationResult malformedResult = CompliancePublicationResult.reconciled(
+                runId,
+                "https://github.com/scimsandbox/scim-website/blob/main/bad path with spaces.json",
+                "javascript:alert(1)",
+                "https://user:secret@scimsandbox.net/badge.svg",
+                "reconciled",
+                OffsetDateTime.now(ZoneOffset.UTC),
+                malformedEntry
+        );
+
+        ValidationRunPublication savedFromPending = pubService.recordPublication(
+                sampleRun, "user@example.com", validRequest, malformedResult);
+
+        assertThat(savedFromPending.getProductName()).isEqualTo("Validated Product");
+        assertThat(savedFromPending.getProductSlug()).isEqualTo("validated-product");
+        assertThat(savedFromPending.getProductVersion()).isEqualTo("1.0.0");
+        assertThat(savedFromPending.getVendorName()).isEqualTo("Validated Vendor");
+        assertThat(savedFromPending.getProjectUrl()).isEqualTo("https://github.com/acme/validated");
+        assertThat(savedFromPending.getLicenseType()).isEqualTo("Apache-2.0");
+        assertThat(savedFromPending.isShowSubmitter()).isTrue();
+        assertThat(savedFromPending.getCoreScore()).isEqualTo(94);
+        assertThat(savedFromPending.getSupportedCapabilities()).isEqualTo(9);
+        assertThat(savedFromPending.getTotalCapabilities()).isEqualTo(10);
+        assertThat(savedFromPending.getPrUrl()).isNull();
+        assertThat(savedFromPending.getReportUrl()).isEqualTo("https://scimsandbox.net/compliance/?run=" + runId);
+        assertThat(savedFromPending.getBadgeUrl()).isEqualTo("https://scimsandbox.net/compliance/badges/" + runId + ".svg");
+
+        // Case 2: No prior reservation + blank reconciled projectUrl clears projectUrl to null,
+        // mixed-case trimmed slug normalizes cleanly, and mixed-case HTTPS URLs are accepted
+        sampleRun.setPublication(null);
+        when(pubRepo.findById(runId)).thenReturn(Optional.empty());
+
+        ComplianceCatalogEntry blankUrlAndMixedSlugEntry = new ComplianceCatalogEntry(
+                runId,
+                "  Canonical Name  ",
+                "  Canonical-Slug  ",
+                "2.0.0",
+                "   ", // blank vendor -> null
+                "   ", // blank projectUrl -> null (intentional absence in catalog)
+                "MIT",
+                97,
+                ColourGradientInfo.from("EMERALD", 97),
+                10,
+                10,
+                "compliance/reports/canonical-slug/2.0.0.json",
+                "compliance/badges/canonical-slug.svg",
+                "2026-11-13T11:00:00Z"
+        );
+        CompliancePublicationResult cleanMixedResult = CompliancePublicationResult.reconciled(
+                runId,
+                "HTTPS://github.com/scimsandbox/scim-website/pull/99",
+                "HTTPS://scimsandbox.net/compliance/?run=" + runId,
+                "Http://scimsandbox.net/compliance/badges/" + runId + ".svg",
+                "sha99",
+                OffsetDateTime.now(ZoneOffset.UTC),
+                blankUrlAndMixedSlugEntry
+        );
+
+        ValidationRunPublication savedFresh = pubService.recordPublication(
+                sampleRun, "user@example.com", validRequest, cleanMixedResult);
+
+        assertThat(savedFresh.getProductName()).isEqualTo("Canonical Name");
+        assertThat(savedFresh.getProductSlug()).isEqualTo("canonical-slug");
+        assertThat(savedFresh.getProductVersion()).isEqualTo("2.0.0");
+        assertThat(savedFresh.getVendorName()).isNull();
+        assertThat(savedFresh.getProjectUrl()).isNull();
+        assertThat(savedFresh.getLicenseType()).isEqualTo("MIT");
+        assertThat(savedFresh.getCoreScore()).isEqualTo(97);
+        assertThat(savedFresh.getSupportedCapabilities()).isEqualTo(10);
+        assertThat(savedFresh.getTotalCapabilities()).isEqualTo(10);
+        assertThat(savedFresh.getPrUrl()).isEqualTo("HTTPS://github.com/scimsandbox/scim-website/pull/99");
+        assertThat(savedFresh.getReportUrl()).isEqualTo("HTTPS://scimsandbox.net/compliance/?run=" + runId);
+        assertThat(savedFresh.getBadgeUrl()).isEqualTo("Http://scimsandbox.net/compliance/badges/" + runId + ".svg");
+
+        assertThat(ValidationRunService.sanitizePrUrl("PENDING_RESERVATION")).isNull();
+        assertThat(ValidationRunService.sanitizePrUrl("   ")).isNull();
+        assertThat(ValidationRunService.sanitizePrUrl("https://token@github.com/pr/1")).isNull();
+        assertThat(ValidationRunService.isValidPublicationHttpUrl(null)).isFalse();
+        assertThat(ValidationRunService.isValidPublicationHttpUrl("HTTPS://github.com/acme/scim")).isTrue();
+        assertThat(ValidationRunService.isValidPublicationHttpUrl("https:///empty-host")).isFalse();
+
+        // Fallback URL & null publishedAt branches when publicBaseUrl is blank and no prior fallback URLs exist
+        pubService.setPublicBaseUrl("   ");
+        sampleRun.setPublication(null);
+        when(pubRepo.findById(runId)).thenReturn(Optional.empty());
+        CompliancePublicationResult nullDatesAndUrls = CompliancePublicationResult.reconciled(
+                runId, null, null, null, "sha0", null, null);
+        ValidationRunPublication savedDefaults = pubService.recordPublication(
+                sampleRun, "user@example.com", validRequest, nullDatesAndUrls);
+        assertThat(savedDefaults.getReportUrl()).isEqualTo("https://invalid-compliance-base.invalid/compliance/?run=" + runId);
+        assertThat(savedDefaults.getBadgeUrl()).isEqualTo("https://invalid-compliance-base.invalid/compliance/badges/" + runId + ".svg");
+        assertThat(savedDefaults.getPublishedAt()).isNotNull();
+    }
+
+    @Test
+    void unicodeWhitespaceAndControlHandling_alignsWithPostgreSql17UrlConstraints() {
+        List<String> unicodeSpaces = List.of("\u00A0", "\u2007", "\u202F", "\uFEFF", "\u0085", "\u180E");
+
+        for (String sp : unicodeSpaces) {
+            // Internal Unicode spaces/BOM/NEL must be rejected by isValidPublicationHttpUrl, sanitizeOptionalHttpUrl,
+            // sanitizePrUrl, and validateAndNormalizeTargetUrl
+            String internalPathUrl = "https://github.com/acme" + sp + "scim";
+            String internalHostUrl = "https://" + sp + "github.com/acme/scim";
+            assertThat(ValidationRunService.isValidPublicationHttpUrl(internalPathUrl))
+                    .as("internal %s in path", sp.codePoints().findFirst().orElse(0))
+                    .isFalse();
+            assertThat(ValidationRunService.isValidPublicationHttpUrl(internalHostUrl))
+                    .as("internal %s at host start", sp.codePoints().findFirst().orElse(0))
+                    .isFalse();
+            assertThat(ValidationRunService.sanitizeOptionalHttpUrl(internalPathUrl)).isNull();
+            assertThat(ValidationRunService.sanitizePrUrl(internalPathUrl)).isNull();
+            assertThatThrownBy(() -> ValidationRunService.validateAndNormalizeTargetUrl(internalPathUrl))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("whitespace or control");
+
+            // Leading/trailing Unicode spaces/BOM/NEL must be stripped cleanly
+            String padded = sp + "https://github.com/acme/scim" + sp;
+            assertThat(ValidationRunService.trimUnicodeSpaces(padded)).isEqualTo("https://github.com/acme/scim");
+            assertThat(ValidationRunService.sanitizeOptionalHttpUrl(padded)).isEqualTo("https://github.com/acme/scim");
+            assertThat(ValidationRunService.sanitizePrUrl(padded)).isEqualTo("https://github.com/acme/scim");
+            assertThat(ValidationRunService.validateAndNormalizeTargetUrl(padded)).isEqualTo("https://github.com/acme/scim");
+
+            // Strings consisting only of Unicode spaces/BOM/NEL normalize to null / empty rejection
+            assertThat(ValidationRunService.sanitizeOptionalHttpUrl(sp + sp)).isNull();
+            assertThat(ValidationRunService.sanitizePrUrl(sp + sp)).isNull();
+            assertThatThrownBy(() -> ValidationRunService.validateAndNormalizeTargetUrl(sp + sp))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("must not be empty");
+        }
+        assertThat(ValidationRunService.trimUnicodeSpaces(null)).isNull();
+        assertThat(ValidationRunService.trimUnicodeSpaces("")).isEmpty();
+        assertThat(ValidationRunService.sanitizeOptionalHttpUrl(null)).isNull();
+        assertThat(ValidationRunService.sanitizePrUrl(null)).isNull();
+        assertThatThrownBy(() -> ValidationRunService.validateAndNormalizeTargetUrl(null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("must not be empty");
+
+        // Verify recordPublication handles both NBSP/BOM-padded valid URLs and internal-NBSP malformed URLs
+        ValidationRunPublicationRepository pubRepo = org.mockito.Mockito.mock(ValidationRunPublicationRepository.class);
+        when(pubRepo.save(any(ValidationRunPublication.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(runRepository.findById(runId)).thenReturn(Optional.of(sampleRun));
+        when(runRepository.save(any(ValidationRun.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        ValidationRunService pubService = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, pubRepo, progressTracker);
+        pubService.setPublicBaseUrl("https://scimsandbox.net");
+
+        CompliancePublishRequest requestWithNbspPadding = new CompliancePublishRequest(
+                runId,
+                "NBSP Product",
+                "nbsp-product",
+                "1.0.0",
+                "Vendor",
+                "\uFEFF\u00A0https://github.com/acme/nbsp-fallback\u202F",
+                "MIT",
+                false,
+                95,
+                "EMERALD",
+                10,
+                10,
+                "user@example.com",
+                "https://scim.example.com/v2"
+        );
+
+        // Internal NBSP/BOM/figure-space in reconciled catalog & result URLs -> rejected with fallback
+        ComplianceCatalogEntry internalNbspEntry = new ComplianceCatalogEntry(
+                runId,
+                "NBSP Product",
+                "\u00A0NBSP-Product\u2007",
+                "1.0.0",
+                "Vendor",
+                "https://github.com/acme/\u00A0bad-project",
+                "MIT",
+                95,
+                ColourGradientInfo.from("EMERALD", 95),
+                10,
+                10,
+                "compliance/reports/nbsp-product/1.0.0.json",
+                "compliance/badges/nbsp-product.svg",
+                "2026-11-14T08:00:00Z"
+        );
+        CompliancePublicationResult internalNbspResult = CompliancePublicationResult.reconciled(
+                runId,
+                "https://github.com/scimsandbox/scim-website/pull/\u202F42",
+                "https://scimsandbox.net/compliance/?run=\u2007" + runId,
+                "https://scimsandbox.net/compliance/badges/\uFEFF" + runId + ".svg",
+                "sha-nbsp",
+                OffsetDateTime.now(ZoneOffset.UTC),
+                internalNbspEntry
+        );
+
+        sampleRun.setPublication(null);
+        when(pubRepo.findById(runId)).thenReturn(Optional.empty());
+        ValidationRunPublication savedFallback = pubService.recordPublication(
+                sampleRun, "user@example.com", requestWithNbspPadding, internalNbspResult);
+
+        assertThat(savedFallback.getProductSlug()).isEqualTo("nbsp-product");
+        assertThat(savedFallback.getProjectUrl()).isEqualTo("https://github.com/acme/nbsp-fallback");
+        assertThat(savedFallback.getPrUrl()).isNull();
+        assertThat(savedFallback.getReportUrl()).isEqualTo("https://scimsandbox.net/compliance/?run=" + runId);
+        assertThat(savedFallback.getBadgeUrl()).isEqualTo("https://scimsandbox.net/compliance/badges/" + runId + ".svg");
+
+        // Leading/trailing NBSP/BOM on reconciled URLs -> stripped cleanly, and NBSP-only projectUrl clears to null
+        ComplianceCatalogEntry nbspOnlyProjectEntry = new ComplianceCatalogEntry(
+                runId,
+                "NBSP Product",
+                "nbsp-product",
+                "1.0.0",
+                "Vendor",
+                "\u00A0\u2007\u202F\uFEFF",
+                "MIT",
+                95,
+                ColourGradientInfo.from("EMERALD", 95),
+                10,
+                10,
+                "compliance/reports/nbsp-product/1.0.0.json",
+                "compliance/badges/nbsp-product.svg",
+                "2026-11-14T08:05:00Z"
+        );
+        CompliancePublicationResult paddedValidResult = CompliancePublicationResult.reconciled(
+                runId,
+                "\u00A0https://github.com/scimsandbox/scim-website/pull/43\u202F",
+                "\uFEFFhttps://scimsandbox.net/compliance/?run=" + runId + "\u2007",
+                "\u0085https://scimsandbox.net/compliance/badges/" + runId + ".svg\u00A0",
+                "sha-padded",
+                OffsetDateTime.now(ZoneOffset.UTC),
+                nbspOnlyProjectEntry
+        );
+
+        sampleRun.setPublication(null);
+        when(pubRepo.findById(runId)).thenReturn(Optional.empty());
+        ValidationRunPublication savedPadded = pubService.recordPublication(
+                sampleRun, "user@example.com", requestWithNbspPadding, paddedValidResult);
+
+        assertThat(savedPadded.getProjectUrl()).isNull();
+        assertThat(savedPadded.getPrUrl()).isEqualTo("https://github.com/scimsandbox/scim-website/pull/43");
+        assertThat(savedPadded.getReportUrl()).isEqualTo("https://scimsandbox.net/compliance/?run=" + runId);
+        assertThat(savedPadded.getBadgeUrl()).isEqualTo("https://scimsandbox.net/compliance/badges/" + runId + ".svg");
+    }
+
+    @Test
+    void executeRunAndAsync_enforceTargetUrlBoundsBeforeDiscoveryOrPruningAndTruncateRunName() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger dnsLookups = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger discoveries = new java.util.concurrent.atomic.AtomicInteger();
+
+        TargetUrlPolicy countingPolicy = new TargetUrlPolicy(false, host -> {
+            dnsLookups.incrementAndGet();
+            return new java.net.InetAddress[]{java.net.InetAddress.getByName("93.184.216.34")};
+        });
+
+        java.util.concurrent.CountDownLatch asyncDone = new java.util.concurrent.CountDownLatch(2);
+        ValidationRunService boundedFieldService = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, progressTracker, null) {
+            @Override
+            int discoverTestCount(String baseUrl, String authToken) {
+                discoveries.incrementAndGet();
+                return 1;
+            }
+
+            @Override
+            void executeLauncher(org.junit.platform.launcher.Launcher launcher,
+                                 LauncherDiscoveryRequest request,
+                                 org.junit.platform.launcher.TestExecutionListener listener) {
+                asyncDone.countDown();
+            }
+        };
+        boundedFieldService.setTargetUrlPolicy(countingPolicy);
+        boundedFieldService.setMaxActiveRunsPerUser(1);
+
+        try {
+            // 1. Overlong baseUrl (> 500 chars) and internal BOM/NBSP baseUrl must fail at entry BEFORE DNS, discovery, slot leak, or pruning
+            String overlongUrl = "https://example.com/" + "a".repeat(481); // 20 + 481 = 501 chars
+            String internalBomUrl = "https://example.com/scim/\uFEFFv2";
+
+            for (String badUrl : List.of(overlongUrl, internalBomUrl)) {
+                ValidationRunForm badForm = new ValidationRunForm("Bad URL Run", badUrl, "tok");
+                assertThatThrownBy(() -> boundedFieldService.executeRun(badForm, "user@example.com"))
+                        .isInstanceOf(IllegalArgumentException.class);
+                assertThatThrownBy(() -> boundedFieldService.executeRunAsync(badForm, "user@example.com"))
+                        .isInstanceOf(IllegalArgumentException.class);
+            }
+            assertThat(dnsLookups.get()).isZero();
+            assertThat(discoveries.get()).isZero();
+            verify(runRepository, org.mockito.Mockito.never()).delete(any(ValidationRun.class));
+            verify(runRepository, org.mockito.Mockito.never()).save(any(ValidationRun.class));
+            verify(runRepository, org.mockito.Mockito.never()).saveAndFlush(any(ValidationRun.class));
+
+            // 2. Exact 500-char URL (after stripping NBSP/BOM padding) and >200-char run name succeed and bound cleanly
+            ValidationMgmtUser owner = new ValidationMgmtUser("user@example.com", OffsetDateTime.now());
+            when(mgmtUserRepository.findById("user@example.com")).thenReturn(Optional.of(owner));
+            when(runRepository.save(any(ValidationRun.class))).thenAnswer(inv -> {
+                ValidationRun r = inv.getArgument(0);
+                if (r.getId() == null) {
+                    var f = ValidationRun.class.getDeclaredField("id");
+                    f.setAccessible(true);
+                    f.set(r, runId);
+                }
+                return r;
+            });
+            when(runRepository.saveAndFlush(any(ValidationRun.class))).thenAnswer(inv -> {
+                ValidationRun r = inv.getArgument(0);
+                var f = ValidationRun.class.getDeclaredField("id");
+                f.setAccessible(true);
+                f.set(r, runId);
+                return r;
+            });
+            when(runRepository.findById(runId)).thenReturn(Optional.of(sampleRun));
+
+            String exact500Url = "https://example.com/" + "a".repeat(480); // 500 chars
+            String overlongSurrogateName = "  " + "N".repeat(199) + "\uD83D\uDE80extra  "; // char 200 is high surrogate -> 199 chars
+            ValidationRunForm syncForm = new ValidationRunForm(
+                    overlongSurrogateName, "\uFEFF\u00A0" + exact500Url + "\u202F", "tok");
+            ValidationRun savedSync = boundedFieldService.executeRun(syncForm, "user@example.com").getRun();
+            assertThat(savedSync.getTargetUrl()).isEqualTo(exact500Url).hasSize(500);
+            assertThat(savedSync.getName()).isEqualTo("N".repeat(199)).hasSize(199);
+
+            ValidationRunForm asyncForm = new ValidationRunForm(null, "https://example.com/scim/v2", "tok");
+            ValidationRun savedAsync = boundedFieldService.executeRunAsync(asyncForm, "user@example.com").getRun();
+            assertThat(savedAsync.getName()).isEmpty();
+            assertThat(asyncDone.await(3, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        } finally {
+            boundedFieldService.shutdownExecutor();
+        }
+    }
+
+    @Test
+    void publicationSlugAndFallbackUrls_satisfyLengthHyphenUuidAndMisconfiguredBaseUrlBounds() {
+        // 1. Slug bounding: char 120 == '-' strips trailing '-', UUID prefixes with 'product-', empty falls back cleanly
+        String hyphenAt120 = "a".repeat(119) + "-b";
+        assertThat(ValidationRunService.sanitizeRequestedProductSlug(hyphenAt120, "Fallback"))
+                .isEqualTo("a".repeat(119))
+                .hasSize(119)
+                .doesNotEndWith("-");
+        assertThat(ValidationRunService.sanitizeRequestedProductSlug("11111111-1111-1111-1111-111111111111", "Fallback"))
+                .isEqualTo("product-11111111-1111-1111-1111-111111111111");
+        assertThat(ValidationRunService.sanitizeRequestedProductSlug("---", "My Product!"))
+                .isEqualTo("my-product");
+        assertThat(ValidationRunService.sanitizeRequestedProductSlug(null, "   "))
+                .isEqualTo("scim-product");
+
+        // 2. Misconfigured publicBaseUrl (embedded userinfo or >500 chars) falls back cleanly to .invalid placeholder
+        ValidationRunPublicationRepository pubRepo = org.mockito.Mockito.mock(ValidationRunPublicationRepository.class);
+        when(pubRepo.save(any(ValidationRunPublication.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(runRepository.findById(runId)).thenReturn(Optional.of(sampleRun));
+        when(runRepository.save(any(ValidationRun.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        ValidationRunService pubService = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, pubRepo, progressTracker);
+
+        CompliancePublishRequest edgeSlugRequest = new CompliancePublishRequest(
+                runId,
+                "Edge Slug Product",
+                hyphenAt120,
+                "1.0.0",
+                null,
+                null,
+                "MIT",
+                false,
+                92,
+                "EMERALD",
+                9,
+                10,
+                "user@example.com",
+                "https://scim.example.com/v2"
+        );
+
+        // 2a. Userinfo in publicBaseUrl during reservePublication & recordPublication
+        pubService.setPublicBaseUrl("https://admin:secret@scimsandbox.net");
+        sampleRun.setPublication(null);
+        when(pubRepo.findById(runId)).thenReturn(Optional.empty());
+        ValidationRunPublication reserved = pubService.reservePublication(sampleRun, "user@example.com", edgeSlugRequest);
+        assertThat(reserved.getProductSlug()).isEqualTo("a".repeat(119));
+        assertThat(reserved.getReportUrl()).isEqualTo("https://invalid-compliance-base.invalid/compliance/?run=" + runId);
+        assertThat(reserved.getBadgeUrl()).isEqualTo("https://invalid-compliance-base.invalid/compliance/badges/" + runId + ".svg");
+
+        // 2b. Overlong publicBaseUrl (> 500 chars when path appended) during recordPublication
+        pubService.setPublicBaseUrl("https://scimsandbox.net/" + "p".repeat(480));
+        sampleRun.setPublication(null);
+        when(pubRepo.findById(runId)).thenReturn(Optional.empty());
+        CompliancePublicationResult emptyUrlResult = CompliancePublicationResult.reconciled(
+                runId, null, null, null, "sha-edge", OffsetDateTime.now(ZoneOffset.UTC), null);
+        ValidationRunPublication published = pubService.recordPublication(
+                sampleRun, "user@example.com", edgeSlugRequest, emptyUrlResult);
+        assertThat(published.getProductSlug()).isEqualTo("a".repeat(119));
+        assertThat(published.getReportUrl()).isEqualTo("https://invalid-compliance-base.invalid/compliance/?run=" + runId);
+        assertThat(published.getBadgeUrl()).isEqualTo("https://invalid-compliance-base.invalid/compliance/badges/" + runId + ".svg");
+    }
+
+    @Test
+    void shutdownExecutorCancelsQueuedCommittedRunsAndDiscoverTestCountScrubsSecrets() throws Exception {
+        Class.forName(de.palsoftware.scim.validator.ui.ScimValidatorManagementApplication.class.getName());
+
+        TargetUrlPolicy publicPolicy = new TargetUrlPolicy(
+                false, host -> new java.net.InetAddress[]{java.net.InetAddress.getByName("93.184.216.34")});
+
+        // 1. discoverTestCount scrubs secrets from thrown exceptions (both message and null-message branches)
+        ValidationRunService throwingDiscoverSvc = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, progressTracker, null) {
+            private int calls;
+
+            @Override
+            org.junit.platform.launcher.TestPlan discoverTestPlan(LauncherDiscoveryRequest request) {
+                if (calls++ == 0) {
+                    throw new IllegalStateException("Discovery exploded with secret-token-999");
+                }
+                throw new IllegalStateException((String) null);
+            }
+        };
+        try {
+            assertThat(throwingDiscoverSvc.discoverTestCount("https://example.com/scim/v2", "secret-token-999"))
+                    .isEqualTo(ValidationRunService.DEFAULT_DISCOVERED_TEST_COUNT);
+            assertThat(throwingDiscoverSvc.discoverTestCount("https://example.com/scim/v2", "secret-token-999"))
+                    .isEqualTo(ValidationRunService.DEFAULT_DISCOVERED_TEST_COUNT);
+        } finally {
+            throwingDiscoverSvc.shutdownExecutor();
+        }
+
+        // 2. Queued committed async run on owned executor is cancelled cleanly on shutdownExecutor()
+        UUID firstRunId = UUID.randomUUID();
+        UUID queuedRunId = UUID.randomUUID();
+        ValidationRun firstRun = new ValidationRun();
+        ValidationRun queuedRun = new ValidationRun();
+        var idField = ValidationRun.class.getDeclaredField("id");
+        idField.setAccessible(true);
+        idField.set(firstRun, firstRunId);
+        idField.set(queuedRun, queuedRunId);
+        firstRun.setStatus("RUNNING");
+        queuedRun.setStatus("RUNNING");
+
+        ValidationMgmtUser owner = new ValidationMgmtUser("user@example.com", OffsetDateTime.now());
+        when(mgmtUserRepository.findById("user@example.com")).thenReturn(Optional.of(owner));
+        java.util.concurrent.atomic.AtomicInteger saveSeq = new java.util.concurrent.atomic.AtomicInteger();
+        when(runRepository.saveAndFlush(any(ValidationRun.class))).thenAnswer(inv ->
+                saveSeq.incrementAndGet() == 1 ? firstRun : queuedRun);
+        when(runRepository.findById(firstRunId)).thenReturn(Optional.of(firstRun));
+        when(runRepository.findById(queuedRunId)).thenReturn(Optional.of(queuedRun));
+        when(runRepository.save(any(ValidationRun.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        java.util.concurrent.CountDownLatch workerStarted = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch blockWorker = new java.util.concurrent.CountDownLatch(1);
+
+        ValidationRunService ownedPoolSvc = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository,
+                null, progressTracker, publicPolicy, null, null, 1, 2) {
+            @Override
+            int discoverTestCount(String baseUrl, String authToken) {
+                return 5;
+            }
+
+            @Override
+            void executeLauncher(org.junit.platform.launcher.Launcher launcher,
+                                 LauncherDiscoveryRequest request,
+                                 org.junit.platform.launcher.TestExecutionListener listener) {
+                workerStarted.countDown();
+                try {
+                    blockWorker.await(5, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        };
+        ownedPoolSvc.setMaxActiveRunsPerUser(2);
+
+        ValidationRunForm form = new ValidationRunForm("Queued Run", "https://example.com/scim/v2", "secret-token-999");
+        ownedPoolSvc.executeRunAsync(form, "user@example.com");
+        assertThat(workerStarted.await(3, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+
+        // Second run sits in the LinkedBlockingQueue behind the 1 busy worker thread
+        ownedPoolSvc.executeRunAsync(form, "user@example.com");
+
+        // Shut down executor while run #2 is queued -> drains queue, marks queuedRun ERROR, fails progressTracker
+        ownedPoolSvc.shutdownExecutor();
+        blockWorker.countDown();
+
+        assertThat(queuedRun.getStatus()).isEqualTo("ERROR");
+        verify(progressTracker).failRun(eq(queuedRunId), eq("Validation run cancelled during shutdown"));
+
+        // Edge branches on CancelableAsyncRunTask & cancelDroppedAsyncTasks
+        ValidationRunService.cancelDroppedAsyncTasks(null);
+        ValidationRunService.CancelableAsyncRunTask edgeTask =
+                new ValidationRunService.CancelableAsyncRunTask(ownedPoolSvc, null);
+        edgeTask.cancelQueuedOnShutdown();
+        edgeTask.cancelQueuedOnShutdown();
+        edgeTask.run();
+
+        ValidationRunService.CancelableAsyncRunTask interruptedTask =
+                new ValidationRunService.CancelableAsyncRunTask(ownedPoolSvc, null);
+        Thread.currentThread().interrupt();
+        try {
+            interruptedTask.run();
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+        } finally {
+            Thread.interrupted();
+        }
+        interruptedTask.abortBeforeHandoff();
+
+        // Aborted follow-up request (e.g. https -> http downgrade on /Me) records ABORTED + PARTIAL run status
+        when(testResultRepository.save(any(ValidationTestResult.class))).thenAnswer(inv -> inv.getArgument(0));
+        ValidationRunService abortedSvc = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, progressTracker, null) {
+            @Override
+            int discoverTestCount(String baseUrl, String authToken) {
+                return 1;
+            }
+
+            @Override
+            void executeLauncher(org.junit.platform.launcher.Launcher launcher,
+                                 LauncherDiscoveryRequest request,
+                                 org.junit.platform.launcher.TestExecutionListener listener) {
+                TestDescriptor d = org.mockito.Mockito.mock(TestDescriptor.class);
+                when(d.getUniqueId()).thenReturn(UniqueId.forEngine("test-engine").append("test", "me-downgrade"));
+                when(d.getType()).thenReturn(TestDescriptor.Type.TEST);
+                when(d.getDisplayName()).thenReturn("ME_01");
+                TestIdentifier id = TestIdentifier.from(d);
+                listener.executionStarted(id);
+                listener.executionFinished(id, TestExecutionResult.aborted(
+                        new org.opentest4j.TestAbortedException("Skipped follow-up request due to scheme downgrade")));
+            }
+        };
+        abortedSvc.setTargetUrlPolicy(publicPolicy);
+        try {
+            ValidationRun executed = abortedSvc.executeRun(form, "user@example.com").getRun();
+            assertThat(executed.getStatus()).isEqualTo("PARTIAL");
+            assertThat(executed.getAbortedTests()).isEqualTo(1);
+            assertThat(executed.getFailedTests()).isZero();
+        } finally {
+            abortedSvc.shutdownExecutor();
+        }
+    }
+
+    @Test
+    void uncaughtErrorInSyncAndAsyncExecutionMarksRunErrorFailsProgressAndReleasesPermitsWithoutSwallowingError()
+            throws Exception {
+        TargetUrlPolicy publicPolicy = new TargetUrlPolicy(
+                false, host -> new java.net.InetAddress[]{java.net.InetAddress.getByName("93.184.216.34")});
+        ValidationMgmtUser owner = new ValidationMgmtUser("user@example.com", OffsetDateTime.now());
+        when(mgmtUserRepository.findById("user@example.com")).thenReturn(Optional.of(owner));
+        when(testResultRepository.save(any(ValidationTestResult.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        var idField = ValidationRun.class.getDeclaredField("id");
+        idField.setAccessible(true);
+
+        // 1. Synchronous executeRun: OutOfMemoryError propagates unmodified, DB row & progressTracker become ERROR,
+        //    and permits + activeRunsByUser + activeRunIds are all released so a follow-up run succeeds.
+        ValidationProgressTracker realTracker = new ValidationProgressTracker();
+        AtomicReference<ValidationRun> lastSavedSyncRun = new AtomicReference<>();
+        AtomicReference<UUID> lastSyncRunId = new AtomicReference<>();
+        java.util.concurrent.atomic.AtomicBoolean throwOom = new java.util.concurrent.atomic.AtomicBoolean(true);
+
+        when(runRepository.save(any(ValidationRun.class))).thenAnswer(inv -> {
+            ValidationRun r = inv.getArgument(0);
+            if (r.getId() == null) {
+                UUID generated = UUID.randomUUID();
+                idField.set(r, generated);
+                lastSyncRunId.set(generated);
+            }
+            lastSavedSyncRun.set(r);
+            return r;
+        });
+
+        ValidationRunService syncOomSvc = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository,
+                null, realTracker, publicPolicy, null, null, 1, 2) {
+            @Override
+            int discoverTestCount(String baseUrl, String authToken) {
+                return 2;
+            }
+
+            @Override
+            void executeLauncher(org.junit.platform.launcher.Launcher launcher,
+                                 LauncherDiscoveryRequest request,
+                                 org.junit.platform.launcher.TestExecutionListener listener) {
+                TestDescriptor d = org.mockito.Mockito.mock(TestDescriptor.class);
+                when(d.getUniqueId()).thenReturn(UniqueId.forEngine("test-engine").append("test", "pre-oom"));
+                when(d.getType()).thenReturn(TestDescriptor.Type.TEST);
+                when(d.getDisplayName()).thenReturn("USR_PRE_OOM");
+                TestIdentifier id = TestIdentifier.from(d);
+                listener.executionStarted(id);
+                listener.executionFinished(id, TestExecutionResult.successful());
+                if (throwOom.get()) {
+                    throw new OutOfMemoryError("Simulated huge response OOM");
+                }
+            }
+        };
+        syncOomSvc.setMaxActiveRunsPerUser(1);
+
+        ValidationRunForm form = new ValidationRunForm("OOM Run", "https://example.com/scim/v2", "secret-oom-123");
+        try {
+            assertThatThrownBy(() -> syncOomSvc.executeRun(form, "user@example.com"))
+                    .isInstanceOf(OutOfMemoryError.class)
+                    .hasMessageContaining("Simulated huge response OOM");
+
+            UUID oomRunId = lastSyncRunId.get();
+            assertThat(oomRunId).isNotNull();
+            assertThat(lastSavedSyncRun.get().getStatus()).isEqualTo("ERROR");
+            assertThat(lastSavedSyncRun.get().getTotalTests()).isEqualTo(1);
+            assertThat(lastSavedSyncRun.get().getPassedTests()).isEqualTo(1);
+            assertThat(realTracker.getProgress(oomRunId).status()).isEqualTo("ERROR");
+            assertThat(realTracker.getProgress(oomRunId).errorMessage())
+                    .isEqualTo(ValidationRunService.MSG_ABRUPT_RUNTIME_ABORT);
+            assertThat(syncOomSvc.isRunActiveInMemory(oomRunId)).isFalse();
+
+            // Proves concurrentRunPermits (1) and maxActiveRunsPerUser (1) were cleanly released
+            throwOom.set(false);
+            assertThat(syncOomSvc.executeRun(form, "user@example.com").getRun().getStatus()).isEqualTo("PASSED");
+        } finally {
+            syncOomSvc.shutdownExecutor();
+        }
+
+        // 1b. Secondary DB save failure inside recordAbruptRunTermination never masks the unwinding Error
+        when(runRepository.save(any(ValidationRun.class))).thenAnswer(inv -> {
+            ValidationRun r = inv.getArgument(0);
+            if (r.getId() == null) {
+                UUID generated = UUID.randomUUID();
+                idField.set(r, generated);
+                lastSyncRunId.set(generated);
+                return r;
+            }
+            throw new IllegalStateException("DB unavailable during OOM cleanup");
+        });
+        throwOom.set(true);
+        ValidationRunService dbFailOnOomSvc = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository,
+                null, realTracker, publicPolicy, null, null, 1, 1) {
+            @Override
+            int discoverTestCount(String baseUrl, String authToken) {
+                return 1;
+            }
+
+            @Override
+            void executeLauncher(org.junit.platform.launcher.Launcher launcher,
+                                 LauncherDiscoveryRequest request,
+                                 org.junit.platform.launcher.TestExecutionListener listener) {
+                throw new OutOfMemoryError("Primary OOM must not be masked");
+            }
+        };
+        try {
+            assertThatThrownBy(() -> dbFailOnOomSvc.executeRun(form, "user@example.com"))
+                    .isInstanceOf(OutOfMemoryError.class)
+                    .hasMessageContaining("Primary OOM must not be masked");
+            assertThat(realTracker.getProgress(lastSyncRunId.get()).status()).isEqualTo("ERROR");
+        } finally {
+            dbFailOnOomSvc.shutdownExecutor();
+        }
+
+        // 2. Asynchronous executeRunAsync / runTestsInBackground: OutOfMemoryError marks DB + progressTracker ERROR
+        //    and releases permits + activeRunsByUser + activeRunIds
+        java.util.Map<UUID, ValidationRun> asyncRuns = new java.util.concurrent.ConcurrentHashMap<>();
+        when(runRepository.saveAndFlush(any(ValidationRun.class))).thenAnswer(inv -> {
+            ValidationRun r = inv.getArgument(0);
+            if (r.getId() == null) {
+                idField.set(r, UUID.randomUUID());
+            }
+            asyncRuns.put(r.getId(), r);
+            return r;
+        });
+        when(runRepository.findById(any(UUID.class))).thenAnswer(inv -> Optional.ofNullable(asyncRuns.get(inv.getArgument(0))));
+        when(runRepository.save(any(ValidationRun.class))).thenAnswer(inv -> {
+            ValidationRun r = inv.getArgument(0);
+            asyncRuns.put(r.getId(), r);
+            return r;
+        });
+
+        java.util.concurrent.CountDownLatch workerUnwoundLatch = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch secondRunDoneLatch = new java.util.concurrent.CountDownLatch(1);
+        AtomicReference<Throwable> uncaughtFromWorker = new AtomicReference<>();
+        java.util.concurrent.ThreadPoolExecutor customPool = new java.util.concurrent.ThreadPoolExecutor(
+                1, 1, 60L, java.util.concurrent.TimeUnit.SECONDS,
+                new java.util.concurrent.LinkedBlockingQueue<>(2),
+                runnable -> {
+                    Thread t = new Thread(runnable, "test-oom-worker");
+                    t.setDaemon(true);
+                    t.setUncaughtExceptionHandler((thr, err) -> {
+                        uncaughtFromWorker.set(err);
+                        workerUnwoundLatch.countDown();
+                    });
+                    return t;
+                });
+
+        java.util.concurrent.atomic.AtomicBoolean asyncThrowOom = new java.util.concurrent.atomic.AtomicBoolean(true);
+        ValidationRunService asyncOomSvc = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository,
+                realTracker, customPool) {
+            @Override
+            int discoverTestCount(String baseUrl, String authToken) {
+                return 1;
+            }
+
+            @Override
+            void executeLauncher(org.junit.platform.launcher.Launcher launcher,
+                                 LauncherDiscoveryRequest request,
+                                 org.junit.platform.launcher.TestExecutionListener listener) {
+                if (asyncThrowOom.get()) {
+                    throw new OutOfMemoryError("Simulated async worker OOM");
+                }
+                secondRunDoneLatch.countDown();
+            }
+        };
+        asyncOomSvc.setTargetUrlPolicy(publicPolicy);
+        asyncOomSvc.setMaxConcurrentRuns(1);
+        asyncOomSvc.setMaxActiveRunsPerUser(1);
+
+        try {
+            ValidationRun asyncOomRun = asyncOomSvc.executeRunAsync(form, "user@example.com").getRun();
+            UUID asyncOomId = asyncOomRun.getId();
+            assertThat(workerUnwoundLatch.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(uncaughtFromWorker.get())
+                    .isInstanceOf(OutOfMemoryError.class)
+                    .hasMessageContaining("Simulated async worker OOM");
+            assertThat(asyncRuns.get(asyncOomId).getStatus()).isEqualTo("ERROR");
+            assertThat(realTracker.getProgress(asyncOomId).status()).isEqualTo("ERROR");
+            assertThat(asyncOomSvc.isRunActiveInMemory(asyncOomId)).isFalse();
+
+            // Second async run on same user with maxActiveRunsPerUser=1 and maxConcurrentRuns=1 succeeds
+            asyncThrowOom.set(false);
+            ValidationRun secondRun = asyncOomSvc.executeRunAsync(form, "user@example.com").getRun();
+            assertThat(secondRunDoneLatch.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            for (int i = 0; i < 50
+                    && ("RUNNING".equals(asyncRuns.get(secondRun.getId()).getStatus())
+                            || asyncOomSvc.isRunActiveInMemory(secondRun.getId())); i++) {
+                Thread.sleep(20);
+            }
+            assertThat(asyncRuns.get(secondRun.getId()).getStatus()).isEqualTo("PASSED");
+            assertThat(asyncOomSvc.isRunActiveInMemory(secondRun.getId())).isFalse();
+        } finally {
+            customPool.shutdownNow();
+        }
+    }
+
+    @Test
+    void startupAndPeriodicRunningReconciliationMarksOrphanedAndStaleRunsErrorWhilePreservingActiveRuns()
+            throws Exception {
+        var idField = ValidationRun.class.getDeclaredField("id");
+        idField.setAccessible(true);
+
+        UUID orphanedId = UUID.randomUUID();
+        UUID activeId = UUID.randomUUID();
+        UUID alreadyFinishedId = UUID.randomUUID();
+
+        ValidationRun orphanedRun = new ValidationRun();
+        idField.set(orphanedRun, orphanedId);
+        orphanedRun.setStatus("RUNNING");
+        orphanedRun.setExecutedAt(OffsetDateTime.now().minusMinutes(120));
+
+        ValidationRun activeRun = new ValidationRun();
+        idField.set(activeRun, activeId);
+        activeRun.setStatus("RUNNING");
+        activeRun.setExecutedAt(OffsetDateTime.now().minusMinutes(120));
+
+        ValidationRun alreadyFinishedOnReload = new ValidationRun();
+        idField.set(alreadyFinishedOnReload, alreadyFinishedId);
+        alreadyFinishedOnReload.setStatus("RUNNING");
+
+        ValidationRun reloadedPassed = new ValidationRun();
+        idField.set(reloadedPassed, alreadyFinishedId);
+        reloadedPassed.setStatus("PASSED");
+
+        when(runRepository.findById(orphanedId)).thenReturn(Optional.of(orphanedRun));
+        when(runRepository.findById(alreadyFinishedId)).thenReturn(Optional.of(reloadedPassed));
+        when(runRepository.save(any(ValidationRun.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        ValidationProgressTracker realTracker = new ValidationProgressTracker();
+        realTracker.registerRun(orphanedId, 10, "/runs/" + orphanedId);
+        realTracker.registerRun(activeId, 10, "/runs/" + activeId);
+
+        ValidationRunService svc = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, realTracker, null);
+        svc.setStaleRunningTimeoutMinutes(30);
+        assertThat(svc.getStaleRunningTimeoutMinutes()).isEqualTo(30);
+        svc.registerActiveRunForTesting(activeId);
+
+        try {
+            // 1. Startup reconciliation marks orphaned RUNNING as ERROR, skips activeId and already-finished row
+            when(runRepository.findByStatus("RUNNING"))
+                    .thenReturn(java.util.Arrays.asList(orphanedRun, activeRun, alreadyFinishedOnReload, null));
+            int startupReconciled = svc.reconcileOrphanedRunningRunsOnStartup();
+            assertThat(startupReconciled).isEqualTo(1);
+            assertThat(orphanedRun.getStatus()).isEqualTo("ERROR");
+            assertThat(realTracker.getProgress(orphanedId).status()).isEqualTo("ERROR");
+            assertThat(realTracker.getProgress(orphanedId).errorMessage())
+                    .isEqualTo(ValidationRunService.MSG_STARTUP_ORPHAN_ABORT);
+            assertThat(activeRun.getStatus()).isEqualTo("RUNNING");
+            assertThat(realTracker.getProgress(activeId).status()).isEqualTo("RUNNING");
+
+            // 2. Periodic stale reconciliation marks stale non-active RUNNING row as ERROR, skips activeId,
+            //    and tolerates per-row persistence errors without aborting remaining rows
+            UUID staleId = UUID.randomUUID();
+            ValidationRun staleRun = new ValidationRun();
+            idField.set(staleRun, staleId);
+            staleRun.setStatus("RUNNING");
+            staleRun.setExecutedAt(OffsetDateTime.now().minusMinutes(45));
+            realTracker.registerRun(staleId, 10, "/runs/" + staleId);
+
+            UUID failingId = UUID.randomUUID();
+            ValidationRun failingRun = new ValidationRun();
+            idField.set(failingRun, failingId);
+            failingRun.setStatus("RUNNING");
+
+            when(runRepository.findById(staleId)).thenReturn(Optional.of(staleRun));
+            when(runRepository.findById(failingId)).thenThrow(new IllegalStateException("Transient DB error"));
+            when(runRepository.findStaleRunsByStatus(eq("RUNNING"), any(OffsetDateTime.class)))
+                    .thenReturn(List.of(failingRun, activeRun, staleRun));
+
+            int periodicReconciled = svc.reconcileStaleRunningRuns();
+            assertThat(periodicReconciled).isEqualTo(1);
+            assertThat(staleRun.getStatus()).isEqualTo("ERROR");
+            assertThat(realTracker.getProgress(staleId).status()).isEqualTo("ERROR");
+            assertThat(realTracker.getProgress(staleId).errorMessage())
+                    .isEqualTo(ValidationRunService.MSG_STALE_RUN_TIMEOUT);
+            assertThat(activeRun.getStatus()).isEqualTo("RUNNING");
+
+            // Empty candidate list, null-id candidate, & null repository branches
+            ValidationRun unpersistedRunning = new ValidationRun();
+            unpersistedRunning.setStatus("RUNNING");
+            when(runRepository.findByStatus("RUNNING")).thenReturn(List.of(unpersistedRunning));
+            assertThat(svc.reconcileOrphanedRunningRunsOnStartup()).isEqualTo(1);
+            assertThat(unpersistedRunning.getStatus()).isEqualTo("ERROR");
+
+            when(runRepository.findByStatus("RUNNING")).thenReturn(null);
+            assertThat(svc.reconcileOrphanedRunningRunsOnStartup()).isZero();
+
+            when(runRepository.findStaleRunsByStatus(eq("RUNNING"), any(OffsetDateTime.class))).thenReturn(List.of());
+            assertThat(svc.reconcileStaleRunningRuns()).isZero();
+
+            ValidationRun preListenerOomRun = new ValidationRun();
+            preListenerOomRun.setStatus("RUNNING");
+            svc.snapshotAndRecordAbruptTermination(preListenerOomRun, null, null);
+            assertThat(preListenerOomRun.getStatus()).isEqualTo("ERROR");
+            assertThat(preListenerOomRun.getTotalTests()).isZero();
+
+            assertThat(svc.isRunActiveInMemory(null)).isFalse();
+            svc.registerActiveRunForTesting(null);
+            svc.unregisterActiveRunForTesting(null);
+            svc.unregisterActiveRunForTesting(activeId);
+            assertThat(svc.isRunActiveInMemory(activeId)).isFalse();
+        } finally {
+            svc.shutdownExecutor();
+        }
+
+        ValidationRunService nullRepoSvc = new ValidationRunService(null, null, null, null, realTracker, null);
+        try {
+            assertThat(nullRepoSvc.reconcileOrphanedRunningRunsOnStartup()).isZero();
+            assertThat(nullRepoSvc.reconcileStaleRunningRuns()).isZero();
+        } finally {
+            nullRepoSvc.shutdownExecutor();
+        }
+    }
+
+    @Test
+    void postCommitPreSuiteAndHandoffErrorsAndStartupPreRegistrationRaceAreCleanedUpSafely()
+            throws Exception {
+        TargetUrlPolicy publicPolicy = new TargetUrlPolicy(
+                false, host -> new java.net.InetAddress[]{java.net.InetAddress.getByName("93.184.216.34")});
+        ValidationMgmtUser owner = new ValidationMgmtUser("user@example.com", OffsetDateTime.now());
+        when(mgmtUserRepository.findById("user@example.com")).thenReturn(Optional.of(owner));
+
+        var idField = ValidationRun.class.getDeclaredField("id");
+        idField.setAccessible(true);
+
+        java.util.Map<UUID, ValidationRun> dbRuns = new java.util.concurrent.ConcurrentHashMap<>();
+        when(runRepository.save(any(ValidationRun.class))).thenAnswer(inv -> {
+            ValidationRun r = inv.getArgument(0);
+            if (r.getId() == null) {
+                idField.set(r, UUID.randomUUID());
+            }
+            dbRuns.put(r.getId(), r);
+            return r;
+        });
+        when(runRepository.saveAndFlush(any(ValidationRun.class))).thenAnswer(inv -> {
+            ValidationRun r = inv.getArgument(0);
+            if (r.getId() == null) {
+                idField.set(r, UUID.randomUUID());
+            }
+            dbRuns.put(r.getId(), r);
+            return r;
+        });
+        when(runRepository.findById(any(UUID.class))).thenAnswer(inv -> Optional.ofNullable(dbRuns.get(inv.getArgument(0))));
+        when(runRepository.findByStatus("RUNNING")).thenAnswer(inv -> dbRuns.values().stream()
+                .filter(r -> "RUNNING".equals(r.getStatus()))
+                .toList());
+
+        ValidationRunForm form = new ValidationRunForm("Suite", "https://scim.example.com/v2", "secret-token-123");
+        ValidationProgressTracker realTracker = new ValidationProgressTracker();
+
+        // 1. CancelableAsyncRunTask.run() unwinding on OutOfMemoryError from handoff.get() marks DB + progress ERROR
+        //    and releases activeRunsByUser + activeRunIds so a subsequent run succeeds
+        java.util.concurrent.CountDownLatch handoffOomLatch = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch followUpDoneLatch = new java.util.concurrent.CountDownLatch(1);
+        AtomicReference<Throwable> workerError = new AtomicReference<>();
+        java.util.concurrent.ThreadPoolExecutor singleWorkerPool = new java.util.concurrent.ThreadPoolExecutor(
+                1, 1, 60L, java.util.concurrent.TimeUnit.SECONDS,
+                new java.util.concurrent.LinkedBlockingQueue<>(4),
+                runnable -> {
+                    Thread t = new Thread(runnable, "test-handoff-oom-worker");
+                    t.setDaemon(true);
+                    t.setUncaughtExceptionHandler((thr, err) -> {
+                        workerError.set(err);
+                        handoffOomLatch.countDown();
+                    });
+                    return t;
+                });
+
+        java.util.concurrent.atomic.AtomicBoolean injectHandoffOom = new java.util.concurrent.atomic.AtomicBoolean(true);
+        ValidationRunService handoffOomSvc = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository,
+                realTracker, singleWorkerPool) {
+            @Override
+            int discoverTestCount(String baseUrl, String authToken) {
+                return 1;
+            }
+
+            @Override
+            CancelableAsyncRunTask createAsyncRunTask(String activeSlotKey) {
+                if (!injectHandoffOom.get()) {
+                    return super.createAsyncRunTask(activeSlotKey);
+                }
+                java.util.concurrent.CompletableFuture<ScheduledRunPayload> oomFuture =
+                        new java.util.concurrent.CompletableFuture<>() {
+                            @Override
+                            public ScheduledRunPayload get() throws InterruptedException, java.util.concurrent.ExecutionException {
+                                super.get();
+                                throw new OutOfMemoryError("Simulated handoff.get() OOM");
+                            }
+                        };
+                return new CancelableAsyncRunTask(this, activeSlotKey, oomFuture);
+            }
+
+            @Override
+            void executeLauncher(org.junit.platform.launcher.Launcher launcher,
+                                 LauncherDiscoveryRequest request,
+                                 org.junit.platform.launcher.TestExecutionListener listener) {
+                followUpDoneLatch.countDown();
+            }
+        };
+        handoffOomSvc.setTargetUrlPolicy(publicPolicy);
+        handoffOomSvc.setMaxActiveRunsPerUser(1);
+        handoffOomSvc.setMaxConcurrentRuns(1);
+
+        try {
+            ValidationRun handoffOomRun = handoffOomSvc.executeRunAsync(form, "user@example.com").getRun();
+            UUID handoffOomId = handoffOomRun.getId();
+            assertThat(handoffOomLatch.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(workerError.get())
+                    .isInstanceOf(OutOfMemoryError.class)
+                    .hasMessageContaining("Simulated handoff.get() OOM");
+            assertThat(dbRuns.get(handoffOomId).getStatus()).isEqualTo("ERROR");
+            assertThat(realTracker.getProgress(handoffOomId).status()).isEqualTo("ERROR");
+            assertThat(handoffOomSvc.isRunActiveInMemory(handoffOomId)).isFalse();
+
+            // Direct CancellationException & ExecutionException coverage on CancelableAsyncRunTask
+            UUID cancelledId = UUID.randomUUID();
+            ValidationRun cancelledRun = new ValidationRun();
+            idField.set(cancelledRun, cancelledId);
+            cancelledRun.setStatus("RUNNING");
+            dbRuns.put(cancelledId, cancelledRun);
+            realTracker.registerRun(cancelledId, 1, "/runs/" + cancelledId);
+            java.util.concurrent.CompletableFuture<ValidationRunService.ScheduledRunPayload> cancelledFuture =
+                    new java.util.concurrent.CompletableFuture<>();
+            ValidationRunService.CancelableAsyncRunTask cancelledTask =
+                    new ValidationRunService.CancelableAsyncRunTask(handoffOomSvc, null, cancelledFuture);
+            cancelledTask.bindRunId(cancelledId);
+            cancelledFuture.cancel(true);
+            assertThatThrownBy(cancelledTask::run)
+                    .isInstanceOf(java.util.concurrent.CancellationException.class);
+            assertThat(dbRuns.get(cancelledId).getStatus()).isEqualTo("ERROR");
+            assertThat(handoffOomSvc.isRunActiveInMemory(cancelledId)).isFalse();
+
+            java.util.concurrent.CompletableFuture<ValidationRunService.ScheduledRunPayload> execExFuture =
+                    new java.util.concurrent.CompletableFuture<>();
+            execExFuture.completeExceptionally(new IllegalStateException("handoff failed"));
+            ValidationRunService.CancelableAsyncRunTask execExTask =
+                    new ValidationRunService.CancelableAsyncRunTask(handoffOomSvc, null, execExFuture);
+            UUID execExId = UUID.randomUUID();
+            execExTask.bindRunId(execExId);
+            execExTask.run();
+            assertThat(handoffOomSvc.isRunActiveInMemory(execExId)).isFalse();
+
+            // Follow-up run for same user succeeds (proves activeRunsByUser slot was released)
+            injectHandoffOom.set(false);
+            ValidationRun okRun = handoffOomSvc.executeRunAsync(form, "user@example.com").getRun();
+            assertThat(followUpDoneLatch.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            for (int i = 0; i < 50
+                    && ("RUNNING".equals(dbRuns.get(okRun.getId()).getStatus())
+                            || handoffOomSvc.isRunActiveInMemory(okRun.getId())); i++) {
+                Thread.sleep(20);
+            }
+            assertThat(dbRuns.get(okRun.getId()).getStatus()).isEqualTo("PASSED");
+        } finally {
+            singleWorkerPool.shutdownNow();
+        }
+
+        // 2. awaitPersistedRun unwinding on OutOfMemoryError (and RuntimeException) marks DB + progress ERROR
+        UUID awaitOomId = UUID.randomUUID();
+        ValidationRun awaitOomRun = new ValidationRun();
+        idField.set(awaitOomRun, awaitOomId);
+        awaitOomRun.setStatus("RUNNING");
+        dbRuns.put(awaitOomId, awaitOomRun);
+        realTracker.registerRun(awaitOomId, 2, "/runs/" + awaitOomId);
+
+        java.util.concurrent.atomic.AtomicBoolean throwAwaitOom = new java.util.concurrent.atomic.AtomicBoolean(true);
+        ValidationRunService awaitErrSvc = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, realTracker, null) {
+            @Override
+            ValidationRun awaitPersistedRun(UUID id) {
+                if (throwAwaitOom.get()) {
+                    throw new OutOfMemoryError("Simulated awaitPersistedRun OOM");
+                }
+                throw new IllegalStateException("Init error leaking secret-token-123");
+            }
+        };
+        awaitErrSvc.setTargetUrlPolicy(publicPolicy);
+        try {
+            assertThatThrownBy(() -> awaitErrSvc.runTestsInBackground(awaitOomId, form, 2))
+                    .isInstanceOf(OutOfMemoryError.class)
+                    .hasMessageContaining("Simulated awaitPersistedRun OOM");
+            assertThat(dbRuns.get(awaitOomId).getStatus()).isEqualTo("ERROR");
+            assertThat(realTracker.getProgress(awaitOomId).status()).isEqualTo("ERROR");
+
+            UUID awaitExId = UUID.randomUUID();
+            ValidationRun awaitExRun = new ValidationRun();
+            idField.set(awaitExRun, awaitExId);
+            awaitExRun.setStatus("RUNNING");
+            dbRuns.put(awaitExId, awaitExRun);
+            realTracker.registerRun(awaitExId, 2, "/runs/" + awaitExId);
+            throwAwaitOom.set(false);
+            awaitErrSvc.runTestsInBackground(awaitExId, form, 2);
+            assertThat(dbRuns.get(awaitExId).getStatus()).isEqualTo("ERROR");
+            assertThat(realTracker.getProgress(awaitExId).errorMessage())
+                    .contains("[REDACTED]")
+                    .doesNotContain("secret-token-123");
+        } finally {
+            awaitErrSvc.shutdownExecutor();
+        }
+
+        // 3. Post-commit pre-suite / pre-handoff Error (in progressTracker.registerRun) marks committed DB row ERROR
+        //    and releases slots + activeRunIds in both executeRun and executeRunAsync
+        ValidationProgressTracker failingRegisterTracker = new ValidationProgressTracker() {
+            @Override
+            public void registerRun(UUID id, int total, String redirectUrl) {
+                throw new OutOfMemoryError("Simulated registerRun OOM after commit");
+            }
+        };
+        ValidationRunService postCommitFailSvc = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, failingRegisterTracker, null) {
+            @Override
+            int discoverTestCount(String baseUrl, String authToken) {
+                return 1;
+            }
+        };
+        postCommitFailSvc.setTargetUrlPolicy(publicPolicy);
+        postCommitFailSvc.setMaxActiveRunsPerUser(1);
+        postCommitFailSvc.setMaxConcurrentRuns(1);
+        try {
+            int beforeCount = dbRuns.size();
+            assertThatThrownBy(() -> postCommitFailSvc.executeRun(form, "user@example.com"))
+                    .isInstanceOf(OutOfMemoryError.class)
+                    .hasMessageContaining("Simulated registerRun OOM after commit");
+            assertThat(dbRuns).hasSize(beforeCount + 1);
+            assertThat(dbRuns.values()).allMatch(r -> !"RUNNING".equals(r.getStatus()));
+
+            assertThatThrownBy(() -> postCommitFailSvc.executeRunAsync(form, "user@example.com"))
+                    .isInstanceOf(OutOfMemoryError.class)
+                    .hasMessageContaining("Simulated registerRun OOM after commit");
+            assertThat(dbRuns).hasSize(beforeCount + 2);
+            assertThat(dbRuns.values()).allMatch(r -> !"RUNNING".equals(r.getStatus()));
+        } finally {
+            postCommitFailSvc.shutdownExecutor();
+        }
+
+        // 4. Startup reconciliation race during commit + commit-failure cleanup of pre-registered activeRunIds
+        AtomicReference<ValidationRunService> txRaceSvcRef = new AtomicReference<>();
+        java.util.concurrent.atomic.AtomicInteger startupReconciledDuringCommit = new java.util.concurrent.atomic.AtomicInteger(-1);
+        java.util.concurrent.atomic.AtomicBoolean failCommit = new java.util.concurrent.atomic.AtomicBoolean(false);
+        AtomicReference<UUID> lastPreRegisteredId = new AtomicReference<>();
+
+        org.springframework.transaction.PlatformTransactionManager raceTxManager =
+                new org.springframework.transaction.support.AbstractPlatformTransactionManager() {
+                    @Override
+                    protected Object doGetTransaction() {
+                        return new Object();
+                    }
+
+                    @Override
+                    protected void doBegin(Object transaction, org.springframework.transaction.TransactionDefinition definition) {
+                        // no-op in-memory tx
+                    }
+
+                    @Override
+                    protected void doCommit(org.springframework.transaction.support.DefaultTransactionStatus status) {
+                        dbRuns.keySet().forEach(lastPreRegisteredId::set);
+                        if (failCommit.get()) {
+                            throw new IllegalStateException("Simulated DB commit failure");
+                        }
+                        // Simulate startup reconciliation firing at the exact moment the RUNNING row commits
+                        startupReconciledDuringCommit.set(txRaceSvcRef.get().reconcileOrphanedRunningRunsOnStartup());
+                    }
+
+                    @Override
+                    protected void doRollback(org.springframework.transaction.support.DefaultTransactionStatus status) {
+                        // no-op
+                    }
+                };
+
+        ValidationRunService txRaceSvc = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository,
+                realTracker, null) {
+            @Override
+            int discoverTestCount(String baseUrl, String authToken) {
+                return 1;
+            }
+
+            @Override
+            void executeLauncher(org.junit.platform.launcher.Launcher launcher,
+                                 LauncherDiscoveryRequest request,
+                                 org.junit.platform.launcher.TestExecutionListener listener) {
+                // Verify run was NOT clobbered to ERROR by startup reconciliation during commit
+                assertThat(startupReconciledDuringCommit.get()).isZero();
+            }
+        };
+        txRaceSvc.setTargetUrlPolicy(publicPolicy);
+        txRaceSvc.setTransactionManager(raceTxManager);
+        txRaceSvc.setMaxConcurrentRuns(1);
+        txRaceSvc.setMaxActiveRunsPerUser(1);
+        txRaceSvcRef.set(txRaceSvc);
+        dbRuns.clear();
+
+        try {
+            ValidationRun raceSafeRun = txRaceSvc.executeRun(form, "user@example.com").getRun();
+            assertThat(startupReconciledDuringCommit.get()).isZero();
+            assertThat(raceSafeRun.getStatus()).isEqualTo("PASSED");
+            assertThat(txRaceSvc.isRunActiveInMemory(raceSafeRun.getId())).isFalse();
+
+            // Commit failure on both sync and async still removes pre-registered ID from activeRunIds
+            dbRuns.clear();
+            failCommit.set(true);
+            assertThatThrownBy(() -> txRaceSvc.executeRun(form, "user@example.com"))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("Simulated DB commit failure");
+            assertThat(lastPreRegisteredId.get()).isNotNull();
+            assertThat(txRaceSvc.isRunActiveInMemory(lastPreRegisteredId.get())).isFalse();
+
+            dbRuns.clear();
+            lastPreRegisteredId.set(null);
+            assertThatThrownBy(() -> txRaceSvc.executeRunAsync(form, "user@example.com"))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("Simulated DB commit failure");
+            assertThat(lastPreRegisteredId.get()).isNotNull();
+            assertThat(txRaceSvc.isRunActiveInMemory(lastPreRegisteredId.get())).isFalse();
+        } finally {
+            txRaceSvc.shutdownExecutor();
+        }
+    }
+
+    @Test
+    void targetUrlNormalizesHttpSchemeToLowercaseWhilePreservingHostAndPathCase() throws Exception {
+        assertThat(ValidationRunService.validateAndNormalizeTargetUrl("  HTTPS://Scim.Example.com:8443/v2/Users?filter=userName  "))
+                .isEqualTo("https://Scim.Example.com:8443/v2/Users?filter=userName");
+        assertThat(ValidationRunService.validateAndNormalizeTargetUrl("Http://LocalHost:8080/ws/Test/scim/v2"))
+                .isEqualTo("http://LocalHost:8080/ws/Test/scim/v2");
+        assertThat(ValidationRunService.validateAndNormalizeTargetUrl("FTP://files.example.com/scim"))
+                .isEqualTo("FTP://files.example.com/scim");
+        assertThat(ValidationRunService.normalizeHttpSchemePrefix(null)).isNull();
+        assertThat(ValidationRunService.normalizeHttpSchemePrefix("short")).isEqualTo("short");
+
+        // Unicode case-folding guard: '\u017F' (Latin Small Letter Long S) folds to 'S' under UNICODE_CASE / regionMatches(true),
+        // but must NOT match ASCII http(s):// in publication URL validators or target URL scheme normalization
+        String longSUrl = "http\u017F://example.com/scim/v2";
+        String longSUserinfoUrl = "http\u017F://user:pass@example.com/scim/v2";
+        assertThat(ValidationRunService.isValidPublicationHttpUrl(longSUrl)).isFalse();
+        assertThat(ValidationRunService.isValidPublicationHttpUrl(longSUserinfoUrl)).isFalse();
+        assertThat(ValidationRunService.sanitizeOptionalHttpUrl(longSUrl)).isNull();
+        assertThat(ValidationRunService.sanitizePrUrl(longSUrl)).isNull();
+        assertThat(ValidationRunService.normalizeHttpSchemePrefix(longSUrl)).isEqualTo(longSUrl);
+        assertThat(ValidationRunService.validateAndNormalizeTargetUrl(longSUrl)).isEqualTo(longSUrl);
+
+        TargetUrlPolicy publicPolicy = new TargetUrlPolicy(
+                false, host -> new java.net.InetAddress[]{java.net.InetAddress.getByName("93.184.216.34")});
+        ValidationMgmtUser owner = new ValidationMgmtUser("user@example.com", OffsetDateTime.now());
+        when(mgmtUserRepository.findById("user@example.com")).thenReturn(Optional.of(owner));
+        when(runRepository.save(any(ValidationRun.class))).thenAnswer(inv -> {
+            ValidationRun r = inv.getArgument(0);
+            if (r.getId() == null) {
+                var f = ValidationRun.class.getDeclaredField("id");
+                f.setAccessible(true);
+                f.set(r, runId);
+            }
+            return r;
+        });
+        when(runRepository.saveAndFlush(any(ValidationRun.class))).thenAnswer(inv -> {
+            ValidationRun r = inv.getArgument(0);
+            var f = ValidationRun.class.getDeclaredField("id");
+            f.setAccessible(true);
+            f.set(r, runId);
+            return r;
+        });
+        when(runRepository.findById(runId)).thenReturn(Optional.of(sampleRun));
+
+        java.util.concurrent.CountDownLatch launcherRuns = new java.util.concurrent.CountDownLatch(2);
+        ValidationRunService schemeSvc = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, progressTracker, null) {
+            @Override
+            int discoverTestCount(String baseUrl, String authToken) {
+                assertThat(baseUrl).startsWith("https://Scim.Example.com/");
+                return 1;
+            }
+
+            @Override
+            void executeLauncher(org.junit.platform.launcher.Launcher launcher,
+                                 LauncherDiscoveryRequest request,
+                                 org.junit.platform.launcher.TestExecutionListener listener) {
+                launcherRuns.countDown();
+            }
+        };
+        schemeSvc.setTargetUrlPolicy(publicPolicy);
+        try {
+            ValidationRunForm longSForm = new ValidationRunForm("Long S Run", longSUrl, "tok");
+            assertThatThrownBy(() -> schemeSvc.executeRun(longSForm, "user@example.com"))
+                    .isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> schemeSvc.executeRunAsync(longSForm, "user@example.com"))
+                    .isInstanceOf(IllegalArgumentException.class);
+
+            ValidationRunForm mixedSyncForm = new ValidationRunForm(
+                    "Mixed Scheme Sync", "  HTTPS://Scim.Example.com/v2/TenantA  ", "tok");
+            ValidationRun syncSaved = schemeSvc.executeRun(mixedSyncForm, "user@example.com").getRun();
+            assertThat(syncSaved.getTargetUrl()).isEqualTo("https://Scim.Example.com/v2/TenantA");
+
+            ValidationRunForm mixedAsyncForm = new ValidationRunForm(
+                    "Mixed Scheme Async", "hTtPs://Scim.Example.com/v2/TenantB", "tok");
+            ValidationRun asyncSaved = schemeSvc.executeRunAsync(mixedAsyncForm, "user@example.com").getRun();
+            assertThat(asyncSaved.getTargetUrl()).isEqualTo("https://Scim.Example.com/v2/TenantB");
+            assertThat(launcherRuns.await(3, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        } finally {
+            schemeSvc.shutdownExecutor();
+        }
+    }
+
+    @Test
+    void reconciledCatalogSlugNormalizesUnderscoresAndPreventsCrossPublisherHijacking() {
+        assertThat(ValidationRunService.sanitizeReconciledProductSlug("Keycloak_SCIM_2", "fallback-slug"))
+                .isEqualTo("keycloak-scim-2");
+        assertThat(ValidationRunService.sanitizeReconciledProductSlug("a".repeat(119) + "_b", "fallback-slug"))
+                .isEqualTo("a".repeat(119));
+        assertThat(ValidationRunService.sanitizeReconciledProductSlug(
+                "11111111-1111-1111-1111-111111111111", "fallback-slug"))
+                .isEqualTo("fallback-slug");
+        assertThat(ValidationRunService.sanitizeReconciledProductSlug(
+                "11111111_1111_1111_1111_111111111111", "fallback-slug"))
+                .isEqualTo("fallback-slug");
+        assertThat(ValidationRunService.sanitizeReconciledProductSlug("___", "fallback-slug"))
+                .isEqualTo("fallback-slug");
+
+        ValidationRunPublicationRepository pubRepo = org.mockito.Mockito.mock(ValidationRunPublicationRepository.class);
+        when(pubRepo.save(any(ValidationRunPublication.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(runRepository.findById(runId)).thenReturn(Optional.of(sampleRun));
+        when(runRepository.save(any(ValidationRun.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        ValidationRunPublication otherOwnerPub = new ValidationRunPublication();
+        otherOwnerPub.setRunId(UUID.randomUUID());
+        otherOwnerPub.setCreatedByEmail("rival@othervendor.com");
+        otherOwnerPub.setProductSlug("rival-scim-server");
+        otherOwnerPub.setPrUrl("https://github.com/scimsandbox/scim-website/pull/1");
+        otherOwnerPub.setPublishedAt(OffsetDateTime.now(ZoneOffset.UTC).minusHours(1));
+
+        String longOwnedSlug = "a".repeat(119);
+        ValidationRunPublication otherOwnerLongPub = new ValidationRunPublication();
+        otherOwnerLongPub.setRunId(UUID.randomUUID());
+        otherOwnerLongPub.setCreatedByEmail("rival@othervendor.com");
+        otherOwnerLongPub.setProductSlug(longOwnedSlug);
+        otherOwnerLongPub.setPrUrl("https://github.com/scimsandbox/scim-website/pull/2");
+        otherOwnerLongPub.setPublishedAt(OffsetDateTime.now(ZoneOffset.UTC).minusHours(1));
+
+        when(pubRepo.findByProductSlugIgnoreCaseOrderByPublishedAtDesc(any())).thenAnswer(inv -> {
+            String queried = inv.getArgument(0);
+            if ("rival-scim-server".equalsIgnoreCase(queried)) {
+                return List.of(otherOwnerPub);
+            }
+            if (longOwnedSlug.equalsIgnoreCase(queried)) {
+                return List.of(otherOwnerLongPub);
+            }
+            return List.of();
+        });
+
+        ValidationRunService pubService = new ValidationRunService(
+                runRepository, mgmtUserRepository, testResultRepository, exchangeRepository, pubRepo, progressTracker);
+        pubService.setPublicBaseUrl("https://scimsandbox.net");
+
+        CompliancePublishRequest validRequest = new CompliancePublishRequest(
+                runId,
+                "My Keycloak Plugin",
+                "my-keycloak-plugin",
+                "1.0.0",
+                "Acme",
+                "https://github.com/acme/keycloak-scim",
+                "Apache-2.0",
+                true,
+                96,
+                "EMERALD",
+                10,
+                10,
+                "user@example.com",
+                "https://scim.example.com/v2"
+        );
+
+        // 1. Underscore + uppercase reconciled slug owned by nobody -> normalized to 'keycloak-scim-2'
+        ComplianceCatalogEntry underscoreEntry = new ComplianceCatalogEntry(
+                runId,
+                "Keycloak SCIM 2",
+                "Keycloak_SCIM_2",
+                "1.0.0",
+                "Acme",
+                "https://github.com/acme/keycloak-scim",
+                "Apache-2.0",
+                96,
+                ColourGradientInfo.from("EMERALD", 96),
+                10,
+                10,
+                "compliance/reports/keycloak-scim-2/1.0.0.json",
+                "compliance/badges/keycloak-scim-2.svg",
+                "2026-11-18T12:00:00Z"
+        );
+        CompliancePublicationResult underscoreResult = CompliancePublicationResult.reconciled(
+                runId,
+                "https://github.com/scimsandbox/scim-website/pull/101",
+                "https://scimsandbox.net/compliance/?run=" + runId,
+                "https://scimsandbox.net/compliance/badges/" + runId + ".svg",
+                "sha101",
+                OffsetDateTime.now(ZoneOffset.UTC),
+                underscoreEntry
+        );
+        sampleRun.setPublication(null);
+        when(pubRepo.findById(runId)).thenReturn(Optional.empty());
+        ValidationRunPublication savedUnderscore = pubService.recordPublication(
+                sampleRun, "user@example.com", validRequest, underscoreResult);
+        assertThat(savedUnderscore.getProductSlug()).isEqualTo("keycloak-scim-2");
+
+        // 2. Active PENDING_RESERVATION + reconciled slug owned by another publisher ('Rival_SCIM_Server' -> 'rival-scim-server')
+        //    falls back cleanly to 'my-keycloak-plugin' instead of stranding the reservation or hijacking rival's slug
+        ValidationRunPublication pending = new ValidationRunPublication();
+        pending.setRun(sampleRun);
+        pending.setCreatedByEmail("user@example.com");
+        pending.setProductName("My Keycloak Plugin");
+        pending.setProductSlug("my-keycloak-plugin");
+        pending.setProductVersion("1.0.0");
+        pending.setLicenseType("Apache-2.0");
+        pending.setShowSubmitter(true);
+        pending.setCoreScore(96);
+        pending.setSupportedCapabilities(10);
+        pending.setTotalCapabilities(10);
+        pending.setReportUrl("https://scimsandbox.net/compliance/?run=" + runId);
+        pending.setBadgeUrl("https://scimsandbox.net/compliance/badges/" + runId + ".svg");
+        pending.setPrUrl(ValidationRunService.PENDING_RESERVATION_PR_URL);
+        pending.setPublishedAt(OffsetDateTime.now(ZoneOffset.UTC));
+        sampleRun.setPublication(pending);
+        when(pubRepo.findById(runId)).thenReturn(Optional.of(pending));
+
+        ComplianceCatalogEntry collidingEntry = new ComplianceCatalogEntry(
+                runId,
+                "My Keycloak Plugin",
+                "Rival_SCIM_Server",
+                "1.0.0",
+                "Acme",
+                "https://github.com/acme/keycloak-scim",
+                "Apache-2.0",
+                96,
+                ColourGradientInfo.from("EMERALD", 96),
+                10,
+                10,
+                "compliance/reports/rival-scim-server/1.0.0.json",
+                "compliance/badges/rival-scim-server.svg",
+                "2026-11-18T12:05:00Z"
+        );
+        CompliancePublicationResult collidingResult = CompliancePublicationResult.reconciled(
+                runId,
+                "https://github.com/scimsandbox/scim-website/pull/102",
+                "https://scimsandbox.net/compliance/?run=" + runId,
+                "https://scimsandbox.net/compliance/badges/" + runId + ".svg",
+                "sha102",
+                OffsetDateTime.now(ZoneOffset.UTC),
+                collidingEntry
+        );
+        ValidationRunPublication savedFromPendingCollision = pubService.recordPublication(
+                sampleRun, "user@example.com", validRequest, collidingResult);
+        assertThat(savedFromPendingCollision.getProductSlug()).isEqualTo("my-keycloak-plugin");
+
+        // 3. Fresh recordPublication (no pending reservation) with colliding reconciled slug also falls back safely
+        sampleRun.setPublication(null);
+        when(pubRepo.findById(runId)).thenReturn(Optional.empty());
+        ValidationRunPublication savedFreshCollision = pubService.recordPublication(
+                sampleRun, "user@example.com", validRequest, collidingResult);
+        assertThat(savedFreshCollision.getProductSlug()).isEqualTo("my-keycloak-plugin");
+
+        // 4. Active PENDING_RESERVATION where retry request altered slug to another publisher's slug keeps reservedSlug
+        pending.setProductSlug("my-keycloak-plugin");
+        pending.setPrUrl(ValidationRunService.PENDING_RESERVATION_PR_URL);
+        pending.setPublishedAt(OffsetDateTime.now(ZoneOffset.UTC));
+        sampleRun.setPublication(pending);
+        when(pubRepo.findById(runId)).thenReturn(Optional.of(pending));
+        CompliancePublishRequest alteredCollidingReq = new CompliancePublishRequest(
+                runId,
+                "My Keycloak Plugin",
+                "rival-scim-server",
+                "1.0.0",
+                "Acme",
+                "https://github.com/acme/keycloak-scim",
+                "Apache-2.0",
+                true,
+                96,
+                "EMERALD",
+                10,
+                10,
+                "user@example.com",
+                "https://scim.example.com/v2"
+        );
+        CompliancePublicationResult nonReconciledResult = CompliancePublicationResult.reconciled(
+                runId,
+                "https://github.com/scimsandbox/scim-website/pull/103",
+                "https://scimsandbox.net/compliance/?run=" + runId,
+                "https://scimsandbox.net/compliance/badges/" + runId + ".svg",
+                "sha103",
+                OffsetDateTime.now(ZoneOffset.UTC),
+                null
+        );
+        ValidationRunPublication savedRetryCollision = pubService.recordPublication(
+                sampleRun, "user@example.com", alteredCollidingReq, nonReconciledResult);
+        assertThat(savedRetryCollision.getProductSlug()).isEqualTo("my-keycloak-plugin");
+
+        // 5. reservePublication validates sanitized slug ownership ("Rival_SCIM_Server", blank slug + "Rival SCIM Server",
+        //    and "a".repeat(119) + "-b" all reject with 409 CONFLICT; raw UUID slug still rejects with 400 BAD_REQUEST)
+        sampleRun.setPublication(null);
+        when(pubRepo.findById(runId)).thenReturn(Optional.empty());
+
+        List<CompliancePublishRequest> collidingReservations = List.of(
+                new CompliancePublishRequest(
+                        runId, "My Prod", "Rival_SCIM_Server", "1.0.0", "Acme", null, "MIT", false, 96, "EMERALD", 10, 10, "user@example.com", "https://scim.example.com/v2"),
+                new CompliancePublishRequest(
+                        runId, "Rival SCIM Server", "   ", "1.0.0", "Acme", null, "MIT", false, 96, "EMERALD", 10, 10, "user@example.com", "https://scim.example.com/v2"),
+                new CompliancePublishRequest(
+                        runId, "Long Prod", longOwnedSlug + "-b", "1.0.0", "Acme", null, "MIT", false, 96, "EMERALD", 10, 10, "user@example.com", "https://scim.example.com/v2")
+        );
+        for (CompliancePublishRequest badReserveReq : collidingReservations) {
+            assertThatThrownBy(() -> pubService.reservePublication(sampleRun, "user@example.com", badReserveReq))
+                    .isInstanceOf(ResponseStatusException.class)
+                    .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
+                            .isEqualTo(org.springframework.http.HttpStatus.CONFLICT));
+        }
+
+        CompliancePublishRequest uuidReserveReq = new CompliancePublishRequest(
+                runId, "UUID Prod", "11111111-1111-1111-1111-111111111111", "1.0.0", "Acme", null, "MIT", false, 96, "EMERALD", 10, 10, "user@example.com", "https://scim.example.com/v2");
+        assertThatThrownBy(() -> pubService.reservePublication(sampleRun, "user@example.com", uuidReserveReq))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode())
+                        .isEqualTo(org.springframework.http.HttpStatus.BAD_REQUEST));
+
+        // 6. Legacy PENDING_RESERVATION whose existing.getProductSlug() AND request.productSlug() (and reconciled entry)
+        //    all collide with another publisher safely falls back to 'product-' + runId without stranding PENDING_RESERVATION
+        pending.setProductSlug("rival-scim-server");
+        pending.setPrUrl(ValidationRunService.PENDING_RESERVATION_PR_URL);
+        pending.setPublishedAt(OffsetDateTime.now(ZoneOffset.UTC));
+        sampleRun.setPublication(pending);
+        when(pubRepo.findById(runId)).thenReturn(Optional.of(pending));
+
+        ValidationRunPublication savedDoubleCollision = pubService.recordPublication(
+                sampleRun, "user@example.com", alteredCollidingReq, collidingResult);
+        assertThat(savedDoubleCollision.getProductSlug())
+                .isEqualTo("product-" + runId.toString().toLowerCase(java.util.Locale.ROOT));
+    }
+
+    @Test
+    void validationExecutionListener_alwaysEndsTestContextEvenWhenRepositoriesThrow() {
+        ValidationRun run = new ValidationRun();
+        String secretToken = "listener-secret-token-123";
+        ValidationRunService.ValidationExecutionListener listener =
+                new ValidationRunService.ValidationExecutionListener(
+                        run, 2, progressTracker, testResultRepository, exchangeRepository, secretToken);
+
+        String runCtxId = UUID.randomUUID().toString();
+        ScimRunContext.beginRun(runCtxId);
+        try {
+            // Case 1: testResultRepository.save throws -> exception propagates AND ScimRunContext.endTest() still runs in finally
+            TestDescriptor d1 = org.mockito.Mockito.mock(TestDescriptor.class);
+            UniqueId uid1 = UniqueId.forEngine("test-engine").append("test", "save-throws");
+            when(d1.getUniqueId()).thenReturn(uid1);
+            when(d1.getType()).thenReturn(TestDescriptor.Type.TEST);
+            when(d1.getDisplayName()).thenReturn("saveThrows");
+            TestIdentifier id1 = TestIdentifier.from(d1);
+
+            when(testResultRepository.save(any(ValidationTestResult.class)))
+                    .thenThrow(new IllegalStateException("DB testResult save failure"));
+
+            listener.executionStarted(id1);
+            ScimHttpExchange ex1 = new ScimHttpExchange();
+            ex1.setMethod("GET");
+            ex1.setUrl("https://example.com/Users");
+            ex1.setResponseStatus(200);
+            ScimRunContext.record(ex1);
+            assertThatThrownBy(() -> listener.executionFinished(id1, TestExecutionResult.successful()))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("DB testResult save failure");
+
+            // Any exchange recorded after executionFinished must go to '_unassigned', NOT leak onto id1
+            ScimHttpExchange afterEx1 = new ScimHttpExchange();
+            afterEx1.setMethod("DELETE");
+            afterEx1.setUrl("https://example.com/Users/1");
+            afterEx1.setResponseStatus(204);
+            ScimRunContext.record(afterEx1);
+            assertThat(ScimRunContext.getForTest(id1.getUniqueId())).hasSize(1);
+            assertThat(ScimRunContext.getForTest("_unassigned")).hasSize(1);
+
+            // Case 2: exchangeRepository.saveAll throws -> warning logged (scrubbed), test outcome still counted,
+            //         and ScimRunContext.endTest() still runs in finally
+            org.mockito.Mockito.reset(testResultRepository, exchangeRepository);
+            when(testResultRepository.save(any(ValidationTestResult.class)))
+                    .thenAnswer(inv -> inv.getArgument(0));
+            when(exchangeRepository.saveAll(any()))
+                    .thenThrow(new IllegalStateException("Exchange insert failed carrying " + secretToken));
+
+            TestDescriptor d2 = org.mockito.Mockito.mock(TestDescriptor.class);
+            UniqueId uid2 = UniqueId.forEngine("test-engine").append("test", "exchange-save-throws");
+            when(d2.getUniqueId()).thenReturn(uid2);
+            when(d2.getType()).thenReturn(TestDescriptor.Type.TEST);
+            when(d2.getDisplayName()).thenReturn("exchangeSaveThrows");
+            TestIdentifier id2 = TestIdentifier.from(d2);
+
+            listener.executionStarted(id2);
+            ScimHttpExchange ex2 = new ScimHttpExchange();
+            ex2.setMethod("POST");
+            ex2.setUrl("https://example.com/Users");
+            ex2.setResponseStatus(201);
+            ScimRunContext.record(ex2);
+            listener.executionFinished(id2, TestExecutionResult.successful());
+
+            assertThat(listener.getTotal()).isEqualTo(1);
+            assertThat(listener.getPassed()).isEqualTo(1);
+
+            ScimHttpExchange afterEx2 = new ScimHttpExchange();
+            afterEx2.setMethod("GET");
+            afterEx2.setUrl("https://example.com/Groups");
+            afterEx2.setResponseStatus(200);
+            ScimRunContext.record(afterEx2);
+            assertThat(ScimRunContext.getForTest(id2.getUniqueId())).hasSize(1);
+            assertThat(ScimRunContext.getForTest("_unassigned")).hasSize(2);
+        } finally {
+            ScimRunContext.endRun();
+        }
     }
 
     // ─── helpers ────────────────────────────────────────────────────────

@@ -105,7 +105,11 @@ public class PlaygroundController {
         if (authentication == null) {
             return null;
         }
+        String email = AuthenticatedUser.emailOrNull(authentication);
         String fallback = AuthenticatedUser.displayName(authentication);
-        return mgmtUserService.resolveDisplayName(AuthenticatedUser.email(authentication), fallback);
+        if (email == null) {
+            return fallback;
+        }
+        return mgmtUserService.resolveDisplayName(email, fallback);
     }
 }

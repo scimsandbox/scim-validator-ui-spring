@@ -554,6 +554,8 @@ class ValidationRunServiceRetentionTest {
                 ValidationMgmtUserRepository userRepository,
                 ValidationRunPublicationRepository publicationRepository) {
             super(runRepository, userRepository, null, null, publicationRepository, null, Executors.newCachedThreadPool());
+            setTargetUrlPolicy(new de.palsoftware.scim.validator.ui.security.TargetUrlPolicy(
+                    false, host -> new java.net.InetAddress[]{java.net.InetAddress.getByName("93.184.216.34")}));
         }
 
         @Override
@@ -592,6 +594,21 @@ class ValidationRunServiceRetentionTest {
                 return Optional.of(r);
             }
             return Optional.empty();
+        }
+
+        @Override
+        public List<ValidationRun> findByStatus(String status) {
+            return db.values().stream()
+                    .filter(r -> java.util.Objects.equals(status, r.getStatus()))
+                    .toList();
+        }
+
+        @Override
+        public List<ValidationRun> findStaleRunsByStatus(String status, OffsetDateTime cutoff) {
+            return db.values().stream()
+                    .filter(r -> java.util.Objects.equals(status, r.getStatus()))
+                    .filter(r -> r.getExecutedAt() != null && r.getExecutedAt().isBefore(cutoff))
+                    .toList();
         }
 
         @Override

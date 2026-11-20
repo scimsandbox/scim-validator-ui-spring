@@ -1501,14 +1501,24 @@
             var baseUrlField = document.getElementById('baseUrl');
             var tokenField = document.getElementById('authToken');
             var nameField = document.getElementById('name');
-            if (incomingUrl && baseUrlField) baseUrlField.value = incomingUrl;
-            if (incomingToken && tokenField) tokenField.value = incomingToken;
-            if (incomingUrl && nameField && !nameField.value.trim()) {
+            var trimmedUrl = incomingUrl ? incomingUrl.trim() : '';
+            var trimmedToken = incomingToken ? incomingToken.trim() : '';
+            if (trimmedUrl && baseUrlField) {
+                var prevUrl = (baseUrlField.value || '').trim().replace(/\/+$/, '');
+                var nextUrl = trimmedUrl.replace(/\/+$/, '');
+                if (prevUrl !== nextUrl && !trimmedToken && tokenField) {
+                    tokenField.value = '';
+                }
+                baseUrlField.value = trimmedUrl;
+            }
+            if (trimmedToken && tokenField) tokenField.value = trimmedToken;
+            if (trimmedUrl && nameField && !nameField.value.trim()) {
                 nameField.value = 'Server Manager Workspace Validation';
             }
         }
 
         // 1. Check URL Hash fragment (#url=...&token=...)
+        // Query parameters (?url=...&token=...) are deliberately ignored so credentials never leak via logs or Referer.
         if (window.location.hash) {
             try {
                 var hashStr = window.location.hash.substring(1);
@@ -1516,22 +1526,12 @@
                 var hUrl = hashParams.get('url');
                 var hToken = hashParams.get('token');
                 if (hUrl || hToken) {
-                    handleIncomingCredentials(hUrl ? decodeURIComponent(hUrl) : null, hToken ? decodeURIComponent(hToken) : null);
+                    handleIncomingCredentials(hUrl, hToken);
                     history.replaceState(null, '', window.location.pathname + window.location.search);
                 }
             } catch (e) {
                 console.error('Error reading hash params:', e);
             }
-        } else if (window.location.search) {
-            // Fallback for query parameters (?url=...&token=...)
-            try {
-                var queryParams = new URLSearchParams(window.location.search);
-                var qUrl = queryParams.get('url');
-                var qToken = queryParams.get('token');
-                if (qUrl || qToken) {
-                    handleIncomingCredentials(qUrl, qToken);
-                }
-            } catch (e) {}
         }
 
         // 2. Listen for postMessage from opener tab. Only the management UI may hand credentials

@@ -11,6 +11,21 @@
 (function () {
     const NEWS_STORAGE_KEY = 'scim_news_seen';
 
+    function sanitizeHttpUrl(rawUrl) {
+        if (!rawUrl) {
+            return null;
+        }
+        try {
+            const parsed = new URL(String(rawUrl).trim(), window.location.href);
+            if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+                return parsed.href;
+            }
+        } catch {
+            // Invalid URL
+        }
+        return null;
+    }
+
     function readCookie(name) {
         const prefix = name + '=';
         const parts = (document.cookie || '').split(';');
@@ -56,8 +71,13 @@
         const btn = document.querySelector('.floating-side-btn-news');
         if (!btn) return;
 
+        const rawHref = btn.getAttribute('href');
+        if (rawHref && !sanitizeHttpUrl(rawHref)) {
+            btn.removeAttribute('href');
+        }
+
         const dot = btn.querySelector('.news-unread-dot');
-        const feedUrl = btn.getAttribute('data-news-feed-url');
+        const feedUrl = sanitizeHttpUrl(btn.getAttribute('data-news-feed-url'));
         if (!feedUrl) return;
         let cachedItems = [];
 

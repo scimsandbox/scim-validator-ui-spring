@@ -2204,21 +2204,39 @@
 
     let hasAutoPinged = false;
 
-    function handleIncomingCredentials(incomingUrl, incomingToken) {
+    function normalizeTargetCompareUrl(url) {
+        return (url || '').trim().replace(/\/+$/, '');
+    }
+
+    function handleIncomingCredentials(incomingUrl, incomingToken, options = {}) {
+        const autoPing = Boolean(options.autoPing);
+        const trimmedUrl = incomingUrl ? incomingUrl.trim() : '';
+        const trimmedToken = incomingToken ? incomingToken.trim() : '';
+        const previousUrl = normalizeTargetCompareUrl(baseUrlInput.value || sessionStorage.getItem(STORAGE_KEY_BASE_URL));
+        const nextUrl = normalizeTargetCompareUrl(trimmedUrl);
+
         let changed = false;
-        if (incomingUrl && baseUrlInput.value !== incomingUrl) {
-            baseUrlInput.value = incomingUrl;
-            sessionStorage.setItem(STORAGE_KEY_BASE_URL, incomingUrl);
+        if (trimmedUrl) {
+            // Never pair a cached Bearer token from a previous target with a newly supplied URL
+            // unless an explicit token was supplied in the same handoff.
+            if (nextUrl !== previousUrl && !trimmedToken) {
+                tokenInput.value = '';
+                sessionStorage.removeItem(STORAGE_KEY_TOKEN);
+            }
+            if (baseUrlInput.value !== trimmedUrl) {
+                baseUrlInput.value = trimmedUrl;
+                sessionStorage.setItem(STORAGE_KEY_BASE_URL, trimmedUrl);
+                changed = true;
+            }
+        }
+        if (trimmedToken && tokenInput.value !== trimmedToken) {
+            tokenInput.value = trimmedToken;
+            sessionStorage.setItem(STORAGE_KEY_TOKEN, trimmedToken);
             changed = true;
         }
-        if (incomingToken && tokenInput.value !== incomingToken) {
-            tokenInput.value = incomingToken;
-            sessionStorage.setItem(STORAGE_KEY_TOKEN, incomingToken);
-            changed = true;
-        }
-        if (changed || !hasAutoPinged) {
+        updateAllUrlPreviews();
+        if (autoPing && (changed || !hasAutoPinged)) {
             hasAutoPinged = true;
-            updateAllUrlPreviews();
             setTimeout(() => {
                 if (btnPing && !btnPing.disabled) btnPing.click();
             }, 100);
@@ -2226,6 +2244,8 @@
     }
 
     // 1. Check URL Hash fragment (#url=...&token=...)
+    // Query parameters (?url=...&token=...) are deliberately ignored so credentials never travel in URLs/Referers,
+    // and hash fragments never auto-trigger outbound requests without explicit user interaction.
     if (window.location.hash) {
         try {
             const hashStr = window.location.hash.substring(1);
@@ -2233,22 +2253,12 @@
             const hUrl = hashParams.get('url');
             const hToken = hashParams.get('token');
             if (hUrl || hToken) {
-                handleIncomingCredentials(hUrl ? decodeURIComponent(hUrl) : null, hToken ? decodeURIComponent(hToken) : null);
+                handleIncomingCredentials(hUrl, hToken, { autoPing: false });
                 history.replaceState(null, '', window.location.pathname + window.location.search);
             }
         } catch (e) {
             console.error('Error reading hash params:', e);
         }
-    } else if (window.location.search) {
-        // Fallback for query parameters (?url=...&token=...)
-        try {
-            const queryParams = new URLSearchParams(window.location.search);
-            const qUrl = queryParams.get('url');
-            const qToken = queryParams.get('token');
-            if (qUrl || qToken) {
-                handleIncomingCredentials(qUrl, qToken);
-            }
-        } catch (e) {}
     }
 
     // 2. Listen for postMessage from opener tab. Only the management UI may hand credentials over,
@@ -2268,7 +2278,7 @@
         if (!SERVER_MANAGER_ORIGIN || event.origin !== SERVER_MANAGER_ORIGIN) return;
         if (event.data && event.data.type === 'SCIM_VALIDATOR_INIT') {
             const { baseUrl: mUrl, authToken: mToken } = event.data;
-            handleIncomingCredentials(mUrl, mToken);
+            handleIncomingCredentials(mUrl, mToken, { autoPing: true });
             if (event.source && event.source.postMessage) {
                 try {
                     event.source.postMessage({ type: 'SCIM_VALIDATOR_ACK' }, event.origin);
@@ -2793,7 +2803,7 @@
         panel.innerHTML = `
             <div class="resp-head">
                 <div class="resp-status-group">
-                    <span class="status-pill status-${statusGroup}">${sc ? sc + ' ' + (data.statusText || '') : 'Error'}</span>
+                    <span class="status-pill status-${statusGroup}">${sc ? escapeHtml(sc + ' ' + (data.statusText || '')) : 'Error'}</span>
                     <span class="duration-pill">${data.durationMs ? '⏱ ' + data.durationMs + ' ms' : ''}</span>
                 </div>
                 <div class="resp-actions">
@@ -2861,7 +2871,12 @@
 
     function escapeHtml(str) {
         if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     updateAllUrlPreviews();
