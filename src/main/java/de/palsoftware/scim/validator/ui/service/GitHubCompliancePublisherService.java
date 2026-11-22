@@ -48,7 +48,7 @@ public class GitHubCompliancePublisherService {
 
     private static final Logger log = LoggerFactory.getLogger(GitHubCompliancePublisherService.class);
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMdd");
-    private static final Pattern SAFE_SLUG_PATTERN = Pattern.compile("^[a-z0-9]+(?:-[a-z0-9]+)*$");
+    private static final Pattern SAFE_SLUG_PATTERN = Pattern.compile("^[a-z0-9]++(?:-[a-z0-9]++)*+$");
     private static final Pattern SAFE_VERSION_PATTERN = Pattern.compile("^(?!.*\\.\\.)[A-Za-z0-9][A-Za-z0-9._+-]{0,59}$");
     private static final Pattern SAFE_LICENSE_PATTERN = Pattern.compile("^[A-Za-z0-9][A-Za-z0-9._+ ()/-]{0,39}$");
 
@@ -58,15 +58,13 @@ public class GitHubCompliancePublisherService {
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
     private final ValidationRunRepository runRepository;
+    private ValidationRunPublicationRepository publicationRepository;
     private final ReentrantLock publishLock = new ReentrantLock(true);
     private final Map<UUID, Long> claimedRunTimestamps = new ConcurrentHashMap<>();
     private final Set<UUID> mergedRunIds = ConcurrentHashMap.newKeySet();
 
     @Value("${app.compliance.reservation-timeout-seconds:300}")
     private long claimTtlSeconds = 300;
-
-    @Autowired(required = false)
-    private ValidationRunPublicationRepository publicationRepository;
 
     @Value("${app.github.publish.enabled:${app.github.publish-enabled:false}}")
     private boolean enabled = false;
@@ -93,7 +91,7 @@ public class GitHubCompliancePublisherService {
             GitHubAuthService authService,
             ComplianceReportGenerator reportGenerator,
             ComplianceBadgeGenerator badgeGenerator) {
-        this(authService, reportGenerator, badgeGenerator, new ObjectMapper(), HttpClient.newHttpClient(), null, null);
+        this(authService, reportGenerator, badgeGenerator, new ObjectMapper(), HttpClient.newHttpClient(), null, null, null);
     }
 
     public GitHubCompliancePublisherService(
@@ -103,7 +101,18 @@ public class GitHubCompliancePublisherService {
             ObjectMapper objectMapper,
             HttpClient httpClient,
             String apiUrl) {
-        this(authService, reportGenerator, badgeGenerator, objectMapper, httpClient, apiUrl, null);
+        this(authService, reportGenerator, badgeGenerator, objectMapper, httpClient, apiUrl, null, null);
+    }
+
+    public GitHubCompliancePublisherService(
+            GitHubAuthService authService,
+            ComplianceReportGenerator reportGenerator,
+            ComplianceBadgeGenerator badgeGenerator,
+            ObjectMapper objectMapper,
+            HttpClient httpClient,
+            String apiUrl,
+            ValidationRunRepository runRepository) {
+        this(authService, reportGenerator, badgeGenerator, objectMapper, httpClient, apiUrl, runRepository, null);
     }
 
     @Autowired
@@ -114,7 +123,8 @@ public class GitHubCompliancePublisherService {
             ObjectMapper objectMapper,
             @Autowired(required = false) HttpClient httpClient,
             @Value("${app.github.api-url:${app.github.api-base-url:https://api.github.com}}") String apiUrl,
-            @Autowired(required = false) ValidationRunRepository runRepository) {
+            @Autowired(required = false) ValidationRunRepository runRepository,
+            @Autowired(required = false) ValidationRunPublicationRepository publicationRepository) {
         this.authService = authService;
         this.reportGenerator = reportGenerator;
         this.badgeGenerator = badgeGenerator;
@@ -126,6 +136,11 @@ public class GitHubCompliancePublisherService {
             this.apiUrl = apiUrl;
         }
         this.runRepository = runRepository;
+        this.publicationRepository = publicationRepository;
+    }
+
+    public void setPublicationRepository(ValidationRunPublicationRepository publicationRepository) {
+        this.publicationRepository = publicationRepository;
     }
 
     String resolveTargetUrl(CompliancePublishRequest req) {
@@ -564,6 +579,9 @@ public class GitHubCompliancePublisherService {
             }
             JsonNode root = objectMapper.readTree(response.body());
             return root.path("object").path("sha").asText();
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while fetching base branch ref", ie);
         } catch (Exception e) {
             throw new RuntimeException("Error fetching base branch ref: " + e.getMessage(), e);
         }
@@ -579,6 +597,9 @@ public class GitHubCompliancePublisherService {
             }
             JsonNode root = objectMapper.readTree(response.body());
             return root.path("tree").path("sha").asText();
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while fetching commit tree", ie);
         } catch (Exception e) {
             throw new RuntimeException("Error fetching commit tree: " + e.getMessage(), e);
         }
@@ -620,6 +641,9 @@ public class GitHubCompliancePublisherService {
             List<ComplianceCatalogEntry> entries = objectMapper.readValue(decodedStr,
                     new TypeReference<List<ComplianceCatalogEntry>>() {});
             return entries != null ? new ArrayList<>(entries) : new ArrayList<>();
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while reading compliance/index.json", ie);
         } catch (RuntimeException e) {
             throw e;
         } catch (Exception e) {
@@ -627,7 +651,7 @@ public class GitHubCompliancePublisherService {
         }
     }
 
-    private String fetchBlobUtf8(String token, String blobSha) throws Exception {
+    private String fetchBlobUtf8(String token, String blobSha) throws IOException, InterruptedException {
         String path = "/repos/" + repo + "/git/blobs/" + blobSha;
         HttpRequest request = newRequestBuilder(path, token).GET().build();
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
@@ -643,7 +667,7 @@ public class GitHubCompliancePublisherService {
         return new String(decoded, StandardCharsets.UTF_8);
     }
 
-    private String fetchDownloadUrlUtf8(String downloadUrl) throws Exception {
+    private String fetchDownloadUrlUtf8(String downloadUrl) throws IOException, InterruptedException {
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(downloadUrl))
                 .header("User-Agent", "scim-validator-ui")
@@ -683,6 +707,9 @@ public class GitHubCompliancePublisherService {
             if (response.statusCode() != 201) {
                 throw new IllegalStateException("Failed to create branch ref: HTTP " + response.statusCode() + " " + response.body());
             }
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while creating branch ref " + branchRef, ie);
         } catch (Exception e) {
             throw new RuntimeException("Error creating branch ref " + branchRef + ": " + e.getMessage(), e);
         }
@@ -705,6 +732,9 @@ public class GitHubCompliancePublisherService {
             }
             JsonNode root = objectMapper.readTree(response.body());
             return root.path("sha").asText();
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while creating tree", ie);
         } catch (Exception e) {
             throw new RuntimeException("Error creating tree: " + e.getMessage(), e);
         }
@@ -728,6 +758,9 @@ public class GitHubCompliancePublisherService {
             }
             JsonNode root = objectMapper.readTree(response.body());
             return root.path("sha").asText();
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while creating commit", ie);
         } catch (Exception e) {
             throw new RuntimeException("Error creating commit: " + e.getMessage(), e);
         }
@@ -754,6 +787,9 @@ public class GitHubCompliancePublisherService {
             }
         } catch (GitHubMergeConflictException ce) {
             throw ce;
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while updating branch ref " + branchName, ie);
         } catch (Exception e) {
             throw new RuntimeException("Error updating branch ref " + branchName + ": " + e.getMessage(), e);
         }
@@ -777,6 +813,9 @@ public class GitHubCompliancePublisherService {
                 throw new IllegalStateException("Failed to open PR: HTTP " + response.statusCode() + " " + response.body());
             }
             return objectMapper.readTree(response.body());
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while opening pull request", ie);
         } catch (Exception e) {
             throw new RuntimeException("Error opening pull request: " + e.getMessage(), e);
         }
@@ -813,6 +852,9 @@ public class GitHubCompliancePublisherService {
             return root.path("sha").asText();
         } catch (GitHubMergeConflictException ce) {
             throw ce;
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while squash-merging pull request", ie);
         } catch (Exception e) {
             throw new RuntimeException("Error squash-merging pull request: " + e.getMessage(), e);
         }
@@ -828,6 +870,9 @@ public class GitHubCompliancePublisherService {
             if (response.statusCode() != 204 && response.statusCode() != 404) {
                 log.warn("Unexpected status code {} deleting branch ref {}", response.statusCode(), branchName);
             }
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            log.warn("Interrupted while deleting branch ref {}", branchName);
         } catch (Exception e) {
             log.warn("Error deleting branch ref {}: {}", branchName, e.getMessage());
         }

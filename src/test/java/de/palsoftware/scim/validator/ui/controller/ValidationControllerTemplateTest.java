@@ -334,4 +334,41 @@ class ValidationControllerTemplateTest {
                                 .andExpect(content().string(org.hamcrest.Matchers.not(
                                                 org.hamcrest.Matchers.containsString("Publish to Directory"))));
         }
+
+        @Test
+        void indexScript_doesNotLoadCredentialsFromQueryString() throws Exception {
+                when(validationRunService.listRuns(anyString(), anyBoolean())).thenReturn(List.of());
+
+                String html = mockMvc.perform(get("/validator-ui/")
+                                .contextPath("/validator-ui")
+                                .requestAttr("_csrf", CSRF_TOKEN)
+                                .principal(new TestingAuthenticationToken("user@example.com", "n/a")))
+                                .andExpect(status().isOk())
+                                .andReturn().getResponse().getContentAsString();
+
+                org.assertj.core.api.Assertions.assertThat(html)
+                                .doesNotContain("urlParams.get('token')")
+                                .doesNotContain("urlParams.get('url')")
+                                .doesNotContain("searchParams.get('token')")
+                                .doesNotContain("searchParams.get('url')")
+                                .contains("var hashStr = window.location.hash.substring(1);")
+                                .contains("var hashParams = new URLSearchParams(hashStr);");
+        }
+
+        @Test
+        void dockNewsScript_isServedSelfContainedAndSanitizesHrefAndFeedUrls() throws Exception {
+                String dockNewsJs = mockMvc.perform(get("/validator-ui/js/dock-news.js")
+                                .contextPath("/validator-ui"))
+                                .andExpect(status().isOk())
+                                .andReturn().getResponse().getContentAsString();
+
+                org.assertj.core.api.Assertions.assertThat(dockNewsJs)
+                                .as("dock-news.js must stay self-contained without external helper dependencies")
+                                .contains("Keep this file identical in scim-server-ui-spring and scim-validator-ui-spring.")
+                                .contains("function sanitizeHttpUrl(rawUrl)")
+                                .contains("if (rawHref && !sanitizeHttpUrl(rawHref))")
+                                .contains("btn.removeAttribute('href');")
+                                .contains("const feedUrl = sanitizeHttpUrl(btn.getAttribute('data-news-feed-url'));")
+                                .doesNotContain("api-client.js");
+        }
 }

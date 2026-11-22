@@ -28,11 +28,14 @@ import java.util.List;
 import java.util.UUID;
 
 import de.palsoftware.scim.validator.ui.dto.ValidationProgress;
+import de.palsoftware.scim.validator.ui.security.TargetUrlPolicy;
 import de.palsoftware.scim.validator.ui.service.ValidationProgressTracker;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.net.InetAddress;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -64,6 +67,8 @@ class ValidationControllerTest {
     void setUp() {
         model = new ExtendedModelMap();
         authentication = new TestingAuthenticationToken("user@example.com", "n/a");
+        controller.setTargetUrlPolicy(
+                new TargetUrlPolicy(false, host -> new InetAddress[]{InetAddress.getByName("93.184.216.34")}));
     }
 
     @Test
@@ -282,5 +287,20 @@ class ValidationControllerTest {
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody()).isEqualTo(progress);
+    }
+
+    @Test
+    void executeAsync_whenCapacityReached_returnsTooManyRequestsWithMessage() {
+        ValidationRunForm form = new ValidationRunForm("Test Run", "https://example.com/scim", "token");
+        BindingResult bindingResult = new BeanPropertyBindingResult(form, "runForm");
+
+        when(validationRunService.executeRunAsync(eq(form), anyString()))
+                .thenThrow(new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
+                        "Too many concurrent validation runs for your account"));
+
+        ResponseEntity<?> response = controller.executeAsync(form, bindingResult, authentication);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+        assertThat(response.getBody()).isEqualTo(Map.of("message", "Too many concurrent validation runs for your account"));
     }
 }

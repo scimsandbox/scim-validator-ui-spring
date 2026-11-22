@@ -199,4 +199,23 @@ class PlaygroundControllerTemplateTest {
                 .as("every target=_blank link needs rel=noopener to avoid handing the opener to the target page")
                 .isEmpty();
     }
+
+    @Test
+    void playgroundScript_removesQueryParamCredentialsClearsTokenOnCrossTargetHashAndDisablesHashAutoPing() throws Exception {
+        when(mgmtUserService.resolveDisplayName(anyString(), anyString())).thenReturn("Alex Morgan");
+
+        String html = mockMvc.perform(get("/playground/users")
+                        .requestAttr("_csrf", CSRF_TOKEN)
+                        .principal(new TestingAuthenticationToken("user@example.com", "n/a")))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+
+        org.assertj.core.api.Assertions.assertThat(html)
+                .doesNotContain("URLSearchParams(window.location.search)")
+                .doesNotContain("urlParams.get('token')")
+                .doesNotContain("urlParams.get('url')")
+                .contains("sessionStorage.removeItem(STORAGE_KEY_TOKEN)")
+                .contains("handleIncomingCredentials(hUrl, hToken, { autoPing: false })")
+                .contains("handleIncomingCredentials(mUrl, mToken, { autoPing: true })");
+    }
 }
