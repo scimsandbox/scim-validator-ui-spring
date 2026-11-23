@@ -397,12 +397,12 @@ class SecurityConfigAndActuatorFilterTest {
     void securityConfig_beanFactoryAndNullOidcUserBranches() {
         MgmtUserService mgmtUserService = mock(MgmtUserService.class);
         SecurityConfig config6Arg = new SecurityConfig("scim-admin", "scim-user", "roles", "k", 9090, mgmtUserService);
-        SecurityConfig config7Arg = new SecurityConfig("scim-admin", "scim-user", "roles", "k", 9090, 8080, mgmtUserService);
+        SecurityConfig config8Arg = new SecurityConfig("scim-admin", "scim-user", "roles", false, "k", 9090, 8080, mgmtUserService);
 
         assertThat(config6Arg.actuatorApiKeyAuthFilter()).isNotNull();
-        assertThat(config7Arg.actuatorApiKeyAuthFilter()).isNotNull();
-        assertThat(config7Arg.oidcUserService()).isNotNull();
-        assertThatThrownBy(() -> config7Arg.processOidcUser(null))
+        assertThat(config8Arg.actuatorApiKeyAuthFilter()).isNotNull();
+        assertThat(config8Arg.oidcUserService()).isNotNull();
+        assertThatThrownBy(() -> config8Arg.processOidcUser(null))
                 .isInstanceOf(OAuth2AuthenticationException.class);
     }
 
