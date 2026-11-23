@@ -23,7 +23,7 @@ public final class AuthenticatedUser {
             if (resolved != null) {
                 return resolved;
             }
-            throw new IllegalStateException("Authenticated principal is missing a verified email address");
+            throw new IllegalStateException("Authenticated principal is missing a valid email address");
         }
         String fallback = authentication.getName();
         if (fallback == null || fallback.isBlank()) {
@@ -93,13 +93,17 @@ public final class AuthenticatedUser {
         return false;
     }
 
-    /**
-     * Resolves the authenticated OIDC user's normalized email when {@code email_verified} is not
-     * explicitly {@code false}, checking {@code email}, {@code upn}, {@code unique_name}, and
-     * {@code preferred_username} in priority order.
-     */
     public static String resolveEmail(OidcUser oidcUser) {
-        if (oidcUser == null || isEmailExplicitlyUnverified(oidcUser)) {
+        return resolveEmail(oidcUser, false);
+    }
+
+    /**
+     * Resolves the authenticated OIDC user's normalized email, optionally enforcing that
+     * {@code email_verified} is not explicitly {@code false}, checking {@code email}, {@code upn},
+     * {@code unique_name}, and {@code preferred_username} in priority order.
+     */
+    public static String resolveEmail(OidcUser oidcUser, boolean requireVerifiedEmail) {
+        if (oidcUser == null || (requireVerifiedEmail && isEmailExplicitlyUnverified(oidcUser))) {
             return null;
         }
         String[] candidates = {

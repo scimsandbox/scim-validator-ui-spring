@@ -63,9 +63,29 @@ class SecurityConfigAndActuatorFilterTest {
     }
 
     @Test
-    void processOidcUser_explicitlyUnverifiedOrMissingValidEmail_throwsExpectedOAuth2Errors() {
+    void processOidcUser_whenRequireVerifiedEmailFalse_allowsUnverifiedEmailAndRejectsMissingOrNull() {
         MgmtUserService mgmtUserService = mock(MgmtUserService.class);
-        SecurityConfig config = new SecurityConfig("scim-admin", "scim-user", "roles", mgmtUserService);
+        SecurityConfig config = new SecurityConfig("scim-admin", "scim-user", "roles", false, mgmtUserService);
+
+        OidcUser unverifiedBool = buildOidcUser(Map.of(
+                "sub", "sub-unverified-bool",
+                "email", "Unverified@Example.com",
+                "email_verified", false
+        ));
+        OidcUser processed = config.processOidcUser(unverifiedBool);
+        verify(mgmtUserService).provisionUser("unverified@example.com");
+        assertThat(processed).isNotNull();
+
+        assertThatThrownBy(() -> config.processOidcUser(null))
+                .isInstanceOf(OAuth2AuthenticationException.class)
+                .satisfies(ex -> assertThat(((OAuth2AuthenticationException) ex).getError().getErrorCode())
+                        .isEqualTo("invalid_token"));
+    }
+
+    @Test
+    void processOidcUser_whenRequireVerifiedEmailTrue_explicitlyUnverifiedOrMissingValidEmail_throwsExpectedOAuth2Errors() {
+        MgmtUserService mgmtUserService = mock(MgmtUserService.class);
+        SecurityConfig config = new SecurityConfig("scim-admin", "scim-user", "roles", true, mgmtUserService);
 
         OidcUser unverifiedBool = buildOidcUser(Map.of(
                 "sub", "sub-unverified-bool",
@@ -97,6 +117,41 @@ class SecurityConfigAndActuatorFilterTest {
                 .satisfies(ex -> assertThat(((OAuth2AuthenticationException) ex).getError().getErrorCode())
                         .isEqualTo("invalid_token"));
         verifyNoInteractions(mgmtUserService);
+    }
+
+    @Test
+    void oauth2FailureHandler_redirectsToAuthErrorWithAllowlistedReason() throws Exception {
+        MgmtUserService mgmtUserService = mock(MgmtUserService.class);
+        SecurityConfig config = new SecurityConfig("scim-admin", "scim-user", "roles", mgmtUserService);
+        MockHttpServletRequest req = new MockHttpServletRequest();
+        MockHttpServletResponse res = new MockHttpServletResponse();
+
+        config.oauth2FailureHandler().onAuthenticationFailure(
+                req,
+                res,
+                new OAuth2AuthenticationException(
+                        new org.springframework.security.oauth2.core.OAuth2Error("unverified_email", "verify", null)));
+
+        assertThat(res.getRedirectedUrl()).isEqualTo("/auth-error?reason=unverified_email");
+        assertThat(SecurityConfig.resolveAuthErrorReason(
+                new OAuth2AuthenticationException(
+                        new org.springframework.security.oauth2.core.OAuth2Error("access_denied"))))
+                .isEqualTo("access_denied");
+        assertThat(SecurityConfig.resolveAuthErrorReason(
+                new OAuth2AuthenticationException(
+                        new org.springframework.security.oauth2.core.OAuth2Error("authorization_request_not_found"))))
+                .isEqualTo("authorization_request_not_found");
+        assertThat(SecurityConfig.resolveAuthErrorReason(
+                new OAuth2AuthenticationException(
+                        new org.springframework.security.oauth2.core.OAuth2Error("invalid_token"))))
+                .isEqualTo("invalid_token");
+        assertThat(SecurityConfig.resolveAuthErrorReason(
+                new OAuth2AuthenticationException(
+                        new org.springframework.security.oauth2.core.OAuth2Error("other_err"))))
+                .isEqualTo("authentication_failed");
+        assertThat(SecurityConfig.resolveAuthErrorReason(
+                new org.springframework.security.authentication.BadCredentialsException("bad")))
+                .isEqualTo("authentication_failed");
     }
 
     @Test

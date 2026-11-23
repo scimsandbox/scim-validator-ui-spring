@@ -73,17 +73,23 @@ class AuthenticatedUserTest {
 
     @ParameterizedTest
     @MethodSource("explicitlyUnverifiedOrMissingEmailOidcCases")
-    void email_oidcExplicitlyUnverifiedOrNoValidEmailClaims_rejects(
+    void email_oidcExplicitlyUnverifiedOrNoValidEmailClaims_enforcesVerificationWhenRequired(
             Map<String, Object> claims,
             boolean expectedExplicitlyUnverified) {
         OidcUser oidcUser = buildOidcUser(claims);
         Authentication auth = new TestingAuthenticationToken(oidcUser, "n/a");
 
         assertThat(AuthenticatedUser.isEmailExplicitlyUnverified(oidcUser)).isEqualTo(expectedExplicitlyUnverified);
-        assertThatThrownBy(() -> AuthenticatedUser.email(auth))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("verified email");
-        assertThat(AuthenticatedUser.emailOrNull(auth)).isNull();
+        assertThat(AuthenticatedUser.resolveEmail(oidcUser, true)).isNull();
+        if (!expectedExplicitlyUnverified) {
+            assertThatThrownBy(() -> AuthenticatedUser.email(auth))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("valid email");
+            assertThat(AuthenticatedUser.emailOrNull(auth)).isNull();
+        } else {
+            assertThat(AuthenticatedUser.email(auth)).contains("@");
+            assertThat(AuthenticatedUser.emailOrNull(auth)).contains("@");
+        }
     }
 
     @Test
@@ -210,7 +216,7 @@ class AuthenticatedUserTest {
     private static Stream<Arguments> displayNameOidcCases() {
         return Stream.of(
                 Arguments.of(Map.of("sub", "sub-123", "email", "display@example.com", "email_verified", true), "display@example.com"),
-                Arguments.of(Map.of("sub", "sub-123", "email", "display@example.com", "email_verified", false), null),
+                Arguments.of(Map.of("sub", "sub-123", "email", "display@example.com", "email_verified", false), "display@example.com"),
                 Arguments.of(Map.of("sub", "sub-123", "preferred_username", "fallback.user@example.com"), "fallback.user@example.com")
         );
     }

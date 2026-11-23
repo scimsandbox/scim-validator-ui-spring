@@ -86,6 +86,7 @@ app:
       role-claim: https://scimplayground.dev/roles
       admin-role: admin
       user-role: user
+      require-verified-email: ${APP_SECURITY_OIDC_REQUIRE_VERIFIED_EMAIL:false}
 
   runs:
     max-per-user: ${APP_RUNS_MAX_PER_USER:10}
