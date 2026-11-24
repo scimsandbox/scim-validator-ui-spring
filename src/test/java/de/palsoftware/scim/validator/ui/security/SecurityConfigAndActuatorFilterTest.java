@@ -86,7 +86,7 @@ class SecurityConfigAndActuatorFilterTest {
     }
 
     @Test
-    void processOidcUser_nullOrMissingOrInvalidEmail_throwsInvalidToken() {
+    void processOidcUser_nullOrMissingOrInvalidEmail_throwsMissingEmail() {
         MgmtUserService mgmtUserService = mock(MgmtUserService.class);
         SecurityConfig config = new SecurityConfig("scim-admin", "scim-user", "roles", mgmtUserService);
 
@@ -97,9 +97,9 @@ class SecurityConfigAndActuatorFilterTest {
                 "email_verified", true
         ));
 
-        assertInvalidToken(config, null);
-        assertInvalidToken(config, noEmailClaim);
-        assertInvalidToken(config, noValidEmailClaim);
+        assertMissingEmail(config, null);
+        assertMissingEmail(config, noEmailClaim);
+        assertMissingEmail(config, noValidEmailClaim);
         verifyNoInteractions(mgmtUserService);
     }
 
@@ -115,8 +115,8 @@ class SecurityConfigAndActuatorFilterTest {
                 new OAuth2AuthenticationException(new OAuth2Error("authorization_request_not_found")),
                 "/auth-error?reason=authorization_request_not_found");
         assertFailureRedirect(config,
-                new OAuth2AuthenticationException(new OAuth2Error(OAuth2ErrorCodes.INVALID_TOKEN)),
-                "/auth-error?reason=invalid_token");
+                new OAuth2AuthenticationException(new OAuth2Error(AuthErrorReason.MISSING_EMAIL.code())),
+                "/auth-error?reason=missing_email");
         assertFailureRedirect(config,
                 new OAuth2AuthenticationException(new OAuth2Error("other_err")),
                 "/auth-error?reason=authentication_failed");
@@ -194,11 +194,11 @@ class SecurityConfigAndActuatorFilterTest {
                 .build();
     }
 
-    private static void assertInvalidToken(SecurityConfig config, OidcUser oidcUser) {
+    private static void assertMissingEmail(SecurityConfig config, OidcUser oidcUser) {
         assertThatThrownBy(() -> config.processOidcUser(oidcUser))
                 .isInstanceOf(OAuth2AuthenticationException.class)
                 .satisfies(ex -> assertThat(((OAuth2AuthenticationException) ex).getError().getErrorCode())
-                        .isEqualTo(OAuth2ErrorCodes.INVALID_TOKEN));
+                        .isEqualTo(AuthErrorReason.MISSING_EMAIL.code()));
     }
 
     private static void assertFailureRedirect(SecurityConfig config,

@@ -24,7 +24,6 @@ import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequest
 import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
 import org.springframework.security.oauth2.core.OAuth2Error;
-import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
 import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
 import org.springframework.security.oauth2.core.oidc.user.DefaultOidcUser;
 import org.springframework.security.oauth2.core.oidc.user.OidcUser;
@@ -196,7 +195,7 @@ public class SecurityConfig {
         String email = AuthenticatedUser.resolveEmail(oidcUser);
         if (email == null) {
             throw new OAuth2AuthenticationException(
-                    new OAuth2Error(OAuth2ErrorCodes.INVALID_TOKEN,
+                    new OAuth2Error(AuthErrorReason.MISSING_EMAIL.code(),
                             "A valid email claim is required for management access",
                             null));
         }

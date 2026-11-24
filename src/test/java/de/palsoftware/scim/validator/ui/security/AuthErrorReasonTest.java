@@ -23,9 +23,10 @@ class AuthErrorReasonTest {
         assertThat(AuthErrorReason.fromCode("   ")).isEqualTo(AuthErrorReason.AUTHENTICATION_FAILED);
         assertThat(AuthErrorReason.fromCode("unknown_error")).isEqualTo(AuthErrorReason.AUTHENTICATION_FAILED);
         assertThat(AuthErrorReason.fromCode("unverified_email")).isEqualTo(AuthErrorReason.AUTHENTICATION_FAILED);
+        assertThat(AuthErrorReason.fromCode(OAuth2ErrorCodes.INVALID_TOKEN)).isEqualTo(AuthErrorReason.AUTHENTICATION_FAILED);
 
         assertThat(AuthErrorReason.ACCESS_DENIED.forceReauthentication()).isTrue();
-        assertThat(AuthErrorReason.INVALID_TOKEN.forceReauthentication()).isTrue();
+        assertThat(AuthErrorReason.MISSING_EMAIL.forceReauthentication()).isTrue();
         assertThat(AuthErrorReason.AUTHORIZATION_REQUEST_NOT_FOUND.forceReauthentication()).isFalse();
         assertThat(AuthErrorReason.AUTHENTICATION_FAILED.forceReauthentication()).isFalse();
     }
@@ -39,8 +40,11 @@ class AuthErrorReasonTest {
                 new OAuth2AuthenticationException(new OAuth2Error("authorization_request_not_found"))))
                 .isEqualTo(AuthErrorReason.AUTHORIZATION_REQUEST_NOT_FOUND);
         assertThat(AuthErrorReason.fromException(
+                new OAuth2AuthenticationException(new OAuth2Error(AuthErrorReason.MISSING_EMAIL.code()))))
+                .isEqualTo(AuthErrorReason.MISSING_EMAIL);
+        assertThat(AuthErrorReason.fromException(
                 new OAuth2AuthenticationException(new OAuth2Error(OAuth2ErrorCodes.INVALID_TOKEN))))
-                .isEqualTo(AuthErrorReason.INVALID_TOKEN);
+                .isEqualTo(AuthErrorReason.AUTHENTICATION_FAILED);
         assertThat(AuthErrorReason.fromException(
                 new OAuth2AuthenticationException(new OAuth2Error("unexpected_code"))))
                 .isEqualTo(AuthErrorReason.AUTHENTICATION_FAILED);

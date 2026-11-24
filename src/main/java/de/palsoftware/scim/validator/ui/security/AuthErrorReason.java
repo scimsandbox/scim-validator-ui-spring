@@ -16,8 +16,8 @@ public enum AuthErrorReason {
             "Sign-in session expired",
             "Your sign-in session could not be matched. Please start sign-in again from this address.",
             false),
-    INVALID_TOKEN(
-            OAuth2ErrorCodes.INVALID_TOKEN,
+    MISSING_EMAIL(
+            "missing_email",
             "Account profile incomplete",
             "Your identity provider did not return a valid email address required for access.",
             true),
