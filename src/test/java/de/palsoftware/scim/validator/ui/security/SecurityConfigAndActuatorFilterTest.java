@@ -6,10 +6,14 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
+import org.springframework.security.oauth2.core.OAuth2Error;
+import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
 import org.springframework.security.oauth2.core.oidc.OidcIdToken;
 import org.springframework.security.oauth2.core.oidc.user.DefaultOidcUser;
 import org.springframework.security.oauth2.core.oidc.user.OidcUser;
@@ -34,7 +38,7 @@ class SecurityConfigAndActuatorFilterTest {
     }
 
     @Test
-    void processOidcUser_verifiedAndEnterpriseOmittedEmailVerified_provisionNormalizedEmail() {
+    void processOidcUser_validEmailRegardlessOfEmailVerified_provisionsNormalizedEmail() {
         MgmtUserService mgmtUserService = mock(MgmtUserService.class);
         SecurityConfig config = new SecurityConfig("scim-admin", "scim-user", "roles", mgmtUserService);
 
@@ -53,6 +57,15 @@ class SecurityConfigAndActuatorFilterTest {
                 .extracting(GrantedAuthority::getAuthority)
                 .contains("ROLE_ADMIN", "ROLE_USER");
 
+        // User with email_verified=false and valid email is allowed
+        OidcUser unverifiedUser = buildOidcUser(Map.of(
+                "sub", "sub-unverified",
+                "email", "Unverified@Example.com",
+                "email_verified", false
+        ));
+        assertThat(config.processOidcUser(unverifiedUser)).isNotNull();
+        verify(mgmtUserService).provisionUser("unverified@example.com");
+
         // Enterprise/Entra ID user with omitted email_verified and UPN fallback
         OidcUser entraUser = buildOidcUser(Map.of(
                 "sub", "sub-entra",
@@ -63,95 +76,68 @@ class SecurityConfigAndActuatorFilterTest {
     }
 
     @Test
-    void processOidcUser_whenRequireVerifiedEmailFalse_allowsUnverifiedEmailAndRejectsMissingOrNull() {
+    void processOidcUser_nullOrMissingOrInvalidEmail_throwsInvalidToken() {
         MgmtUserService mgmtUserService = mock(MgmtUserService.class);
-        SecurityConfig config = new SecurityConfig("scim-admin", "scim-user", "roles", false, mgmtUserService);
+        SecurityConfig config = new SecurityConfig("scim-admin", "scim-user", "roles", mgmtUserService);
 
-        OidcUser unverifiedBool = buildOidcUser(Map.of(
-                "sub", "sub-unverified-bool",
-                "email", "Unverified@Example.com",
-                "email_verified", false
-        ));
-        OidcUser processed = config.processOidcUser(unverifiedBool);
-        verify(mgmtUserService).provisionUser("unverified@example.com");
-        assertThat(processed).isNotNull();
-
-        assertThatThrownBy(() -> config.processOidcUser(null))
-                .isInstanceOf(OAuth2AuthenticationException.class)
-                .satisfies(ex -> assertThat(((OAuth2AuthenticationException) ex).getError().getErrorCode())
-                        .isEqualTo("invalid_token"));
-    }
-
-    @Test
-    void processOidcUser_whenRequireVerifiedEmailTrue_explicitlyUnverifiedOrMissingValidEmail_throwsExpectedOAuth2Errors() {
-        MgmtUserService mgmtUserService = mock(MgmtUserService.class);
-        SecurityConfig config = new SecurityConfig("scim-admin", "scim-user", "roles", true, mgmtUserService);
-
-        OidcUser unverifiedBool = buildOidcUser(Map.of(
-                "sub", "sub-unverified-bool",
-                "email", "victim@example.com",
-                "upn", "victim@contoso.com",
-                "email_verified", false
-        ));
-        OidcUser unverifiedStr = buildOidcUser(Map.of(
-                "sub", "sub-unverified-str",
-                "preferred_username", "victim@example.com",
-                "email_verified", "false"
-        ));
+        OidcUser noEmailClaim = buildOidcUser(Map.of("sub", "sub-no-email"));
         OidcUser noValidEmailClaim = buildOidcUser(Map.of(
-                "sub", "sub-no-email",
+                "sub", "sub-invalid-email",
                 "preferred_username", "plain-username-without-at",
                 "email_verified", true
         ));
 
-        assertThatThrownBy(() -> config.processOidcUser(unverifiedBool))
-                .isInstanceOf(OAuth2AuthenticationException.class)
-                .satisfies(ex -> assertThat(((OAuth2AuthenticationException) ex).getError().getErrorCode())
-                        .isEqualTo("unverified_email"));
-        assertThatThrownBy(() -> config.processOidcUser(unverifiedStr))
-                .isInstanceOf(OAuth2AuthenticationException.class)
-                .satisfies(ex -> assertThat(((OAuth2AuthenticationException) ex).getError().getErrorCode())
-                        .isEqualTo("unverified_email"));
-        assertThatThrownBy(() -> config.processOidcUser(noValidEmailClaim))
-                .isInstanceOf(OAuth2AuthenticationException.class)
-                .satisfies(ex -> assertThat(((OAuth2AuthenticationException) ex).getError().getErrorCode())
-                        .isEqualTo("invalid_token"));
+        assertInvalidToken(config, null);
+        assertInvalidToken(config, noEmailClaim);
+        assertInvalidToken(config, noValidEmailClaim);
         verifyNoInteractions(mgmtUserService);
     }
 
     @Test
-    void oauth2FailureHandler_redirectsToAuthErrorWithAllowlistedReason() throws Exception {
+    void oauth2FailureHandler_redirectsToAuthErrorWithAllowlistedOrDefaultReason() throws Exception {
         MgmtUserService mgmtUserService = mock(MgmtUserService.class);
         SecurityConfig config = new SecurityConfig("scim-admin", "scim-user", "roles", mgmtUserService);
+
+        assertFailureRedirect(config,
+                new OAuth2AuthenticationException(new OAuth2Error(OAuth2ErrorCodes.ACCESS_DENIED)),
+                "/auth-error?reason=access_denied");
+        assertFailureRedirect(config,
+                new OAuth2AuthenticationException(new OAuth2Error("authorization_request_not_found")),
+                "/auth-error?reason=authorization_request_not_found");
+        assertFailureRedirect(config,
+                new OAuth2AuthenticationException(new OAuth2Error(OAuth2ErrorCodes.INVALID_TOKEN)),
+                "/auth-error?reason=invalid_token");
+        assertFailureRedirect(config,
+                new OAuth2AuthenticationException(new OAuth2Error("other_err")),
+                "/auth-error?reason=authentication_failed");
+        assertFailureRedirect(config,
+                new BadCredentialsException("bad"),
+                "/auth-error?reason=authentication_failed");
+
+        MockHttpServletRequest contextReq = new MockHttpServletRequest();
+        contextReq.setContextPath("/app");
+        MockHttpServletResponse contextRes = new MockHttpServletResponse();
+        config.oauth2FailureHandler().onAuthenticationFailure(
+                contextReq,
+                contextRes,
+                new OAuth2AuthenticationException(new OAuth2Error(OAuth2ErrorCodes.ACCESS_DENIED)));
+        assertThat(contextRes.getRedirectedUrl()).isEqualTo("/app/auth-error?reason=access_denied");
+    }
+
+    private static void assertInvalidToken(SecurityConfig config, OidcUser oidcUser) {
+        assertThatThrownBy(() -> config.processOidcUser(oidcUser))
+                .isInstanceOf(OAuth2AuthenticationException.class)
+                .satisfies(ex -> assertThat(((OAuth2AuthenticationException) ex).getError().getErrorCode())
+                        .isEqualTo(OAuth2ErrorCodes.INVALID_TOKEN));
+    }
+
+    private static void assertFailureRedirect(SecurityConfig config,
+                                              AuthenticationException ex,
+                                              String expectedUrl) throws Exception {
         MockHttpServletRequest req = new MockHttpServletRequest();
         MockHttpServletResponse res = new MockHttpServletResponse();
-
-        config.oauth2FailureHandler().onAuthenticationFailure(
-                req,
-                res,
-                new OAuth2AuthenticationException(
-                        new org.springframework.security.oauth2.core.OAuth2Error("unverified_email", "verify", null)));
-
-        assertThat(res.getRedirectedUrl()).isEqualTo("/auth-error?reason=unverified_email");
-        assertThat(SecurityConfig.resolveAuthErrorReason(
-                new OAuth2AuthenticationException(
-                        new org.springframework.security.oauth2.core.OAuth2Error("access_denied"))))
-                .isEqualTo("access_denied");
-        assertThat(SecurityConfig.resolveAuthErrorReason(
-                new OAuth2AuthenticationException(
-                        new org.springframework.security.oauth2.core.OAuth2Error("authorization_request_not_found"))))
-                .isEqualTo("authorization_request_not_found");
-        assertThat(SecurityConfig.resolveAuthErrorReason(
-                new OAuth2AuthenticationException(
-                        new org.springframework.security.oauth2.core.OAuth2Error("invalid_token"))))
-                .isEqualTo("invalid_token");
-        assertThat(SecurityConfig.resolveAuthErrorReason(
-                new OAuth2AuthenticationException(
-                        new org.springframework.security.oauth2.core.OAuth2Error("other_err"))))
-                .isEqualTo("authentication_failed");
-        assertThat(SecurityConfig.resolveAuthErrorReason(
-                new org.springframework.security.authentication.BadCredentialsException("bad")))
-                .isEqualTo("authentication_failed");
+        config.oauth2FailureHandler().onAuthenticationFailure(req, res, ex);
+        assertThat(res.getRedirectedUrl()).isEqualTo(expectedUrl);
     }
 
     @Test
@@ -397,12 +383,12 @@ class SecurityConfigAndActuatorFilterTest {
     void securityConfig_beanFactoryAndNullOidcUserBranches() {
         MgmtUserService mgmtUserService = mock(MgmtUserService.class);
         SecurityConfig config6Arg = new SecurityConfig("scim-admin", "scim-user", "roles", "k", 9090, mgmtUserService);
-        SecurityConfig config8Arg = new SecurityConfig("scim-admin", "scim-user", "roles", false, "k", 9090, 8080, mgmtUserService);
+        SecurityConfig config7Arg = new SecurityConfig("scim-admin", "scim-user", "roles", "k", 9090, 8080, mgmtUserService);
 
         assertThat(config6Arg.actuatorApiKeyAuthFilter()).isNotNull();
-        assertThat(config8Arg.actuatorApiKeyAuthFilter()).isNotNull();
-        assertThat(config8Arg.oidcUserService()).isNotNull();
-        assertThatThrownBy(() -> config8Arg.processOidcUser(null))
+        assertThat(config7Arg.actuatorApiKeyAuthFilter()).isNotNull();
+        assertThat(config7Arg.oidcUserService()).isNotNull();
+        assertThatThrownBy(() -> config7Arg.processOidcUser(null))
                 .isInstanceOf(OAuth2AuthenticationException.class);
     }
 

@@ -6,12 +6,14 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.security.authentication.TestingAuthenticationToken;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.core.oidc.OidcIdToken;
 import org.springframework.security.oauth2.core.oidc.user.DefaultOidcUser;
 import org.springframework.security.oauth2.core.oidc.user.OidcUser;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -19,6 +21,9 @@ import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class AuthenticatedUserTest {
 
@@ -44,7 +49,7 @@ class AuthenticatedUserTest {
     }
 
     @Test
-    void email_oidcPrincipalWithVerifiedEmail_emailWinsOverPreferredUsername() {
+    void email_oidcPrincipalWithEmail_emailWinsOverPreferredUsername() {
         OidcUser oidcUser = buildOidcUser(Map.of(
                 "sub", "oidc-sub-789",
                 "email", "  User@Example.COM ",
@@ -53,43 +58,33 @@ class AuthenticatedUserTest {
         ));
         Authentication auth = new TestingAuthenticationToken(oidcUser, "n/a");
 
-        assertThat(AuthenticatedUser.isEmailExplicitlyUnverified(oidcUser)).isFalse();
         assertThat(AuthenticatedUser.email(auth)).isEqualTo("user@example.com");
         assertThat(AuthenticatedUser.emailOrNull(auth)).isEqualTo("user@example.com");
     }
 
     @ParameterizedTest
-    @MethodSource("allowedEnterpriseAndFallbackOidcCases")
-    void email_oidcEnterpriseOmittedEmailVerifiedAndClaimFallbacks_resolveInPriorityOrder(
+    @MethodSource("validOidcEmailCases")
+    void email_oidcValidEmailAndClaimFallbacks_resolveInPriorityOrder(
             Map<String, Object> claims,
             String expectedEmail) {
         OidcUser oidcUser = buildOidcUser(claims);
         Authentication auth = new TestingAuthenticationToken(oidcUser, "n/a");
 
-        assertThat(AuthenticatedUser.isEmailExplicitlyUnverified(oidcUser)).isFalse();
         assertThat(AuthenticatedUser.email(auth)).isEqualTo(expectedEmail);
         assertThat(AuthenticatedUser.emailOrNull(auth)).isEqualTo(expectedEmail);
     }
 
     @ParameterizedTest
-    @MethodSource("explicitlyUnverifiedOrMissingEmailOidcCases")
-    void email_oidcExplicitlyUnverifiedOrNoValidEmailClaims_enforcesVerificationWhenRequired(
-            Map<String, Object> claims,
-            boolean expectedExplicitlyUnverified) {
+    @MethodSource("missingOrInvalidEmailOidcCases")
+    void email_oidcMissingOrInvalidEmailClaims_throwsAndEmailOrNullReturnsNull(Map<String, Object> claims) {
         OidcUser oidcUser = buildOidcUser(claims);
         Authentication auth = new TestingAuthenticationToken(oidcUser, "n/a");
 
-        assertThat(AuthenticatedUser.isEmailExplicitlyUnverified(oidcUser)).isEqualTo(expectedExplicitlyUnverified);
-        assertThat(AuthenticatedUser.resolveEmail(oidcUser, true)).isNull();
-        if (!expectedExplicitlyUnverified) {
-            assertThatThrownBy(() -> AuthenticatedUser.email(auth))
-                    .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("valid email");
-            assertThat(AuthenticatedUser.emailOrNull(auth)).isNull();
-        } else {
-            assertThat(AuthenticatedUser.email(auth)).contains("@");
-            assertThat(AuthenticatedUser.emailOrNull(auth)).contains("@");
-        }
+        assertThat(AuthenticatedUser.resolveEmail(oidcUser)).isNull();
+        assertThatThrownBy(() -> AuthenticatedUser.email(auth))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("valid email");
+        assertThat(AuthenticatedUser.emailOrNull(auth)).isNull();
     }
 
     @Test
@@ -151,39 +146,24 @@ class AuthenticatedUserTest {
 
     @Test
     void isAdmin_nullAuthoritiesCollectionOrNullAuthorityElement_returnsFalse() {
-        Authentication nullAuthoritiesAuth = org.mockito.Mockito.mock(Authentication.class);
-        org.mockito.Mockito.when(nullAuthoritiesAuth.getAuthorities()).thenReturn(null);
+        Authentication nullAuthoritiesAuth = mock(Authentication.class);
+        when(nullAuthoritiesAuth.getAuthorities()).thenReturn(null);
         assertThat(AuthenticatedUser.isAdmin(nullAuthoritiesAuth)).isFalse();
 
-        List<org.springframework.security.core.GrantedAuthority> withNull = new java.util.ArrayList<>();
+        List<GrantedAuthority> withNull = new ArrayList<>();
         withNull.add(null);
         withNull.add(new SimpleGrantedAuthority("ROLE_ADMIN"));
-        Authentication mixedAuthoritiesAuth = org.mockito.Mockito.mock(Authentication.class);
-        org.mockito.Mockito.doReturn(withNull).when(mixedAuthoritiesAuth).getAuthorities();
+        Authentication mixedAuthoritiesAuth = mock(Authentication.class);
+        doReturn(withNull).when(mixedAuthoritiesAuth).getAuthorities();
         assertThat(AuthenticatedUser.isAdmin(mixedAuthoritiesAuth)).isTrue();
     }
 
     @Test
-    void resolveEmailAndUnverifiedChecks_nullAndRawClaimEdgeCases() {
-        assertThat(AuthenticatedUser.isEmailExplicitlyUnverified(null)).isFalse();
+    void resolveEmailAndNormalizeEmail_nullAndInvalidEdgeCases() {
         assertThat(AuthenticatedUser.resolveEmail(null)).isNull();
         assertThat(AuthenticatedUser.normalizeEmail(null)).isNull();
+        assertThat(AuthenticatedUser.normalizeEmail("   ")).isNull();
         assertThat(AuthenticatedUser.normalizeEmail("not-an-email")).isNull();
-
-        OidcUser mockedRawFalseClaim = org.mockito.Mockito.mock(OidcUser.class);
-        org.mockito.Mockito.when(mockedRawFalseClaim.getEmailVerified()).thenReturn(null);
-        org.mockito.Mockito.when(mockedRawFalseClaim.getClaims()).thenReturn(Map.of("email_verified", Boolean.FALSE));
-        assertThat(AuthenticatedUser.isEmailExplicitlyUnverified(mockedRawFalseClaim)).isTrue();
-
-        OidcUser mockedRawTrueClaim = org.mockito.Mockito.mock(OidcUser.class);
-        org.mockito.Mockito.when(mockedRawTrueClaim.getEmailVerified()).thenReturn(null);
-        org.mockito.Mockito.when(mockedRawTrueClaim.getClaims()).thenReturn(Map.of("email_verified", Boolean.TRUE));
-        assertThat(AuthenticatedUser.isEmailExplicitlyUnverified(mockedRawTrueClaim)).isFalse();
-
-        OidcUser mockedNullClaims = org.mockito.Mockito.mock(OidcUser.class);
-        org.mockito.Mockito.when(mockedNullClaims.getEmailVerified()).thenReturn(null);
-        org.mockito.Mockito.when(mockedNullClaims.getClaims()).thenReturn(null);
-        assertThat(AuthenticatedUser.isEmailExplicitlyUnverified(mockedNullClaims)).isFalse();
     }
 
     private static OidcUser buildOidcUser(Map<String, Object> claims) {
@@ -193,9 +173,10 @@ class AuthenticatedUserTest {
         return new DefaultOidcUser(Collections.emptyList(), idToken);
     }
 
-    private static Stream<Arguments> allowedEnterpriseAndFallbackOidcCases() {
+    private static Stream<Arguments> validOidcEmailCases() {
         return Stream.of(
                 Arguments.of(Map.of("sub", "sub-saml", "email", " Enterprise.User@Corp.com "), "enterprise.user@corp.com"),
+                Arguments.of(Map.of("sub", "sub-unverified-bool", "email", "user@corp.com", "email_verified", false), "user@corp.com"),
                 Arguments.of(Map.of("sub", "sub-string-true", "email", "user@corp.com", "email_verified", "true"), "user@corp.com"),
                 Arguments.of(Map.of("sub", "sub-upn-1", "upn", "  Alice@Contoso.COM ", "preferred_username", "other@contoso.com"), "alice@contoso.com"),
                 Arguments.of(Map.of("sub", "sub-uniq-1", "unique_name", " Bob@Contoso.com ", "preferred_username", "other@contoso.com", "email_verified", true), "bob@contoso.com"),
@@ -203,13 +184,11 @@ class AuthenticatedUserTest {
         );
     }
 
-    private static Stream<Arguments> explicitlyUnverifiedOrMissingEmailOidcCases() {
+    private static Stream<Arguments> missingOrInvalidEmailOidcCases() {
         return Stream.of(
-                Arguments.of(Map.of("sub", "sub-1", "email", "user@example.com", "email_verified", false), true),
-                Arguments.of(Map.of("sub", "sub-2", "email", "user@example.com", "upn", "user@contoso.com", "email_verified", "false"), true),
-                Arguments.of(Map.of("sub", "sub-3", "preferred_username", "victim@example.com", "email_verified", " FALSE "), true),
-                Arguments.of(Map.of("sub", "sub-4", "email", "   ", "email_verified", true), false),
-                Arguments.of(Map.of("sub", "sub-5", "email", "not-an-email", "upn", "also-not-email", "preferred_username", "plain-handle"), false)
+                Arguments.of(Map.of("sub", "sub-missing")),
+                Arguments.of(Map.of("sub", "sub-blank", "email", "   ", "email_verified", true)),
+                Arguments.of(Map.of("sub", "sub-invalid", "email", "not-an-email", "upn", "also-not-email", "preferred_username", "plain-handle"))
         );
     }
 

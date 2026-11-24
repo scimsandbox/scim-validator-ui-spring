@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title th:text="${errorTitle} + ' — SCIM Compliance'">Sign-in failed — SCIM Compliance</title>
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="icon" type="image/svg+xml" th:href="@{/favicon.svg}" href="/favicon.svg">
     <style>
         body {
             margin: 0;
@@ -54,7 +54,7 @@
     <main class="card">
         <h1 th:text="${errorTitle}">Sign-in failed</h1>
         <p th:text="${errorMessage}">Authentication could not be completed. Please try signing in again.</p>
-        <a class="btn" href="/oauth2/authorization/auth0">Try signing in again</a>
+        <a class="btn" th:href="@{/}" href="/">Try signing in again</a>
     </main>
 </body>
 </html>

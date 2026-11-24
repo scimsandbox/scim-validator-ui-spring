@@ -8,7 +8,6 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
-import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.client.oidc.userinfo.OidcUserRequest;
@@ -17,8 +16,11 @@ import org.springframework.security.oauth2.client.oidc.web.logout.OidcClientInit
 import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
 import org.springframework.security.oauth2.core.OAuth2Error;
+import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
 import org.springframework.security.oauth2.core.oidc.user.DefaultOidcUser;
 import org.springframework.security.oauth2.core.oidc.user.OidcUser;
+import org.springframework.security.web.DefaultRedirectStrategy;
+import org.springframework.security.web.RedirectStrategy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.AuthenticationFailureHandler;
 import org.springframework.security.web.authentication.logout.LogoutFilter;
@@ -39,14 +41,11 @@ import java.util.Set;
 public class SecurityConfig {
 
     private static final String CSRF_COOKIE_NAME = "SCIM_VALIDATOR_UI_XSRF";
-    private static final String INVALID_TOKEN_ERROR = "invalid_token";
-    private static final String UNVERIFIED_EMAIL_ERROR = "unverified_email";
     public static final String AUTH_ERROR_PATH = "/auth-error";
 
     private final String adminRole;
     private final String userRole;
     private final String roleClaim;
-    private final boolean requireVerifiedEmail;
     private final String actuatorApiKey;
     private final int managementPort;
     private final int serverPort;
@@ -56,15 +55,7 @@ public class SecurityConfig {
                           String userRole,
                           String roleClaim,
                           MgmtUserService mgmtUserService) {
-        this(adminRole, userRole, roleClaim, false, "", 9090, 8080, mgmtUserService);
-    }
-
-    public SecurityConfig(String adminRole,
-                          String userRole,
-                          String roleClaim,
-                          boolean requireVerifiedEmail,
-                          MgmtUserService mgmtUserService) {
-        this(adminRole, userRole, roleClaim, requireVerifiedEmail, "", 9090, 8080, mgmtUserService);
+        this(adminRole, userRole, roleClaim, "", 9090, 8080, mgmtUserService);
     }
 
     public SecurityConfig(String adminRole,
@@ -73,14 +64,13 @@ public class SecurityConfig {
                           String actuatorApiKey,
                           int managementPort,
                           MgmtUserService mgmtUserService) {
-        this(adminRole, userRole, roleClaim, false, actuatorApiKey, managementPort, 8080, mgmtUserService);
+        this(adminRole, userRole, roleClaim, actuatorApiKey, managementPort, 8080, mgmtUserService);
     }
 
     @Autowired
     public SecurityConfig(@Value("${app.security.oidc.admin-role}") String adminRole,
                           @Value("${app.security.oidc.user-role}") String userRole,
                           @Value("${app.security.oidc.role-claim}") String roleClaim,
-                          @Value("${app.security.oidc.require-verified-email:false}") boolean requireVerifiedEmail,
                           @Value("${app.security.actuator.api-key:}") String actuatorApiKey,
                           @Value("${management.server.port:9090}") int managementPort,
                           @Value("${server.port:8080}") int serverPort,
@@ -88,7 +78,6 @@ public class SecurityConfig {
         this.adminRole = adminRole;
         this.userRole = userRole;
         this.roleClaim = roleClaim;
-        this.requireVerifiedEmail = requireVerifiedEmail;
         this.actuatorApiKey = actuatorApiKey;
         this.managementPort = managementPort;
         this.serverPort = serverPort;
@@ -144,18 +133,12 @@ public class SecurityConfig {
     }
 
     OidcUser processOidcUser(OidcUser oidcUser) {
-        if (oidcUser == null) {
-            throw new OAuth2AuthenticationException(
-                    new OAuth2Error(INVALID_TOKEN_ERROR, "A valid email claim is required for management access", null));
-        }
-        if (requireVerifiedEmail && AuthenticatedUser.isEmailExplicitlyUnverified(oidcUser)) {
-            throw new OAuth2AuthenticationException(
-                    new OAuth2Error(UNVERIFIED_EMAIL_ERROR, "A verified email address is required for management access", null));
-        }
-        String email = AuthenticatedUser.resolveEmail(oidcUser, requireVerifiedEmail);
+        String email = AuthenticatedUser.resolveEmail(oidcUser);
         if (email == null) {
             throw new OAuth2AuthenticationException(
-                    new OAuth2Error(INVALID_TOKEN_ERROR, "A valid email claim is required for management access", null));
+                    new OAuth2Error(OAuth2ErrorCodes.INVALID_TOKEN,
+                            "A valid email claim is required for management access",
+                            null));
         }
 
         Set<GrantedAuthority> mappedAuthorities = new HashSet<>(oidcUser.getAuthorities());
@@ -166,23 +149,11 @@ public class SecurityConfig {
     }
 
     AuthenticationFailureHandler oauth2FailureHandler() {
-        return (request, response, exception) -> {
-            String reason = resolveAuthErrorReason(exception);
-            response.sendRedirect(AUTH_ERROR_PATH + "?reason=" + reason);
-        };
-    }
-
-    static String resolveAuthErrorReason(AuthenticationException exception) {
-        if (exception instanceof OAuth2AuthenticationException oauth2Ex && oauth2Ex.getError() != null) {
-            String code = oauth2Ex.getError().getErrorCode();
-            if (code != null) {
-                return switch (code) {
-                    case UNVERIFIED_EMAIL_ERROR, "access_denied", INVALID_TOKEN_ERROR, "authorization_request_not_found" -> code;
-                    default -> "authentication_failed";
-                };
-            }
-        }
-        return "authentication_failed";
+        RedirectStrategy redirectStrategy = new DefaultRedirectStrategy();
+        return (request, response, exception) -> redirectStrategy.sendRedirect(
+                request,
+                response,
+                AUTH_ERROR_PATH + "?reason=" + AuthErrorReason.fromException(exception).code());
     }
 
     @SuppressWarnings("java:S3330")
