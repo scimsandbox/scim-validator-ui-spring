@@ -39,5 +39,6 @@ class AuthErrorControllerTest {
         assertThat(model.getAttribute("errorTitle")).isEqualTo(expected.title());
         assertThat(model.getAttribute("errorMessage")).isEqualTo(expected.message());
         assertThat(model.getAttribute("retryLoginPath")).isEqualTo("/oauth2/authorization/okta");
+        assertThat(model.getAttribute("forceReauthentication")).isEqualTo(expected.forceReauthentication());
     }
 }

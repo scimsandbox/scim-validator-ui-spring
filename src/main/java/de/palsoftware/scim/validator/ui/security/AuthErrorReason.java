@@ -9,28 +9,34 @@ public enum AuthErrorReason {
     ACCESS_DENIED(
             OAuth2ErrorCodes.ACCESS_DENIED,
             "Sign-in was denied",
-            "Your identity provider declined the sign-in request. Make sure your account is authorized."),
+            "Your identity provider declined the sign-in request. Make sure your account is authorized.",
+            true),
     AUTHORIZATION_REQUEST_NOT_FOUND(
             "authorization_request_not_found",
             "Sign-in session expired",
-            "Your sign-in session could not be matched. Please start sign-in again from this address."),
+            "Your sign-in session could not be matched. Please start sign-in again from this address.",
+            false),
     INVALID_TOKEN(
             OAuth2ErrorCodes.INVALID_TOKEN,
             "Account profile incomplete",
-            "Your identity provider did not return a valid email address required for access."),
+            "Your identity provider did not return a valid email address required for access.",
+            true),
     AUTHENTICATION_FAILED(
             "authentication_failed",
             "Sign-in failed",
-            "Authentication could not be completed. Please try signing in again.");
+            "Authentication could not be completed. Please try signing in again.",
+            false);
 
     private final String code;
     private final String title;
     private final String message;
+    private final boolean forceReauthentication;
 
-    AuthErrorReason(String code, String title, String message) {
+    AuthErrorReason(String code, String title, String message, boolean forceReauthentication) {
         this.code = code;
         this.title = title;
         this.message = message;
+        this.forceReauthentication = forceReauthentication;
     }
 
     public String code() {
@@ -43,6 +49,10 @@ public enum AuthErrorReason {
 
     public String message() {
         return message;
+    }
+
+    public boolean forceReauthentication() {
+        return forceReauthentication;
     }
 
     public static AuthErrorReason fromCode(String code) {

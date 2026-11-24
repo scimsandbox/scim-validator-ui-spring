@@ -11,7 +11,7 @@
     <main class="card">
         <h1 th:text="${errorTitle}">Sign-in failed</h1>
         <p th:text="${errorMessage}">Authentication could not be completed. Please try signing in again.</p>
-        <a class="btn" th:href="@{${retryLoginPath}(prompt='login')}" href="/">Try signing in again</a>
+        <a class="btn" th:href="${forceReauthentication} ? @{${retryLoginPath}(prompt='login')} : @{${retryLoginPath}}" href="/">Try signing in again</a>
     </main>
 </body>
 </html>

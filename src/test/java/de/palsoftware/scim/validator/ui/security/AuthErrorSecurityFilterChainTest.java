@@ -56,6 +56,12 @@ class AuthErrorSecurityFilterChainTest {
                 .andExpect(content().string(containsString("Sign-in was denied")))
                 .andExpect(content().string(containsString("href=\"/css/error.css\"")))
                 .andExpect(content().string(containsString("href=\"/oauth2/authorization/auth0?prompt=login\"")));
+
+        mockMvc.perform(get("/auth-error").param("reason", "authorization_request_not_found").accept(MediaType.TEXT_HTML))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("Sign-in session expired")))
+                .andExpect(content().string(containsString("href=\"/oauth2/authorization/auth0\"")))
+                .andExpect(content().string(not(containsString("prompt=login"))));
     }
 
     @Test

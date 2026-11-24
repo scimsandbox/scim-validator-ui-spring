@@ -23,6 +23,7 @@ public class AuthErrorController {
         model.addAttribute("errorTitle", error.title());
         model.addAttribute("errorMessage", error.message());
         model.addAttribute("retryLoginPath", retryLoginPath);
+        model.addAttribute("forceReauthentication", error.forceReauthentication());
         return "auth-error";
     }
 }

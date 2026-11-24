@@ -23,6 +23,11 @@ class AuthErrorReasonTest {
         assertThat(AuthErrorReason.fromCode("   ")).isEqualTo(AuthErrorReason.AUTHENTICATION_FAILED);
         assertThat(AuthErrorReason.fromCode("unknown_error")).isEqualTo(AuthErrorReason.AUTHENTICATION_FAILED);
         assertThat(AuthErrorReason.fromCode("unverified_email")).isEqualTo(AuthErrorReason.AUTHENTICATION_FAILED);
+
+        assertThat(AuthErrorReason.ACCESS_DENIED.forceReauthentication()).isTrue();
+        assertThat(AuthErrorReason.INVALID_TOKEN.forceReauthentication()).isTrue();
+        assertThat(AuthErrorReason.AUTHORIZATION_REQUEST_NOT_FOUND.forceReauthentication()).isFalse();
+        assertThat(AuthErrorReason.AUTHENTICATION_FAILED.forceReauthentication()).isFalse();
     }
 
     @Test
