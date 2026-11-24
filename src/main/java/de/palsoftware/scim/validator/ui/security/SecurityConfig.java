@@ -231,10 +231,7 @@ public class SecurityConfig {
         if (value == null) {
             return "";
         }
-        String cleaned = value
-                .replace('\r', ' ')
-                .replace('\n', ' ')
-                .replaceAll("[\\p{Cntrl}\\u0085\\u2028\\u2029]", " ");
+        String cleaned = value.replaceAll("[\\p{Cc}\\u2028\\u2029]", " ");
         return cleaned.length() > MAX_LOG_FIELD_LENGTH
                 ? cleaned.substring(0, MAX_LOG_FIELD_LENGTH) + "..."
                 : cleaned;
