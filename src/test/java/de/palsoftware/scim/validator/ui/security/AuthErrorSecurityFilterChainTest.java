@@ -2,7 +2,10 @@ package de.palsoftware.scim.validator.ui.security;
 
 import de.palsoftware.scim.validator.ui.controller.AuthErrorController;
 import de.palsoftware.scim.validator.ui.service.MgmtUserService;
+import jakarta.servlet.RequestDispatcher;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -21,6 +24,7 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrlPattern;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -65,6 +69,51 @@ class AuthErrorSecurityFilterChainTest {
         mockMvc.perform(get("/").accept(MediaType.TEXT_HTML))
                 .andExpect(status().is3xxRedirection())
                 .andExpect(redirectedUrlPattern("**/oauth2/authorization/auth0"));
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "400, Bad request, The request could not be understood.",
+            "403, Access denied, You do not have permission to perform this action",
+            "404, Page not found, The page you requested could not be found.",
+            "405, Method not allowed, This action is not supported for the requested address.",
+            "500, Something went wrong, An unexpected server error occurred."
+    })
+    void customErrorPageRendersStatusWithoutReflectingUntrustedDetails(
+            int statusCode, String expectedTitle, String expectedMessageSnippet) throws Exception {
+        mockMvc.perform(get("/error")
+                        .accept(MediaType.TEXT_HTML)
+                        .requestAttr(RequestDispatcher.ERROR_STATUS_CODE, statusCode)
+                        .requestAttr(RequestDispatcher.ERROR_MESSAGE, "<script>leaked-internal-detail</script>"))
+                .andExpect(status().is(statusCode))
+                .andExpect(content().string(containsString("<title>" + expectedTitle + " — SCIM Compliance</title>")))
+                .andExpect(content().string(containsString("Error " + statusCode)))
+                .andExpect(content().string(containsString(expectedTitle)))
+                .andExpect(content().string(containsString(expectedMessageSnippet)))
+                .andExpect(content().string(containsString("href=\"/\"")))
+                .andExpect(content().string(not(containsString("Whitelabel Error Page"))))
+                .andExpect(content().string(not(containsString("leaked-internal-detail"))));
+    }
+
+    @Test
+    void directErrorPageVisitHides999StatusAndWhitelabel() throws Exception {
+        mockMvc.perform(get("/error").accept(MediaType.TEXT_HTML))
+                .andExpect(status().isInternalServerError())
+                .andExpect(content().string(containsString("Something went wrong")))
+                .andExpect(content().string(containsString("The request could not be completed.")))
+                .andExpect(content().string(containsString("href=\"/\"")))
+                .andExpect(content().string(not(containsString("999"))))
+                .andExpect(content().string(not(containsString("Whitelabel Error Page"))));
+    }
+
+    @Test
+    void errorEndpointPreservesJsonNegotiation() throws Exception {
+        mockMvc.perform(get("/error")
+                        .accept(MediaType.APPLICATION_JSON)
+                        .requestAttr(RequestDispatcher.ERROR_STATUS_CODE, 404))
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.status").value(404));
     }
 
     @TestConfiguration

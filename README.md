@@ -43,7 +43,7 @@ This repository contains two surfaces of the SCIM sandbox:
 | --- | --- |
 | UI | `/`, `/runs/{runId}`, `/playground` |
 | Run actions | `POST /runs`, `POST /runs/{runId}/delete`, `POST /runs/{runId}/publish` |
-| Auth | `POST /logout` |
+| Auth | `GET /auth-error`, `POST /logout` |
 | Actuator | `GET /actuator/health` with `X-API-KEY` |
 
 ## Repository Layout
@@ -239,7 +239,12 @@ release triggers the Docker publish workflow for `edipal/scim-validator-ui`.
 - `ValidationController` owns the UI flow for creating, viewing, and deleting
   runs
 - `ValidationRunService` launches the suite and persists run/test/exchange data
-- `SecurityConfig` configures OIDC login, logout, CSRF, and the actuator API-key filter
+- `SecurityConfig` configures OIDC login, logout, CSRF, and the actuator API-key
+  filter. OIDC login intentionally does not require `email_verified` (accounts
+  are currently keyed on the normalized email claim, with a planned migration to
+  OIDC `sub`/`uid`); OAuth2 login failures redirect to `/auth-error`
+  (`templates/auth-error.html`), and general HTTP errors render
+  `templates/error.html` via Spring Boot's `BasicErrorController`.
 - `src/main/resources/templates` contains the Thymeleaf UI
 - **Published Run Immutability**: Published compliance runs cannot be deleted
   via `POST /runs/{runId}/delete` so that public leaderboard links on

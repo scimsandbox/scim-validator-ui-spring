@@ -47,7 +47,10 @@ repositories independently as well.
 
 The codebase currently includes these baseline controls:
 
-- interactive login via Spring Security OAuth2 client and Auth0 OIDC
+- interactive login via Spring Security OAuth2 client and Auth0 OIDC (login
+  intentionally does **not** enforce the `email_verified` claim; accounts are
+  currently keyed on the normalized email claim, with a planned future
+  migration to OIDC `sub` (`uid`))
 - role mapping from a configurable OIDC claim to `ROLE_ADMIN` and `ROLE_USER`
 - CSRF protection for the web UI
 - persistence of run metadata separately from the submitted bearer token itself
@@ -61,12 +64,16 @@ If you deploy this app beyond a private sandbox, do all of the following first:
 2. Put the UI behind HTTPS and a trusted reverse proxy.
 3. Limit access to authenticated operators only. This is an admin surface, not
    a public application.
-4. Treat stored validation runs and captured HTTP exchanges as sensitive data.
-5. Protect `/actuator/**` separately and rotate the actuator API key when staff
+4. While accounts are keyed by normalized email without enforcing
+   `email_verified`, configure Auth0 so open database sign-ups cannot collide
+   with social or enterprise connections sharing the same email address (for
+   example, enable a single connection or disable public database sign-ups).
+5. Treat stored validation runs and captured HTTP exchanges as sensitive data.
+6. Protect `/actuator/**` separately and rotate the actuator API key when staff
    or environments change.
-6. Use least-privileged database credentials and separate databases or schemas
+7. Use least-privileged database credentials and separate databases or schemas
    per environment.
-7. Protect Maven settings used for GitHub Packages access, especially when
+8. Protect Maven settings used for GitHub Packages access, especially when
    building Docker images.
 
 ## Secrets Handling
