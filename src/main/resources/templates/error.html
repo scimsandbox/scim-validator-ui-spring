@@ -6,92 +6,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title th:text="${pageTitle} + ' — SCIM Compliance'">Something went wrong — SCIM Compliance</title>
     <link rel="icon" type="image/svg+xml" th:href="@{/favicon.svg}" href="/favicon.svg">
-    <style>
-        body {
-            margin: 0;
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: #0b1120;
-            color: #e2e8f0;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            padding: 1.5rem;
-        }
-        .card {
-            max-width: 28rem;
-            width: 100%;
-            background: #111827;
-            border: 1px solid #1f2937;
-            border-radius: 12px;
-            padding: 2rem;
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.35);
-        }
-        .status-badge {
-            display: inline-block;
-            margin-bottom: 0.75rem;
-            padding: 0.2rem 0.6rem;
-            border-radius: 2rem;
-            background: rgba(37, 99, 235, 0.16);
-            border: 1px solid rgba(59, 130, 246, 0.35);
-            color: #93c5fd;
-            font-size: 0.8rem;
-            font-weight: 600;
-            letter-spacing: 0.02em;
-        }
-        h1 {
-            margin: 0 0 0.75rem 0;
-            font-size: 1.35rem;
-            color: #f8fafc;
-        }
-        p {
-            margin: 0 0 1.5rem 0;
-            line-height: 1.55;
-            color: #94a3b8;
-        }
-        a.btn {
-            display: inline-block;
-            background: #2563eb;
-            color: #ffffff;
-            text-decoration: none;
-            font-weight: 600;
-            padding: 0.65rem 1.15rem;
-            border-radius: 8px;
-        }
-        a.btn:hover {
-            background: #1d4ed8;
-        }
-    </style>
+    <link rel="stylesheet" th:href="@{/css/error.css}" href="/css/error.css">
 </head>
 <body>
     <main class="card">
         <div class="status-badge" th:if="${status != null and status ge 400 and status lt 600}"
              th:text="'Error ' + ${status}">Error 500</div>
+        <h1 th:text="${pageTitle}">Something went wrong</h1>
         <th:block th:switch="${status}">
-            <th:block th:case="400">
-                <h1>Bad request</h1>
-                <p>The request could not be understood. Please check the URL or input and try again.</p>
-            </th:block>
-            <th:block th:case="403">
-                <h1>Access denied</h1>
-                <p>You do not have permission to perform this action, or your session token expired. Please return home and try again.</p>
-            </th:block>
-            <th:block th:case="404">
-                <h1>Page not found</h1>
-                <p>The page you requested could not be found.</p>
-            </th:block>
-            <th:block th:case="405">
-                <h1>Method not allowed</h1>
-                <p>This action is not supported for the requested address.</p>
-            </th:block>
-            <th:block th:case="500">
-                <h1>Something went wrong</h1>
-                <p>An unexpected server error occurred. Please try again in a moment.</p>
-            </th:block>
-            <th:block th:case="*">
-                <h1>Something went wrong</h1>
-                <p>The request could not be completed. Please return home and try again.</p>
-            </th:block>
+            <p th:case="400">The request could not be understood. Please check the URL or input and try again.</p>
+            <p th:case="403">You do not have permission to perform this action, or your session token expired. Please return home and try again.</p>
+            <p th:case="404">The page you requested could not be found.</p>
+            <p th:case="405">This action is not supported for the requested address.</p>
+            <p th:case="500">An unexpected server error occurred. Please try again in a moment.</p>
+            <p th:case="*">The request could not be completed. Please return home and try again.</p>
         </th:block>
         <a class="btn" th:href="@{/}" href="/">Back to home</a>
     </main>

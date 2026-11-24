@@ -50,7 +50,7 @@ The codebase currently includes these baseline controls:
 - interactive login via Spring Security OAuth2 client and Auth0 OIDC (login
   intentionally does **not** enforce the `email_verified` claim; accounts are
   currently keyed on the normalized email claim, with a planned future
-  migration to OIDC `sub` (`uid`))
+  migration to OIDC `sub` (Auth0 `user_id`))
 - role mapping from a configurable OIDC claim to `ROLE_ADMIN` and `ROLE_USER`
 - CSRF protection for the web UI
 - persistence of run metadata separately from the submitted bearer token itself

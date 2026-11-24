@@ -242,7 +242,7 @@ release triggers the Docker publish workflow for `edipal/scim-validator-ui`.
 - `SecurityConfig` configures OIDC login, logout, CSRF, and the actuator API-key
   filter. OIDC login intentionally does not require `email_verified` (accounts
   are currently keyed on the normalized email claim, with a planned migration to
-  OIDC `sub`/`uid`); OAuth2 login failures redirect to `/auth-error`
+  OIDC `sub` (Auth0 `user_id`)); OAuth2 login failures redirect to `/auth-error`
   (`templates/auth-error.html`), and general HTTP errors render
   `templates/error.html` via Spring Boot's `BasicErrorController`.
 - `src/main/resources/templates` contains the Thymeleaf UI

@@ -24,7 +24,9 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrlPattern;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -52,8 +54,36 @@ class AuthErrorSecurityFilterChainTest {
         mockMvc.perform(get("/auth-error").param("reason", "access_denied").accept(MediaType.TEXT_HTML))
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("Sign-in was denied")))
-                .andExpect(content().string(containsString("href=\"/\"")))
-                .andExpect(content().string(not(containsString("/oauth2/authorization/auth0"))));
+                .andExpect(content().string(containsString("href=\"/css/error.css\"")))
+                .andExpect(content().string(containsString("href=\"/oauth2/authorization/auth0?prompt=login\"")));
+    }
+
+    @Test
+    void errorStylesheetIsPublic() throws Exception {
+        mockMvc.perform(get("/css/error.css"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void loginCallbackWithoutSavedAuthorizationRequest_redirectsToAuthError() throws Exception {
+        mockMvc.perform(get("/login/oauth2/code/auth0").param("code", "x").param("state", "y"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/auth-error?reason=authorization_request_not_found"));
+    }
+
+    @Test
+    void oauth2AuthorizationRequest_includesPromptLoginOnlyWhenRequested() throws Exception {
+        mockMvc.perform(get("/oauth2/authorization/auth0").param("prompt", "login"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(header().string("Location", containsString("prompt=login")));
+
+        mockMvc.perform(get("/oauth2/authorization/auth0"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(header().string("Location", not(containsString("prompt="))));
+
+        mockMvc.perform(get("/oauth2/authorization/auth0").param("prompt", "none"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(header().string("Location", not(containsString("prompt="))));
     }
 
     @Test
