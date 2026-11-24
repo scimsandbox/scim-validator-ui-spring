@@ -115,10 +115,11 @@ class SecurityConfigAndActuatorFilterTest {
                 new OAuth2AuthenticationException(new OAuth2Error("authorization_request_not_found")),
                 "/auth-error?reason=authorization_request_not_found");
         assertFailureRedirect(config,
-                new OAuth2AuthenticationException(new OAuth2Error(AuthErrorReason.MISSING_EMAIL.code())),
+                new OAuth2AuthenticationException(new OAuth2Error(AuthErrorReason.MISSING_EMAIL.code(),
+                        "\u001b[31mred\u001b[0m\u0085\u2028\u2029", null)),
                 "/auth-error?reason=missing_email");
         assertFailureRedirect(config,
-                new OAuth2AuthenticationException(new OAuth2Error("other_err")),
+                new OAuth2AuthenticationException(new OAuth2Error("other_err", "a".repeat(250), null)),
                 "/auth-error?reason=authentication_failed");
         assertFailureRedirect(config,
                 new BadCredentialsException("bad\nline"),
@@ -138,6 +139,14 @@ class SecurityConfigAndActuatorFilterTest {
                 .contains("denied  forged")
                 .doesNotContain("denied\r\nforged")
                 .doesNotContain("denied\nforged")
+                .contains(" [31mred [0m   ")
+                .doesNotContain("\u001b[31mred")
+                .doesNotContain("red\u001b[0m")
+                .doesNotContain("\u0085")
+                .doesNotContain("\u2028")
+                .doesNotContain("\u2029")
+                .contains("a".repeat(200) + "...")
+                .doesNotContain("a".repeat(201))
                 .contains("exception=BadCredentialsException, mappedReason=authentication_failed")
                 .contains("bad line")
                 .doesNotContain("bad\nline");

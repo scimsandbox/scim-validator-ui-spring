@@ -49,6 +49,7 @@ import java.util.Set;
 public class SecurityConfig {
 
     private static final Logger log = LoggerFactory.getLogger(SecurityConfig.class);
+    private static final int MAX_LOG_FIELD_LENGTH = 200;
     private static final String CSRF_COOKIE_NAME = "SCIM_VALIDATOR_UI_XSRF";
     public static final String AUTH_ERROR_PATH = "/auth-error";
 
@@ -227,7 +228,16 @@ public class SecurityConfig {
     }
 
     private static String sanitizeForLog(String value) {
-        return value == null ? "" : value.replace('\r', ' ').replace('\n', ' ');
+        if (value == null) {
+            return "";
+        }
+        String cleaned = value
+                .replace('\r', ' ')
+                .replace('\n', ' ')
+                .replaceAll("[\\p{Cntrl}\\u0085\\u2028\\u2029]", " ");
+        return cleaned.length() > MAX_LOG_FIELD_LENGTH
+                ? cleaned.substring(0, MAX_LOG_FIELD_LENGTH) + "..."
+                : cleaned;
     }
 
     @SuppressWarnings("java:S3330")

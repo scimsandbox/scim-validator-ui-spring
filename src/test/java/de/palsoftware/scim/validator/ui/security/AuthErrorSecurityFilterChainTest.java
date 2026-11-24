@@ -50,7 +50,7 @@ class AuthErrorSecurityFilterChainTest {
     private MgmtUserService mgmtUserService;
 
     @Test
-    void authErrorPageIsPublicAndDoesNotLoopToIdentityProvider() throws Exception {
+    void authErrorPageIsPublicAndAddsPromptLoginOnlyForForcedReasons() throws Exception {
         mockMvc.perform(get("/auth-error").param("reason", "access_denied").accept(MediaType.TEXT_HTML))
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("<title>SCIM Validation | Sign-in was denied</title>")))
