@@ -1,6 +1,9 @@
 package de.palsoftware.scim.validator.ui.security;
 
 import de.palsoftware.scim.validator.ui.service.MgmtUserService;
+import jakarta.servlet.http.HttpServletRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -13,12 +16,21 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.client.oidc.userinfo.OidcUserRequest;
 import org.springframework.security.oauth2.client.oidc.userinfo.OidcUserService;
 import org.springframework.security.oauth2.client.oidc.web.logout.OidcClientInitiatedLogoutSuccessHandler;
+import org.springframework.security.oauth2.client.registration.ClientRegistration;
 import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
+import org.springframework.security.oauth2.client.web.DefaultOAuth2AuthorizationRequestResolver;
+import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestRedirectFilter;
+import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestResolver;
+import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
 import org.springframework.security.oauth2.core.OAuth2Error;
+import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
 import org.springframework.security.oauth2.core.oidc.user.DefaultOidcUser;
 import org.springframework.security.oauth2.core.oidc.user.OidcUser;
+import org.springframework.security.web.DefaultRedirectStrategy;
+import org.springframework.security.web.RedirectStrategy;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.AuthenticationFailureHandler;
 import org.springframework.security.web.authentication.logout.LogoutFilter;
 import org.springframework.security.web.authentication.logout.LogoutSuccessHandler;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
@@ -36,7 +48,10 @@ import java.util.Set;
 @EnableWebSecurity
 public class SecurityConfig {
 
+    private static final Logger log = LoggerFactory.getLogger(SecurityConfig.class);
+    private static final int MAX_LOG_FIELD_LENGTH = 200;
     private static final String CSRF_COOKIE_NAME = "SCIM_VALIDATOR_UI_XSRF";
+    public static final String AUTH_ERROR_PATH = "/auth-error";
 
     private final String adminRole;
     private final String userRole;
@@ -87,7 +102,8 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http,
                                                    LogoutSuccessHandler oidcLogoutSuccessHandler,
-                                                   ActuatorApiKeyAuthFilter actuatorApiKeyAuthFilter) throws Exception {
+                                                   ActuatorApiKeyAuthFilter actuatorApiKeyAuthFilter,
+                                                   ClientRegistrationRepository clientRegistrationRepository) throws Exception {
         CsrfTokenRequestAttributeHandler requestHandler = new CsrfTokenRequestAttributeHandler();
         requestHandler.setCsrfRequestAttributeName(null);
 
@@ -97,10 +113,13 @@ public class SecurityConfig {
                 .requestMatchers("/actuator", "/actuator/**").hasAuthority("ROLE_ACTUATOR")
                 // favicon*.svg rather than an exact match: this app serves one badge per section
                 // (favicon.svg for SCIM Compliance, favicon-playground.svg for SCIM Playground).
-                .requestMatchers("/css/**", "/js/**", "/images/**", "/favicon*.svg", "/favicon.ico", "/error").permitAll()
+                .requestMatchers("/css/**", "/js/**", "/images/**", "/favicon*.svg", "/favicon.ico", "/error", AUTH_ERROR_PATH).permitAll()
                 .anyRequest().authenticated())
             .oauth2Login(oauth2 -> oauth2
-                .userInfoEndpoint(userInfo -> userInfo.oidcUserService(oidcUserService())))
+                .authorizationEndpoint(auth -> auth.authorizationRequestResolver(
+                    authorizationRequestResolver(clientRegistrationRepository)))
+                .userInfoEndpoint(userInfo -> userInfo.oidcUserService(oidcUserService()))
+                .failureHandler(oauth2FailureHandler()))
             .logout(logout -> logout
                 .logoutSuccessHandler(oidcLogoutSuccessHandler))
             .csrf(csrf -> csrf
@@ -108,6 +127,53 @@ public class SecurityConfig {
                 .csrfTokenRequestHandler(requestHandler));
 
         return http.build();
+    }
+
+    public static String oidcLoginUrl(ClientRegistrationRepository clientRegistrationRepository) {
+        List<String> registrationIds = new ArrayList<>();
+        if (clientRegistrationRepository instanceof Iterable<?> registrations) {
+            for (Object candidate : registrations) {
+                if (candidate instanceof ClientRegistration registration
+                        && AuthorizationGrantType.AUTHORIZATION_CODE.equals(registration.getAuthorizationGrantType())) {
+                    registrationIds.add(registration.getRegistrationId());
+                }
+            }
+        }
+        if (registrationIds.size() != 1) {
+            throw new IllegalStateException("Expected exactly one authorization_code client registration, found "
+                    + registrationIds + ". Multi-provider login needs a different authentication entry point.");
+        }
+        return OAuth2AuthorizationRequestRedirectFilter.DEFAULT_AUTHORIZATION_REQUEST_BASE_URI
+                + "/" + registrationIds.getFirst();
+    }
+
+    OAuth2AuthorizationRequestResolver authorizationRequestResolver(
+            ClientRegistrationRepository clientRegistrationRepository) {
+        DefaultOAuth2AuthorizationRequestResolver delegate = new DefaultOAuth2AuthorizationRequestResolver(
+                clientRegistrationRepository,
+                OAuth2AuthorizationRequestRedirectFilter.DEFAULT_AUTHORIZATION_REQUEST_BASE_URI);
+        return new OAuth2AuthorizationRequestResolver() {
+            @Override
+            public OAuth2AuthorizationRequest resolve(HttpServletRequest request) {
+                return applyPromptLoginIfRequested(request, delegate.resolve(request));
+            }
+
+            @Override
+            public OAuth2AuthorizationRequest resolve(HttpServletRequest request, String clientRegistrationId) {
+                return applyPromptLoginIfRequested(request, delegate.resolve(request, clientRegistrationId));
+            }
+        };
+    }
+
+    private static OAuth2AuthorizationRequest applyPromptLoginIfRequested(
+            HttpServletRequest request,
+            OAuth2AuthorizationRequest authorizationRequest) {
+        if (authorizationRequest == null || !"login".equals(request.getParameter("prompt"))) {
+            return authorizationRequest;
+        }
+        return OAuth2AuthorizationRequest.from(authorizationRequest)
+                .additionalParameters(params -> params.put("prompt", "login"))
+                .build();
     }
 
     @Bean
@@ -127,14 +193,12 @@ public class SecurityConfig {
     }
 
     OidcUser processOidcUser(OidcUser oidcUser) {
-        if (oidcUser == null || AuthenticatedUser.isEmailExplicitlyUnverified(oidcUser)) {
-            throw new OAuth2AuthenticationException(
-                    new OAuth2Error("unverified_email", "A verified email address is required for management access", null));
-        }
         String email = AuthenticatedUser.resolveEmail(oidcUser);
         if (email == null) {
             throw new OAuth2AuthenticationException(
-                    new OAuth2Error("invalid_token", "A valid email claim is required for management access", null));
+                    new OAuth2Error(AuthErrorReason.MISSING_EMAIL.code(),
+                            "A valid email claim is required for management access",
+                            null));
         }
 
         Set<GrantedAuthority> mappedAuthorities = new HashSet<>(oidcUser.getAuthorities());
@@ -142,6 +206,35 @@ public class SecurityConfig {
         mgmtUserService.provisionUser(email);
 
         return new DefaultOidcUser(mappedAuthorities, oidcUser.getIdToken(), oidcUser.getUserInfo());
+    }
+
+    AuthenticationFailureHandler oauth2FailureHandler() {
+        RedirectStrategy redirectStrategy = new DefaultRedirectStrategy();
+        return (request, response, exception) -> {
+            AuthErrorReason reason = AuthErrorReason.fromException(exception);
+            if (exception instanceof OAuth2AuthenticationException oauth2Ex) {
+                log.warn("OIDC login failed (oauth2ErrorCode={}, mappedReason={}): {}",
+                        sanitizeForLog(oauth2Ex.getError().getErrorCode()),
+                        reason.code(),
+                        sanitizeForLog(oauth2Ex.getError().getDescription()));
+            } else {
+                log.warn("OIDC login failed (exception={}, mappedReason={}): {}",
+                        exception.getClass().getSimpleName(),
+                        reason.code(),
+                        sanitizeForLog(exception.getMessage()));
+            }
+            redirectStrategy.sendRedirect(request, response, AUTH_ERROR_PATH + "?reason=" + reason.code());
+        };
+    }
+
+    private static String sanitizeForLog(String value) {
+        if (value == null) {
+            return "";
+        }
+        String cleaned = value.replaceAll("[\\p{Cc}\\u2028\\u2029]", " ");
+        return cleaned.length() > MAX_LOG_FIELD_LENGTH
+                ? cleaned.substring(0, MAX_LOG_FIELD_LENGTH) + "..."
+                : cleaned;
     }
 
     @SuppressWarnings("java:S3330")

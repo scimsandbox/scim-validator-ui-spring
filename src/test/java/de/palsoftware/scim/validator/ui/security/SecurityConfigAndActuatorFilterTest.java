@@ -4,12 +4,25 @@ import de.palsoftware.scim.validator.ui.service.MgmtUserService;
 import jakarta.servlet.FilterChain;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.client.registration.ClientRegistration;
+import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
+import org.springframework.security.oauth2.client.registration.InMemoryClientRegistrationRepository;
+import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestResolver;
+import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
+import org.springframework.security.oauth2.core.OAuth2Error;
+import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
+import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
 import org.springframework.security.oauth2.core.oidc.OidcIdToken;
 import org.springframework.security.oauth2.core.oidc.user.DefaultOidcUser;
 import org.springframework.security.oauth2.core.oidc.user.OidcUser;
@@ -26,6 +39,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
+@ExtendWith(OutputCaptureExtension.class)
 class SecurityConfigAndActuatorFilterTest {
 
     @AfterEach
@@ -34,7 +48,7 @@ class SecurityConfigAndActuatorFilterTest {
     }
 
     @Test
-    void processOidcUser_verifiedAndEnterpriseOmittedEmailVerified_provisionNormalizedEmail() {
+    void processOidcUser_validEmailRegardlessOfEmailVerified_provisionsNormalizedEmail() {
         MgmtUserService mgmtUserService = mock(MgmtUserService.class);
         SecurityConfig config = new SecurityConfig("scim-admin", "scim-user", "roles", mgmtUserService);
 
@@ -53,6 +67,15 @@ class SecurityConfigAndActuatorFilterTest {
                 .extracting(GrantedAuthority::getAuthority)
                 .contains("ROLE_ADMIN", "ROLE_USER");
 
+        // User with email_verified=false and valid email is allowed
+        OidcUser unverifiedUser = buildOidcUser(Map.of(
+                "sub", "sub-unverified",
+                "email", "Unverified@Example.com",
+                "email_verified", false
+        ));
+        assertThat(config.processOidcUser(unverifiedUser)).isNotNull();
+        verify(mgmtUserService).provisionUser("unverified@example.com");
+
         // Enterprise/Entra ID user with omitted email_verified and UPN fallback
         OidcUser entraUser = buildOidcUser(Map.of(
                 "sub", "sub-entra",
@@ -63,40 +86,138 @@ class SecurityConfigAndActuatorFilterTest {
     }
 
     @Test
-    void processOidcUser_explicitlyUnverifiedOrMissingValidEmail_throwsExpectedOAuth2Errors() {
+    void processOidcUser_nullOrMissingOrInvalidEmail_throwsMissingEmail() {
         MgmtUserService mgmtUserService = mock(MgmtUserService.class);
         SecurityConfig config = new SecurityConfig("scim-admin", "scim-user", "roles", mgmtUserService);
 
-        OidcUser unverifiedBool = buildOidcUser(Map.of(
-                "sub", "sub-unverified-bool",
-                "email", "victim@example.com",
-                "upn", "victim@contoso.com",
-                "email_verified", false
-        ));
-        OidcUser unverifiedStr = buildOidcUser(Map.of(
-                "sub", "sub-unverified-str",
-                "preferred_username", "victim@example.com",
-                "email_verified", "false"
-        ));
+        OidcUser noEmailClaim = buildOidcUser(Map.of("sub", "sub-no-email"));
         OidcUser noValidEmailClaim = buildOidcUser(Map.of(
-                "sub", "sub-no-email",
+                "sub", "sub-invalid-email",
                 "preferred_username", "plain-username-without-at",
                 "email_verified", true
         ));
 
-        assertThatThrownBy(() -> config.processOidcUser(unverifiedBool))
-                .isInstanceOf(OAuth2AuthenticationException.class)
-                .satisfies(ex -> assertThat(((OAuth2AuthenticationException) ex).getError().getErrorCode())
-                        .isEqualTo("unverified_email"));
-        assertThatThrownBy(() -> config.processOidcUser(unverifiedStr))
-                .isInstanceOf(OAuth2AuthenticationException.class)
-                .satisfies(ex -> assertThat(((OAuth2AuthenticationException) ex).getError().getErrorCode())
-                        .isEqualTo("unverified_email"));
-        assertThatThrownBy(() -> config.processOidcUser(noValidEmailClaim))
-                .isInstanceOf(OAuth2AuthenticationException.class)
-                .satisfies(ex -> assertThat(((OAuth2AuthenticationException) ex).getError().getErrorCode())
-                        .isEqualTo("invalid_token"));
+        assertMissingEmail(config, null);
+        assertMissingEmail(config, noEmailClaim);
+        assertMissingEmail(config, noValidEmailClaim);
         verifyNoInteractions(mgmtUserService);
+    }
+
+    @Test
+    void oauth2FailureHandler_redirectsToAuthErrorWithAllowlistedOrDefaultReason(CapturedOutput output) throws Exception {
+        MgmtUserService mgmtUserService = mock(MgmtUserService.class);
+        SecurityConfig config = new SecurityConfig("scim-admin", "scim-user", "roles", mgmtUserService);
+
+        assertFailureRedirect(config,
+                new OAuth2AuthenticationException(new OAuth2Error(OAuth2ErrorCodes.ACCESS_DENIED, "denied\r\nforged", null)),
+                "/auth-error?reason=access_denied");
+        assertFailureRedirect(config,
+                new OAuth2AuthenticationException(new OAuth2Error("authorization_request_not_found")),
+                "/auth-error?reason=authorization_request_not_found");
+        assertFailureRedirect(config,
+                new OAuth2AuthenticationException(new OAuth2Error(AuthErrorReason.MISSING_EMAIL.code(),
+                        "\u001b[31mred\u001b[0m\u009b31m\u0085\u2028\u2029", null)),
+                "/auth-error?reason=missing_email");
+        assertFailureRedirect(config,
+                new OAuth2AuthenticationException(new OAuth2Error("other_err", "a".repeat(250), null)),
+                "/auth-error?reason=authentication_failed");
+        assertFailureRedirect(config,
+                new BadCredentialsException("bad\nline"),
+                "/auth-error?reason=authentication_failed");
+
+        MockHttpServletRequest contextReq = new MockHttpServletRequest();
+        contextReq.setContextPath("/app");
+        MockHttpServletResponse contextRes = new MockHttpServletResponse();
+        config.oauth2FailureHandler().onAuthenticationFailure(
+                contextReq,
+                contextRes,
+                new OAuth2AuthenticationException(new OAuth2Error(OAuth2ErrorCodes.ACCESS_DENIED)));
+        assertThat(contextRes.getRedirectedUrl()).isEqualTo("/app/auth-error?reason=access_denied");
+
+        assertThat(output.getOut())
+                .contains("oauth2ErrorCode=access_denied, mappedReason=access_denied")
+                .contains("denied  forged")
+                .doesNotContain("denied\r\nforged")
+                .doesNotContain("denied\nforged")
+                .contains(" [31mred [0m 31m   ")
+                .doesNotContain("\u001b[31mred")
+                .doesNotContain("red\u001b[0m")
+                .doesNotContain("\u009b")
+                .doesNotContain("\u0085")
+                .doesNotContain("\u2028")
+                .doesNotContain("\u2029")
+                .contains("a".repeat(200) + "...")
+                .doesNotContain("a".repeat(201))
+                .contains("exception=BadCredentialsException, mappedReason=authentication_failed")
+                .contains("bad line")
+                .doesNotContain("bad\nline");
+    }
+
+    @Test
+    void oidcLoginUrlAndAuthorizationRequestResolver_derivePathAndAllowlistPromptLogin() {
+        MgmtUserService mgmtUserService = mock(MgmtUserService.class);
+        SecurityConfig config = new SecurityConfig("scim-admin", "scim-user", "roles", mgmtUserService);
+
+        ClientRegistration okta = buildRegistration("okta");
+        ClientRegistrationRepository singleRepo = new InMemoryClientRegistrationRepository(okta);
+        assertThat(SecurityConfig.oidcLoginUrl(singleRepo)).isEqualTo("/oauth2/authorization/okta");
+
+        ClientRegistrationRepository multiRepo = new InMemoryClientRegistrationRepository(okta, buildRegistration("entra"));
+        assertThatThrownBy(() -> SecurityConfig.oidcLoginUrl(multiRepo))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> SecurityConfig.oidcLoginUrl(mock(ClientRegistrationRepository.class)))
+                .isInstanceOf(IllegalStateException.class);
+
+        OAuth2AuthorizationRequestResolver resolver = config.authorizationRequestResolver(singleRepo);
+
+        MockHttpServletRequest promptLoginReq = new MockHttpServletRequest("GET", "/oauth2/authorization/okta");
+        promptLoginReq.setServletPath("/oauth2/authorization/okta");
+        promptLoginReq.setParameter("prompt", "login");
+        OAuth2AuthorizationRequest withPrompt = resolver.resolve(promptLoginReq);
+        assertThat(withPrompt).isNotNull();
+        assertThat(withPrompt.getAdditionalParameters()).containsEntry("prompt", "login");
+
+        OAuth2AuthorizationRequest withPromptById = resolver.resolve(promptLoginReq, "okta");
+        assertThat(withPromptById).isNotNull();
+        assertThat(withPromptById.getAdditionalParameters()).containsEntry("prompt", "login");
+
+        MockHttpServletRequest otherPromptReq = new MockHttpServletRequest("GET", "/oauth2/authorization/okta");
+        otherPromptReq.setServletPath("/oauth2/authorization/okta");
+        otherPromptReq.setParameter("prompt", "none");
+        OAuth2AuthorizationRequest withoutPrompt = resolver.resolve(otherPromptReq);
+        assertThat(withoutPrompt).isNotNull();
+        assertThat(withoutPrompt.getAdditionalParameters()).doesNotContainKey("prompt");
+
+        MockHttpServletRequest nonAuthReq = new MockHttpServletRequest("GET", "/other");
+        nonAuthReq.setServletPath("/other");
+        assertThat(resolver.resolve(nonAuthReq)).isNull();
+    }
+
+    private static ClientRegistration buildRegistration(String id) {
+        return ClientRegistration.withRegistrationId(id)
+                .clientId("client-id")
+                .clientSecret("client-secret")
+                .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
+                .redirectUri("{baseUrl}/login/oauth2/code/" + id)
+                .authorizationUri("https://idp.example.test/authorize")
+                .tokenUri("https://idp.example.test/token")
+                .build();
+    }
+
+    private static void assertMissingEmail(SecurityConfig config, OidcUser oidcUser) {
+        assertThatThrownBy(() -> config.processOidcUser(oidcUser))
+                .isInstanceOf(OAuth2AuthenticationException.class)
+                .satisfies(ex -> assertThat(((OAuth2AuthenticationException) ex).getError().getErrorCode())
+                        .isEqualTo(AuthErrorReason.MISSING_EMAIL.code()));
+    }
+
+    private static void assertFailureRedirect(SecurityConfig config,
+                                              AuthenticationException ex,
+                                              String expectedUrl) throws Exception {
+        MockHttpServletRequest req = new MockHttpServletRequest();
+        MockHttpServletResponse res = new MockHttpServletResponse();
+        config.oauth2FailureHandler().onAuthenticationFailure(req, res, ex);
+        assertThat(res.getRedirectedUrl()).isEqualTo(expectedUrl);
     }
 
     @Test

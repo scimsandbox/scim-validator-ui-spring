@@ -6,7 +6,6 @@ import org.springframework.security.oauth2.core.oidc.user.OidcUser;
 
 import java.util.Collection;
 import java.util.Locale;
-import java.util.Map;
 
 public final class AuthenticatedUser {
 
@@ -23,7 +22,7 @@ public final class AuthenticatedUser {
             if (resolved != null) {
                 return resolved;
             }
-            throw new IllegalStateException("Authenticated principal is missing a verified email address");
+            throw new IllegalStateException("Authenticated principal is missing a valid email address");
         }
         String fallback = authentication.getName();
         if (fallback == null || fallback.isBlank()) {
@@ -70,36 +69,11 @@ public final class AuthenticatedUser {
     }
 
     /**
-     * Returns {@code true} only when the OIDC provider explicitly marks {@code email_verified} as
-     * {@code false} (boolean {@code false} or case-insensitive string {@code "false"}). Enterprise,
-     * SAML, and Entra ID connections frequently omit {@code email_verified} ({@code null}), whereas
-     * self-signup database connections emit {@code "email_verified": false} until verified.
-     */
-    public static boolean isEmailExplicitlyUnverified(OidcUser oidcUser) {
-        if (oidcUser == null) {
-            return false;
-        }
-        if (Boolean.FALSE.equals(oidcUser.getEmailVerified())) {
-            return true;
-        }
-        Map<String, Object> claims = oidcUser.getClaims();
-        Object rawClaim = claims != null ? claims.get("email_verified") : null;
-        if (rawClaim instanceof Boolean boolValue) {
-            return !boolValue;
-        }
-        if (rawClaim instanceof String stringValue) {
-            return "false".equalsIgnoreCase(stringValue.trim());
-        }
-        return false;
-    }
-
-    /**
-     * Resolves the authenticated OIDC user's normalized email when {@code email_verified} is not
-     * explicitly {@code false}, checking {@code email}, {@code upn}, {@code unique_name}, and
-     * {@code preferred_username} in priority order.
+     * Resolves the authenticated OIDC user's normalized email, checking {@code email}, {@code upn},
+     * {@code unique_name}, and {@code preferred_username} in priority order.
      */
     public static String resolveEmail(OidcUser oidcUser) {
-        if (oidcUser == null || isEmailExplicitlyUnverified(oidcUser)) {
+        if (oidcUser == null) {
             return null;
         }
         String[] candidates = {
