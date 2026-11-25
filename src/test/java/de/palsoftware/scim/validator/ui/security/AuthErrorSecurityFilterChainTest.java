@@ -53,6 +53,7 @@ class AuthErrorSecurityFilterChainTest {
     void authErrorPageIsPublicAndAddsPromptLoginOnlyForForcedReasons() throws Exception {
         mockMvc.perform(get("/auth-error").param("reason", "access_denied").accept(MediaType.TEXT_HTML))
                 .andExpect(status().isOk())
+                .andExpect(content().string(containsString("<meta name=\"robots\" content=\"noindex, nofollow\">")))
                 .andExpect(content().string(containsString("<title>SCIM Validation | Sign-in was denied</title>")))
                 .andExpect(content().string(containsString("Sign-in was denied")))
                 .andExpect(content().string(containsString("href=\"/css/error.css\"")))
@@ -69,6 +70,13 @@ class AuthErrorSecurityFilterChainTest {
     void errorStylesheetIsPublic() throws Exception {
         mockMvc.perform(get("/css/error.css"))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    void robotsTxtIsPublicAndDisallowsCrawling() throws Exception {
+        mockMvc.perform(get("/robots.txt"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("Disallow: /")));
     }
 
     @Test
@@ -123,6 +131,7 @@ class AuthErrorSecurityFilterChainTest {
                         .requestAttr(RequestDispatcher.ERROR_STATUS_CODE, statusCode)
                         .requestAttr(RequestDispatcher.ERROR_MESSAGE, "<script>leaked-internal-detail</script>"))
                 .andExpect(status().is(statusCode))
+                .andExpect(content().string(containsString("<meta name=\"robots\" content=\"noindex, nofollow\">")))
                 .andExpect(content().string(containsString("<title>SCIM Validation | " + expectedTitle + "</title>")))
                 .andExpect(content().string(containsString("Error " + statusCode)))
                 .andExpect(content().string(containsString(expectedTitle)))

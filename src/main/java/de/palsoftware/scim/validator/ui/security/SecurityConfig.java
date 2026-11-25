@@ -113,7 +113,7 @@ public class SecurityConfig {
                 .requestMatchers("/actuator", "/actuator/**").hasAuthority("ROLE_ACTUATOR")
                 // favicon*.svg rather than an exact match: this app serves one badge per section
                 // (favicon.svg for SCIM Compliance, favicon-playground.svg for SCIM Playground).
-                .requestMatchers("/css/**", "/js/**", "/images/**", "/favicon*.svg", "/favicon.ico", "/error", AUTH_ERROR_PATH).permitAll()
+                .requestMatchers("/css/**", "/js/**", "/images/**", "/favicon*.svg", "/favicon.ico", "/robots.txt", "/error", AUTH_ERROR_PATH).permitAll()
                 .anyRequest().authenticated())
             .oauth2Login(oauth2 -> oauth2
                 .authorizationEndpoint(auth -> auth.authorizationRequestResolver(
