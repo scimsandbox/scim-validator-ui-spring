@@ -1,0 +1,5 @@
+User-agent: *
+Disallow: /oauth2/
+Disallow: /login/
+Disallow: /api/
+Disallow: /actuator/

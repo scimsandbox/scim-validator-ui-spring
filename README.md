@@ -42,6 +42,7 @@ This repository contains two surfaces of the SCIM sandbox:
 | Area | Routes |
 | --- | --- |
 | UI | `/`, `/runs/{runId}`, `/playground` |
+| Public / Crawler | `GET /robots.txt` (all responses emit `X-Robots-Tag: noindex, nofollow`) |
 | Run actions | `POST /runs`, `POST /runs/{runId}/delete`, `POST /runs/{runId}/publish` |
 | Auth | `GET /auth-error`, `POST /logout` |
 | Actuator | `GET /actuator/health` with `X-API-KEY` |
