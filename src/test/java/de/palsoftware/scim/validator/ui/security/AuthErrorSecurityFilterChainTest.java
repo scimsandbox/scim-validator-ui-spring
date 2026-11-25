@@ -54,7 +54,7 @@ class AuthErrorSecurityFilterChainTest {
         mockMvc.perform(get("/auth-error").param("reason", "access_denied").accept(MediaType.TEXT_HTML))
                 .andExpect(status().isOk())
                 .andExpect(header().string("X-Robots-Tag", "noindex, nofollow"))
-                .andExpect(content().string(containsString("<title>Sign-in was denied | SCIM Compliance | SCIM Sandbox</title>")))
+                .andExpect(content().string(containsString("<title>Sign-in was denied | SCIM Sandbox</title>")))
                 .andExpect(content().string(containsString("Sign-in was denied")))
                 .andExpect(content().string(containsString("href=\"/css/error.css\"")))
                 .andExpect(content().string(containsString("href=\"/oauth2/authorization/auth0?prompt=login\"")));
@@ -77,7 +77,7 @@ class AuthErrorSecurityFilterChainTest {
         mockMvc.perform(get("/robots.txt"))
                 .andExpect(status().isOk())
                 .andExpect(header().string("X-Robots-Tag", "noindex, nofollow"))
-                .andExpect(content().string("User-agent: *\nDisallow: /actuator/\n"));
+                .andExpect(content().string("User-agent: *\nDisallow: /oauth2/\nDisallow: /login/\nDisallow: /api/\nDisallow: /actuator/\n"));
 
         mockMvc.perform(get("/").accept(MediaType.TEXT_HTML))
                 .andExpect(status().is3xxRedirection())
@@ -137,7 +137,7 @@ class AuthErrorSecurityFilterChainTest {
                         .requestAttr(RequestDispatcher.ERROR_MESSAGE, "<script>leaked-internal-detail</script>"))
                 .andExpect(status().is(statusCode))
                 .andExpect(header().string("X-Robots-Tag", "noindex, nofollow"))
-                .andExpect(content().string(containsString("<title>" + expectedTitle + " | SCIM Compliance | SCIM Sandbox</title>")))
+                .andExpect(content().string(containsString("<title>" + expectedTitle + " | SCIM Sandbox</title>")))
                 .andExpect(content().string(containsString("Error " + statusCode)))
                 .andExpect(content().string(containsString(expectedTitle)))
                 .andExpect(content().string(containsString(expectedMessageSnippet)))
